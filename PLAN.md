@@ -233,4 +233,87 @@ Deviations from the phase plan, both deliberate:
   commands exist. `.dogfood.toml` and `scripts/acceptance.sh` likewise land in phase 2, when
   there are tokens to put in them.
 
-Next: phase 2 — the full schema, `import_fixtures`, `seed_demo` and the credentials printout.
+### Phase 2 — Schema + import ✅ (2026-09-26)
+
+Done:
+
+- **All T1 models**, across `events` (Event, Track, Prize, EventMembership, JudgeTrack,
+  CustomQuestion), `teams` (Team, TeamMember, TeamInvite), `projects` (Project, ProjectImage,
+  Tag, ProjectTag, CustomAnswer), `scoring` (Criterion, Score, ScoreItem) and `core` (AuditLog).
+  `external_id` everywhere importable, `created_at`/`updated_at` throughout.
+- **`import_fixtures`** — imports the real organizer file with counts matching the fixture
+  exactly: 1 event, 8 tracks, 30 judge users + 30 memberships + 39 track assignments, 40 teams,
+  91 participants, 91 team members, 41 projects, 3 criteria, 126 scores, 378 score items,
+  9 demo prizes. Flags `prj_41` as a duplicate of `prj_07`. Prints a report that separates what
+  came from the fixture from what was synthesized or left empty.
+- **`seed_demo`** — admin, organizer, the two named fixture judges, priya1 as the checker's
+  participant, five fixed-value Bearer tokens, and the open "Dogfood Live Demo" event with the
+  8 mirrored tracks, 3 prizes, 3 custom questions (one required), a team with a draft project
+  and a copyable invite link. Prints the credentials block at every boot.
+- Entrypoint now runs `migrate` → `import_fixtures` → `seed_demo`, all idempotent.
+- `.dogfood.toml`, `scripts/acceptance.sh` (probes `python3` then `python`), `scripts/test.sh`.
+- **112 tests pass in 14s.**
+
+Two schema decisions worth defending:
+
+- **The conflict-of-interest rule is enforced by Postgres, not just by services.** A CHECK
+  constraint cannot see other rows, and a unique index on `(user, event)` would wrongly forbid
+  judge + organizer. So `EventMembership.side` is a *stored generated column*
+  (`participant → competitor`, else `staff`), computed by the database, and an
+  `ExclusionConstraint` forbids two rows for the same `(user, event)` disagreeing about it.
+  Verified in the live database: `EXCLUDE USING gist (user_id WITH =, event_id WITH =, side
+  WITH <>)`. Needs the `btree_gist` extension, created by the migration and documented for
+  self-hosters.
+- **Idempotency is real, not approximate.** `update_or_create` issues an UPDATE every time,
+  which would bump `updated_at` on ~700 rows on every container restart. `seed/upsert.py`
+  compares field by field and writes only on a genuine difference, so the second boot reports
+  every row `unchanged` and touches nothing — asserted by a test that snapshots `updated_at`.
+
+Also fixed: the first generated migration revealed redundant indexes (a `unique=True` column
+already has a B-tree index), and the test suite was importing the 700-row fixture once per test
+(95s). A session-scoped import inside `django_db_blocker.unblock()` cut the whole suite to 14s
+while keeping per-test rollback isolation.
+
+**Honest note on the committed `acceptance-report.txt` at this phase.** It currently reads
+`claimed T1, verified nothing`, because `/projects` (phase 6) and the submit API (phase 5) do
+not exist yet. Worse, `T1 closed event refuses submissions` reads **PASS for the wrong reason**:
+the route 404s, and 404 is inside the 4xx range the checker accepts. Phase 5 must make that
+route return a genuine **409 `submissions_closed`**, and the test suite asserts the specific
+status and error code rather than "any 4xx" — precisely so this cannot be mistaken for working.
+
+#### Two review findings fixed before committing phase 2
+
+**1. The import was idempotent but *authoritative*, which is worse.** `upsert` compared against
+the fixture and wrote back on any difference. Since the entrypoint runs the import on every boot,
+that meant: an organizer extends `submissions_close_at` (which the brief explicitly permits),
+someone restarts the container, and the deadline silently reverts to 2026-03-01. It broke a T1
+feature and contradicted this repo's own rule that seeding never overwrites user data.
+
+Fixed properly rather than patched:
+
+- `upsert` is now **create-only by default** — inserts missing rows, never modifies existing ones.
+- A row that exists and differs is reported as `preserved`, naming the diverged fields, so the
+  divergence is visible instead of silent. The boot log now prints
+  `event: Event evt_01: judging_ends_at, submissions_close_at` and a stderr warning.
+- `import_fixtures --sync` restores overwriting, for an operator who deliberately wants the
+  fixture to win.
+- `seed_demo`'s two writes that legitimately must touch existing rows — the demo event's expired
+  window, and the demo password — are now explicit narrow updates with their reasoning, not a
+  side effect of a generic helper.
+- `SEED_FIXTURES=0` skips the boot import entirely, so a production deployment need not
+  materialize 121 invented accounts. Defaults to 1 because `docker compose up` must reach a
+  gallery that really shows the fixture projects.
+
+Verified on a live stack: edited `evt_01`'s close date in Postgres, restarted the container, and
+the edit survived while the log named the diverged fields; `--sync` then restored the fixture
+value; `SEED_FIXTURES=0` skipped the import. Four new tests cover all of it.
+
+**2. Line-ending hardening.** `.gitattributes` already pinned `*.sh` and `docker/entrypoint.sh`
+to `eol=lf` (which overrides `core.autocrlf`, so a normal Windows clone was already safe — the
+index stores `#!/bin/sh\n`). Extended anyway: explicit rules for `Dockerfile`, `*.py`, `*.yml`,
+`*.toml`, plus `sed -i 's/\r$//'` on the entrypoint in the Dockerfile. That covers the paths
+`.gitattributes` cannot — a GitHub ZIP download, or a file round-tripped through a Windows editor
+— where the failure mode is `/bin/sh^M: bad interpreter` and no useful clue why.
+
+Next: phase 3 — auth, sessions, API token management UI, `core/permissions.py`, login
+throttling, audit-log wiring, and the permission-matrix tests against real URLs.

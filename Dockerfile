@@ -34,7 +34,14 @@ RUN python -m pip install -r /app/requirements.txt
 
 COPY --chown=dogfood:dogfood src/ /app/src/
 COPY --chown=dogfood:dogfood docker/entrypoint.sh /app/docker/entrypoint.sh
-RUN chmod +x /app/docker/entrypoint.sh
+
+# Strip carriage returns before making it executable. `.gitattributes` already pins this file to
+# LF on checkout, which overrides core.autocrlf, so a normal clone is fine -- but a ZIP download,
+# a copy through a Windows editor, or a checkout with .gitattributes stripped can still put CRLF
+# in it. The failure mode is `/bin/sh^M: bad interpreter`, which kills the one command that has to
+# work and gives no useful clue why. Two bytes of sed removes the whole class of problem.
+RUN sed -i 's/\r$//' /app/docker/entrypoint.sh \
+    && chmod +x /app/docker/entrypoint.sh
 
 # Static files are collected at build time, not at boot: a container that has to collect
 # static on every start is slower to become healthy and can fail at the worst moment.

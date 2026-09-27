@@ -95,10 +95,37 @@ write is refused *as a late write* and never masked by a validation or CSRF erro
 
 ### 4. The import path bypasses the deadline guard, and is unreachable over HTTP
 
-Fixture data is historical and already past its deadline, so `seed/management/commands/
-import_fixtures.py` writes through explicitly named import functions that do not call
-`assert_submissions_open`. Those functions must never be reached from a URL. If you add one,
-name it `import_*`, keep it out of every `urls.py`, and say so in its docstring.
+Fixture data is historical and already past its deadline, so no participant write path could
+ever create it. `src/seed/importer.py` is therefore the import path: it writes through the ORM
+directly, never calls `assert_submissions_open`, and never calls a participant service
+function. Two rules keep the bypass honest:
+
+1. It is imported only by the `import_fixtures` and `seed_demo` management commands, and appears
+   in no `urls.py`.
+2. Its methods are named `_import_*` / `_seed_*`, so a call site reusing one for a live
+   participant write would be doing so obviously.
+
+`seed/upsert.py` is what makes both commands idempotent, and it is **create-only by default**:
+it inserts missing rows and never modifies existing ones. Use it for any new seeding code rather
+than `update_or_create`.
+
+Both properties matter, for different reasons:
+
+- *Idempotent*: `update_or_create` issues an UPDATE unconditionally, so a boot would bump
+  `updated_at` on hundreds of rows without importing anything new.
+- *Not authoritative*: the entrypoint runs the import on **every boot**. An importer that wrote
+  the fixture value back whenever it differed would revert real edits — an organizer extends
+  `submissions_close_at`, the container restarts, and the deadline silently snaps back. A drifted
+  row is reported as `preserved` with the differing field names and left alone.
+  `import_fixtures --sync` opts into overwriting and only a human runs it.
+
+If you add seeding that genuinely must write to an existing row (the demo event's window refresh
+is the one example), do it as an explicit narrow `.update()` with a comment, not by flipping
+`sync=True` on a shared helper.
+
+`SEED_FIXTURES=0` skips the boot-time import entirely, for a real deployment that does not want
+121 invented accounts. It defaults to 1 because `docker compose up` must reach a portal whose
+gallery actually shows the fixture projects.
 
 ### 5. Permissions live in `core/permissions.py`
 

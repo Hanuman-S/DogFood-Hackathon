@@ -49,10 +49,35 @@ echo "    database is reachable"
 echo "--> applying migrations"
 python /app/src/manage.py migrate --noinput
 
-# --- 3. data ---------------------------------------------------------------------------
+# --- 3. shared fixture data -----------------------------------------------------------
+#
+# The organizers' fixture file is bind-mounted read-only by compose. If it is missing -- someone
+# running the bare image without that mount -- the command says so and returns successfully, so
+# the portal boots empty instead of crash-looping on a missing input file.
+#
+# SEED_FIXTURES=0 turns this off. A production deployment does not want 121 invented users and a
+# closed demo event appearing in its database, and an operator should not have to comment out a
+# line in an entrypoint to prevent it. It defaults to on because `docker compose up` must reach a
+# seeded portal -- the acceptance checker looks for fixture project titles in the gallery.
+#
+# Note the import is create-only: it inserts missing rows and never modifies existing ones, so
+# running it on every boot cannot revert an organizer's edits. `--sync` opts into overwriting and
+# is never used here.
+if [ "${SEED_FIXTURES:-1}" = "1" ]; then
+    echo "--> importing organizer fixtures (create-only; set SEED_FIXTURES=0 to skip)"
+    python /app/src/manage.py import_fixtures
+else
+    echo "--> SEED_FIXTURES=0: skipping the fixture import."
+    echo "    The portal starts with whatever is already in the database."
+fi
+
+# --- 4. demo data and credentials -----------------------------------------------------
+#
+# seed_demo refuses to run unless DEMO_MODE=1. That guard lives inside the command, not in this
+# branch, so invoking it directly cannot bypass it.
 if [ "${DEMO_MODE:-1}" = "1" ]; then
-    echo "--> DEMO_MODE=1: demo accounts, fixed API tokens and the live demo event are"
-    echo "    seeded on boot. Do not run a real event in this mode."
+    echo "--> seeding demo accounts, tokens and the open demo event"
+    python /app/src/manage.py seed_demo
 else
     echo "--> DEMO_MODE=0: no demo users, no fixed tokens, no known passwords."
     echo "    Bootstrap an admin with:"

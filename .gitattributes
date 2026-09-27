@@ -6,9 +6,19 @@
 # runs `docker compose up` would hit that, which is exactly the adoption path that has to work.
 * text=auto eol=lf
 
-# Shell scripts must be LF regardless of any local core.autocrlf setting.
+# Spelled out per type as well as by the wildcard above. Redundant by design: if someone
+# loosens the `*` rule later, the files that actually break a Linux container when they carry
+# CRLF are still pinned.
 *.sh text eol=lf
 docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+
+# Belt and braces: the Dockerfile also runs `sed -i 's/\r$//'` over the entrypoint, so a ZIP
+# download or a checkout without these attributes still boots.
 
 # Keep the vendored minified assets byte-identical to upstream so the licence NOTICE claim
 # ("unmodified from upstream") stays true and a checksum against the published file matches.

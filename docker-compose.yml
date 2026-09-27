@@ -70,7 +70,33 @@ services:
       # 1 = seed demo accounts with published passwords and fixed API tokens. Convenient for
       # a judge, unacceptable for a real event. Set to 0 in production.
       DEMO_MODE: ${DEMO_MODE:-1}
+
+      # Import the organizers' shared fixture data on boot. Set to 0 for a real deployment: you
+      # do not want 121 invented users and a closed March-2026 event in your production database.
+      #
+      # The import is create-only -- it inserts missing rows and never modifies existing ones --
+      # so leaving this on cannot revert an organizer's edits. It defaults to 1 because
+      # `docker compose up` has to reach a portal whose gallery actually shows the fixture
+      # projects.
+      SEED_FIXTURES: ${SEED_FIXTURES:-1}
       FIXTURES_PATH: /app/acceptance/fixtures.json
+
+      # Demo API tokens with FIXED values, so .dogfood.toml keeps working across
+      # `docker compose down -v`. Random per-boot tokens would invalidate that file every time
+      # anyone reset the database. They are hashed into the database like any other token; only
+      # their origin differs. Ignored entirely when DEMO_MODE=0.
+      #
+      # No `#` in any value: the acceptance checker's fallback TOML parser truncates a line at
+      # the first one.
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-dogfood-demo}
+      DEMO_TOKEN_ORGANIZER: ${DEMO_TOKEN_ORGANIZER:-dogfood-demo-organizer-token-do-not-use-in-production}
+      DEMO_TOKEN_JUDGE_A: ${DEMO_TOKEN_JUDGE_A:-dogfood-demo-judge-a-token-do-not-use-in-production}
+      DEMO_TOKEN_JUDGE_B: ${DEMO_TOKEN_JUDGE_B:-dogfood-demo-judge-b-token-do-not-use-in-production}
+      DEMO_TOKEN_PARTICIPANT: ${DEMO_TOKEN_PARTICIPANT:-dogfood-demo-participant-token-do-not-use-in-production}
+      DEMO_TOKEN_ADMIN: ${DEMO_TOKEN_ADMIN:-dogfood-demo-admin-token-do-not-use-in-production}
+      DEMO_INVITE_TOKEN: ${DEMO_INVITE_TOKEN:-dogfood-demo-invite-token-not-for-production}
+      # Used only to print clickable links in the boot credentials block.
+      PORTAL_BASE_URL: ${PORTAL_BASE_URL:-http://localhost:8080}
 
     ports:
       # 8080 on the host because that is what .dogfood.toml and the README advertise;

@@ -110,9 +110,17 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.postgres",  # SearchVector / GIN indexes for the gallery
     "rest_framework",
-    # portal apps
+    # portal apps. Order follows the dependency direction: core depends on nothing, accounts
+    # on core, events on accounts, and so on down.
     "core",
     "accounts",
+    "events",
+    "teams",
+    "projects",
+    "scoring",
+    "gallery",
+    "api",
+    "seed",
 ]
 
 MIDDLEWARE = [
@@ -205,6 +213,12 @@ CSRF_COOKIE_SECURE = env_bool("COOKIE_SECURE", False)
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
+
+# Off by default, and that is the safe direction. `X-Forwarded-For` is client-supplied: if the
+# portal trusted it without a proxy in front, anyone could forge the IP the login throttle
+# counts against and lock another person out of their own account. Turn this on only when a
+# reverse proxy you control is setting the header.
+TRUST_PROXY_HEADERS = env_bool("TRUST_PROXY_HEADERS", False)
 
 
 # --------------------------------------------------------------------------------------

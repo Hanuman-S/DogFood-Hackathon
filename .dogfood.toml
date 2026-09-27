@@ -1,0 +1,44 @@
+# .dogfood.toml -- where the acceptance checker can find things in this portal.
+#
+#   python3 acceptance/run.py .dogfood.toml > acceptance-report.txt
+#
+# or, from a running stack:  ./scripts/acceptance.sh
+
+[portal]
+base_url = "http://localhost:8080"
+
+[tiers]
+# T1 only. T2 (judging) is not built: the four T2 routes below point at the paths T2 will
+# implement, and those checks are expected to FAIL until then. There are no stub endpoints
+# anywhere in this repo faking a pass -- see README.md and JUDGING.md.
+claimed = ["T1"]
+pitch = "A self-hostable Django hackathon portal whose deadline and role checks live in the backend, with a server-rendered public gallery and an idempotent importer for the shared fixture data."
+
+[auth]
+# Bearer tokens, printed by the portal at every boot when DEMO_MODE=1. The checker attaches
+# exactly one header per role, so these cannot carry a CSRF token -- which is why the API
+# authenticates by bearer token and does not enforce CSRF on that path (see ARCHITECTURE.md).
+#
+# The values are the defaults in docker-compose.yml and are stable across
+# `docker compose down -v`, so this file does not go stale when the database is reset. They are
+# stored only as SHA-256 digests in the database.
+organizer   = "Authorization: Bearer dogfood-demo-organizer-token-do-not-use-in-production"
+judge_a     = "Authorization: Bearer dogfood-demo-judge-a-token-do-not-use-in-production"
+judge_b     = "Authorization: Bearer dogfood-demo-judge-b-token-do-not-use-in-production"
+participant = "Authorization: Bearer dogfood-demo-participant-token-do-not-use-in-production"
+
+[routes]
+# T1 -- implemented.
+#
+# Both paths are registered at exactly these strings, with no APPEND_SLASH redirect in front of
+# them. That matters: urllib follows redirects and rewrites a POST into a GET on the way, so a
+# route that only answered after a redirect would make the closed-event check measure the wrong
+# request.
+gallery = "/projects"
+submit  = "/api/events/sample-hack-2026/projects"
+
+# T2 -- NOT implemented. These are the paths T2 will use. They return 404 today, so the four T2
+# checks fail honestly rather than being faked.
+judge_scores = "/api/judge/scores"
+peer_scores  = "/api/judge/scores?judge=jdg_02"
+csv_export   = "/api/events/sample-hack-2026/export.csv"
