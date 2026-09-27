@@ -1,7 +1,8 @@
 # CLAUDE.md
 
 Guidance for working in this repo. Read README.md for what the portal does, ARCHITECTURE.md for
-why, DATA-MODEL.md for the schema, JUDGING.md for the state of T2.
+why, DATA-MODEL.md for the schema, JUDGING.md for the state of T2. PLAN.md is the phase log for the
+current work; docs/t2-scoring-plan.md is the approved plan for the scoring engine.
 
 ## Stack and layout
 
@@ -19,6 +20,11 @@ build step. `docker compose up --build` is the product; it must stay one command
   field. The only platform-wide powers are `User.is_platform_admin` and `User.can_create_events`.
   Everything about roles goes through `accounts/roles.py` (`roles_in`, `is_organizer_of`,
   `can_compete_in`, `PORTAL_ACCESS`).
+- **Where things live.** There is no `core/clock.py` or `core/permissions.py` (both were removed
+  in `c6f381c`). The clock is `core.deadlines.db_now()`: the database's `statement_timestamp()`,
+  used for every deadline and window decision. Permissions are `accounts/roles.py` (who holds
+  which role in which event), `accounts.guards.portal_required` (who may enter a portal) and
+  `events.services.get_managed_event` (the event an organizer may manage; 404 otherwise).
 - **Two gates.** Every portal view has `@portal_required("<portal>")`. Every view that acts on
   one event then checks the caller's role *in that event* (`events.services.get_managed_event`,
   `can_compete_in`). A hidden button is never the check.
@@ -37,6 +43,11 @@ build step. `docker compose up --build` is the product; it must stay one command
   (`tests/test_platform.py` checks). Vendor assets under `src/static/`.
 - **Design.** Use the tokens and components in `crt.css` (`.frame`, `.kv`, `.table`, `.check`,
   `_field.html` prompts). No inline scripts: the CSP forbids them.
+- **Scoring engine** (`src/scoring/engine/`) is pure: no Django import, no clock, randomness
+  only from `np.random.default_rng(<seed from config>)`, and the same input and config give
+  byte-identical JSON. `tests/test_engine_purity.py` enforces it. A new scoring method is one
+  file in `scoring/engine/methods/` with `@register`; the contract test covers it automatically.
+  Never import from `../scoring-lab` (reference only; copy code in).
 - **Honest claims.** `.dogfood.toml` claims only what `acceptance/run.py` verifies. The T2 routes
   must 404 until T2 is real (`tests/test_acceptance_contract.py`). `acceptance/` is the
   organizers' and is read-only.
@@ -48,7 +59,11 @@ build step. `docker compose up --build` is the product; it must stay one command
 ./scripts/acceptance.sh          # organizers' checker -> acceptance-report.txt (stack must be up)
 ./scripts/offline-check.sh       # boot on a sealed network, run the checker inside it
 docker compose down -v           # reset; needed after model changes (migrations were squashed)
+PYTHONPATH=src python -m scoring.engine.cli acceptance/fixtures.json   # engine on a file, no DB
 ```
+
+On Windows Git Bash, prefix `./scripts/test.sh` with `MSYS_NO_PATHCONV=1`, or the `/workspace`
+mount path is rewritten and the container refuses it.
 
 Running pytest by hand inside the image: pass `--ds=config.settings_test`. The image sets
 `DJANGO_SETTINGS_MODULE=config.settings`, which otherwise overrides `pytest.ini`.

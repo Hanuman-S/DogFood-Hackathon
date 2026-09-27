@@ -7,6 +7,7 @@ whitenoise==6.12.0          # serves /static from the app container: no nginx, n
 Pillow==12.3.0              # verifies and re-encodes uploaded images
 markdown-it-py==4.2.0       # project descriptions are Markdown...
 nh3==0.3.7                  # ...sanitised to a safe HTML subset after rendering
+numpy==2.5.3                # scoring engine (src/scoring/engine); the scoring lab's version
 
 # Tests
 pytest==9.1.1
