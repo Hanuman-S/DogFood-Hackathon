@@ -32,7 +32,7 @@ gives us the security-critical parts pre-built and lets us spend the time on jud
 public/         /               visitors
 participant/    /participant/
 judge/          /judge/
-organizer/      /organizer/     (admins too)
+organizer/      /organizer/     (platform admins too)
 platform_admin/ /admin/         and the database admin at /admin/db/
 ```
 
@@ -49,32 +49,60 @@ only place that check lives.
 
 ## Authentication and sessions
 
-### The role model
+### The role model: roles per event, portals per audience
 
-Each account has exactly one role: `participant`, `judge`, `organizer` or `admin`. A
-*visitor* is anyone not logged in; visitors are not stored. The table of who may enter which
-portal is in one place, `accounts/roles.py`:
+**Roles are held per event.** `EventMembership(user, event, role)` says that someone is a
+`participant`, `judge` or `organizer` *of this event*. The same person can judge one hackathon
+and compete in the next, and an organizer's powers stop at the edge of their own events. The only
+platform-wide facts about an account are two flags: `is_platform_admin` (runs the platform) and
+`can_create_events` (may start an event, and so becomes its first organizer). A *visitor* is
+anyone not logged in; visitors are not stored. All of this is in one place, `accounts/roles.py`.
 
-| Portal | Participant | Judge | Organizer | Admin |
-| --- | --- | --- | --- | --- |
-| `/participant/` | yes | – | – | – |
-| `/judge/` | – | yes | – | – |
-| `/organizer/` | – | – | yes | yes |
-| `/admin/` | – | – | – | yes |
+**Portals are views onto memberships.** The one-app-per-audience layout above is unchanged. Each
+portal answers two questions, both on the server:
 
-Judges and participants are strictly separated. The database refuses any role outside the
-four through a CHECK constraint.
+1. *May this account enter at all?* `PORTAL_ACCESS`, checked by `portal_required`:
 
-**Alternative considered: a role per event.** Here the same person could judge one event and
-compete in another, which is more realistic for a platform that runs a dozen events a year.
-The cost is that every page must first work out "your role in which event?", and the idea of
-one portal per role gets blurry. We chose one role per account for clarity and speed. If
-multi-event roles are needed later, an `EventMembership(user, event, role)` table can be added
-without breaking these portals: the account role would become the default.
+   | Portal | Who may enter |
+   | --- | --- |
+   | `/participant/` | any account except platform admins (joining a team is what makes you a participant of an event) |
+   | `/judge/` | anyone who judges at least one event |
+   | `/organizer/` | anyone who organizes at least one event, may create events, or is a platform admin |
+   | `/admin/` | platform admins |
 
-**How someone gets each role:** sign-up always creates a participant, and a `role` field
-posted to `/signup` is ignored. An admin creates judges, organizers and admins in the admin
-portal, or with `manage.py create_account` for the very first admin when `DEMO_MODE=0`.
+2. *What may they do in **this** event?* Every event-scoped page checks the role in that event.
+   The organizer control page goes through `get_managed_event` (organizers of the event and
+   platform admins; 404 for anyone else, so slugs cannot be probed). Team and project writes go
+   through `can_compete_in`. Staff of an event, and platform admins, cannot compete in it.
+
+A login lands on the most powerful portal the account can enter (admin, then organizer, judge,
+participant), and the navigation lists every portal it can enter.
+
+**Conflict of interest, twice.** `can_compete_in` refuses in the service layer with a sentence the
+page can show. An **exclusion constraint** on `events_eventmembership` refuses in the database,
+comparing a stored generated `side` column (competitor or staff) across all rows for the same
+`(user, event)`. Judge plus organizer in one event is allowed; participant plus either is not. The
+constraint is Postgres-only (`btree_gist`), installed by a migration that does nothing on SQLite,
+the same arrangement as the deadline trigger.
+
+**Why this differs from the portal-v2 design document.** That design chose one role per account,
+which is simpler but means one person cannot judge one event and compete in another. For a
+platform the organizers intend to run a dozen events on, that is the wrong trade. The design
+itself anticipated the fix ("adding `EventMembership(user, event, role)` later is possible without
+breaking the portals"), and that is what this merge did. The portals, URLs, 403 pages and audit
+rows are exactly as designed. Only "who may enter" became a question about memberships.
+
+**How someone gets each role:**
+
+- **participant:** sign up (a plain account, always, and any `role` or flag posted to `/signup` is
+  ignored), then form or join a team. Leaving the team ends the participant role in that event.
+- **judge / co-organizer:** an organizer of the event adds the account by email on the event's
+  control page (judges optionally for chosen tracks). The service refuses anyone competing in that
+  event, and the constraint backs it up.
+- **organizer of a new event:** create it, which needs `can_create_events`. A platform admin sets
+  that flag when creating the account, or with `manage.py create_account --can-create-events`.
+- **platform admin:** another admin, or `manage.py create_account --admin` for the very first one
+  when `DEMO_MODE=0`.
 
 ### Sessions: server-side, not JWT
 
@@ -145,12 +173,15 @@ doesn't have yet.
 
 ### Access checks
 
-`accounts/guards.py` provides `login_required`, `roles_required(...)` and
-`portal_required("<portal>")`.
+`accounts/guards.py` provides `login_required`, `portal_required("<portal>")` and `refuse()`.
 
 - A visitor gets a redirect to `/login?next=…` on an HTML page, or a `401` JSON response
   with `WWW-Authenticate` on the API.
-- The wrong role gets a `403` page or JSON response, and an `access_denied` audit row.
+- An account the portal does not admit gets a `403` page or JSON response, and an
+  `access_denied` audit row. So does a co-organizer without `can_create_events` who tries to
+  create an event.
+- Inside a portal, an event the caller has no role in is a `404` (organizer pages) or a refused
+  write with a readable reason (team and project services).
 
 The database admin (`/admin/db/`) uses **our** login page, so the throttle and the audit trail
 cannot be skipped through Django's built-in login. The audit-log table there is read-only even
@@ -178,8 +209,9 @@ enforce the same rules.
   (1–20), tracks, prizes and custom questions.
 - **All times are UTC**, stored and shown, and every date field is labelled so. We chose this
   over a per-event display timezone for simplicity.
-- **Who manages an event:** the organizers linked to it (the creator is linked automatically,
-  and co-organizers can be added by email) plus any admin. For anyone else the event's
+- **Who manages an event:** its organizers, meaning accounts holding the `organizer` role in
+  it (the creator gets it automatically, and co-organizers are added by email), plus any platform
+  admin. Judges are added the same way, optionally for chosen tracks. For anyone else the event's
   management URLs return **404, not 403**, so nobody can probe which events exist.
 - **Visibility:** `is_published` is the only stored state. An unpublished event is invisible
   (404) to everyone but its managers.
@@ -202,14 +234,14 @@ enforce the same rules.
 | team name unique within an event, ignoring case | database unique constraint on `(event, lower(name))` |
 | team size ≥ `event.min_team_size` to submit; a submitted team can't shrink below it | `projects/services.py::missing_for_submission`, `teams/services.py::_require_size_kept`; an organizer can't raise the minimum above a submitted team's size |
 | team size ≤ `event.max_team_size` | `teams/services.py`, under a row lock on the team, so two people can't take the last seat at once |
-| only *participants* can be on a team | `teams/services.py::_require_participant` |
+| nobody who is staff *in this event* (or a platform admin) is on one of its teams | `teams/services.py::_require_can_compete` (`accounts.roles.can_compete_in`), and the exclusion constraint on `events_eventmembership` |
 | captain is a member; only the captain renames, removes, replaces the link or hands over | `teams/services.py` |
 
-**The participant-only rule, and where it would change.** With one role per account, judges,
-organizers and admins can never compete, so a conflict of interest is impossible by
-construction. If roles ever become per-event, this rule becomes "not staff *in this event*".
-It lives in one function, `_require_participant` in `teams/services.py`, and the table above
-is repeated in the docstring of `teams/models.py`.
+**Being on a team is being a participant.** Creating or joining a team creates the participant
+`EventMembership`, and leaving, being removed or disbanding removes it, in the same transaction.
+That membership is what the conflict-of-interest constraint compares against any judge or
+organizer membership in the same event. So the database, not just this service, refuses a person
+on both sides. The table above is repeated in the docstring of `teams/models.py`.
 
 - **Invite links:** one reusable link per team (`/join/<token>`, 128 random bits). The captain
   can replace it, which kills the old one. The team size cap limits how many people can use
@@ -365,7 +397,7 @@ boot when `SEED_FIXTURES=1` (the default under compose), and by hand with
 - **Edge cases are reported, not smoothed over:**
   - A team that submitted twice (`prj_41` duplicates `prj_07` in the real file): the first
     submission is kept, and the second external id points at the same project with
-    `duplicate_of` set. Scores for either id will land on one project when judging is imported.
+    `duplicate_of` set. Reviews of either id land on that one project.
   - A judge who is also listed as a team member: kept as a judge, left off the team, and
     reported as a conflict of interest. The real file has none, but a test covers it.
   - A person on two teams in one event: kept on the first team, and reported.
@@ -376,8 +408,15 @@ boot when `SEED_FIXTURES=1` (the default under compose), and by hand with
   inside the audited `deadline_bypass()`, the same path organizer tools use.
 - **Accounts.** Imported accounts use the demo password in demo mode. Otherwise they have no
   usable password until an admin sets one.
-- **Scores** are not imported yet. The scoring model arrives with T2 (judging), and the
-  `FixtureRef` table already maps both duplicate project ids to one project for it.
+- **Judges and scores.** Each judge becomes a judge *of the fixture event*, with the tracks the
+  file lists (`JudgeTrack`). The three criteria keys become `Criterion` rows (weight 1), and each
+  review becomes a `Score` on the judge's membership, with one `ScoreItem` per criterion,
+  range-checked. Three judges reviewed both `prj_07` and its duplicate. With the two folded into
+  one project they would review it twice, which `score_unique_judge_project` forbids, so the
+  review of the kept submission wins and the other three are reported. 126 reviews import as 123.
+  Nothing reads scores yet (see JUDGING.md).
+- **Team members** become participants of the event (`EventMembership`), and in demo mode the
+  demo organizer and both demo judges are given their roles in the fixture event.
 
 ## Design system: violet CRT
 

@@ -5,7 +5,7 @@ entirely on a laptop with the network off: no cloud accounts, hosted database or
 
 **Status: T1 complete.** All seven T1 modules are built:
 - authentication and sessions
-- the role model
+- the role model, with roles held **per event**
 - event creation
 - team formation by invite link
 - project submission with draft-and-edit
@@ -13,7 +13,13 @@ entirely on a laptop with the network off: no cloud accounts, hosted database or
 - the public gallery with search and filters
 
 `.dogfood.toml` claims **T1**, and `acceptance-report.txt` shows all three T1 checks passing.
-T2 (judging) is next; its four checks fail, and T2 is not claimed.
+T2 (judging) is next; its four checks fail, and T2 is not claimed. The judging *data* is already
+in: the fixture's judges, their tracks, the rubric and 123 reviews. See [JUDGING.md](JUDGING.md).
+
+The portal follows the portal-v2 design (one app per audience, Violet CRT look, deadline trigger)
+with one deliberate change: **roles are held per event**, so the same person can judge one
+hackathon and compete in the next, and a database constraint stops anyone being on both sides of
+one event. [ARCHITECTURE.md](ARCHITECTURE.md) explains why.
 
 ## Run it
 
@@ -27,23 +33,29 @@ The first build needs internet to pull the Python and Postgres images and the pi
 packages. After that, it runs offline. When the log shows `Portal ready`, open
 **http://localhost:8080**.
 
-On boot, the log prints one demo account per role (password `dogfood-demo`):
+On boot, the log prints the demo accounts (password `dogfood-demo`):
 
-| Role | Email | Lands on |
-| --- | --- | --- |
-| admin | `admin@dogfood.local` | `/admin/` |
-| organizer | `organizer@dogfood.local` | `/organizer/` |
-| judge | `judge.a@dogfood.local`, `judge.b@dogfood.local` | `/judge/` |
-| participant | `participant@dogfood.local` | `/participant/` |
+| Account | Email | What it is | Lands on |
+| --- | --- | --- | --- |
+| admin | `admin@dogfood.local` | platform admin | `/admin/` |
+| organizer | `organizer@dogfood.local` | may create events; organizes all three demo events | `/organizer/` |
+| judge | `judge.a@dogfood.local`, `judge.b@dogfood.local` | judges all three demo events | `/judge/` |
+| participant | `participant@dogfood.local` | on a team in the live and archive demo events | `/participant/` |
 
-Anyone can sign up at `/signup`, and a sign-up is always a participant. Judges and organizers
-are created by an admin in the admin portal.
+Every fixture account (for example `tomas.varga@example.org`, a judge) also uses the demo password
+in demo mode.
+
+Anyone can sign up at `/signup`. A sign-up is a plain account, and it becomes a participant of an
+event by forming or joining a team there. Organizers make accounts judges or co-organizers of
+their event from its control page. Platform admins create accounts and grant "may create events".
 
 On boot the portal also imports the organizers' `acceptance/fixtures.json` (`SEED_FIXTURES=1`):
-- 1 event (**Sample Hack 2026**, closed 2026-03-01), 8 tracks, 30 judges, 40 teams and their
-  121 accounts, and 40 submitted projects.
-- The file's deliberate duplicate submission (`prj_41`, a second copy of `prj_07`) is recorded
-  as a duplicate, not imported twice.
+- 1 event (**Sample Hack 2026**, closed 2026-03-01), 8 tracks, 30 judges (with their tracks),
+  40 teams, 121 accounts, and 40 submitted projects.
+- The rubric (3 criteria) and 123 of the file's 126 reviews. The file's deliberate duplicate
+  submission (`prj_41`, a second copy of `prj_07`) is recorded as a duplicate, not imported
+  twice. Three judges reviewed both copies, and the review of the kept one wins; the report lists
+  the other three.
 - The import report is printed in the boot log, and running the import again changes nothing.
 - In demo mode, imported accounts use the demo password.
 
@@ -74,16 +86,29 @@ on Postgres under compose.
 ### Tests
 
 ```bash
-docker compose run --rm web pytest          # inside the container, against Postgres
-# or locally:  pip install -r requirements.txt && pytest
+./scripts/test.sh                  # the whole suite, in the web image, against Postgres
+./scripts/test.sh tests/test_db_constraints.py -vv
 ```
+
+The suite needs Postgres: the conflict-of-interest constraint and the deadline trigger are
+Postgres features, and tests prove the database itself refuses.
 
 ### Run the acceptance checker
 
 ```bash
 docker compose up -d
-python acceptance/run.py .dogfood.toml > acceptance-report.txt   # `python3` on macOS/Linux
+./scripts/acceptance.sh            # writes acceptance-report.txt
 ```
+
+### Prove it runs with the network off
+
+```bash
+./scripts/offline-check.sh         # writes acceptance-report-offline.txt
+```
+
+This starts the stack on a compose network with no route off it (`docker-compose.offline.yml`),
+checks that DNS and the internet really are unreachable from inside, and runs the organizers'
+checker from inside that sealed network. Building the image still needs the network once.
 
 ### Try the API
 
@@ -120,15 +145,19 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 - A login throttle: 5 failures per email and IP, or 30 per IP, within 15 minutes. It is
   counted in Postgres, so it survives restarts and is shared by every worker.
 - Five roles (visitor, participant, judge, organizer and admin), each with its own portal and
-  URL prefix. Access is checked by the server on every request.
+  URL prefix. Access is checked by the server on every request. Participant, judge and organizer
+  are held **per event**, and every event page checks the role in *that* event. A person can
+  judge one event and compete in another, but never both in the same event: the services refuse
+  it, and a Postgres exclusion constraint backs that up.
 - An audit trail of logins, failures, throttles, revocations, token changes and refused portal
   access. The admin portal shows it, and it is read-only in the database admin.
 - A strict Content-Security-Policy, POST-only logout and CSRF protection on every form.
 - **Events** (organizer portal): any number of events, each with UTC dates (start, submissions
   open, submissions close, judging end), a max team size, tracks, prizes and custom
   submission questions. An event is a draft until it is published. Its phase (upcoming, open,
-  judging or finished) is computed from the dates. Co-organizers can be added. Organizers
-  only see their own events, and admins see all.
+  judging or finished) is computed from the dates. Co-organizers and judges (optionally per
+  track) are added by email on the event's control page. Organizers only see their own events,
+  and platform admins see all.
 - **Teams** (participant portal): create a team, share its reusable invite link at `/join/<token>`,
   and the captain can rename it, remove members, replace the link or hand over captaincy.
   A participant is on at most one team per event, which the database enforces. Solo
@@ -157,7 +186,8 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 
 ## What it does not do yet
 
-- Judging (T2).
+- Judging (T2): no score entry, rubric editing, normalization or CSV export yet. The data model
+  and the imported reviews are ready for it. See [JUDGING.md](JUDGING.md).
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.
@@ -168,11 +198,12 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 src/
   config/          settings, root URLs
   core/            audit log, security headers, error pages, markdown, deadline hook
-  accounts/        users, roles, sessions, tokens, login/signup/account pages
-  events/          events, tracks, prizes, custom questions, co-organizers (models + rules)
+  accounts/        users, the role model (roles.py), sessions, tokens, login/signup/account pages
+  events/          events, tracks, prizes, custom questions, per-event memberships (models + rules)
   teams/           teams, members, invite links (models + rules)
   projects/        projects, images, tags, answers (models + rules), gallery query, JSON API, media
   imports/         fixture import (create-only, idempotent, duplicate-aware)
+  scoring/         rubric criteria, scores, score items (filled by the import; T2 reads them)
   public/          pages for visitors            /
   participant/     participant portal            /participant/
   judge/           judge portal                  /judge/
@@ -181,10 +212,21 @@ src/
   templates/       shared layout and components
   static/          violet CRT stylesheet, vendored fonts, small scripts
 tests/             pytest suite
+scripts/           test.sh, acceptance.sh, offline-check.sh
 acceptance/        the organizers' checker and fixtures (read-only)
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the reasons behind it.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the reasons behind it,
+[DATA-MODEL.md](DATA-MODEL.md) for the schema and the import and export paths, and
+[JUDGING.md](JUDGING.md) for the state of judging.
+
+## Credits
+
+This portal merges two lines of work on the same repository: the T1 foundation (per-event roles,
+the conflict-of-interest constraint, the scoring schema and fixture score import, the offline
+check) and the portal-v2 remodel by [@Hanuman-S](https://github.com/Hanuman-S) (the per-audience
+portals, the Violet CRT design, the deadline trigger and extensions, sessions and throttling). The
+commit history shows what came from where.
 
 ## Licence
 
