@@ -37,8 +37,6 @@
           <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
         </div>
         {% endif %}
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:results' event.slug %}">results</a><span class="faint">compute, publish, choose who sees them, winners.csv</span></p>
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:voting' event.slug %}">community vote</a><span class="faint">set up voting, end it, the live tally (organizers only)</span></p>
         <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'api_export_zip' %}?event={{ event.slug }}">export all (.zip)</a><a class="faint" href="#export">or one sheet</a></p>
         <table class="kv">
           <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
@@ -121,12 +119,6 @@
         <a class="btn btn--small" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
         <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
       </div>
-      {% if judging_window.is_open %}
-      <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">
-        {% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end judging now</button>
-        <span class="faint">closes judging at this moment (it only moves the end earlier). reviews still in draft stop counting; final results can then be computed.</span>
-      </form>
-      {% endif %}
       <form class="form" method="post" action="{% url 'organizer:judging_extend' event.slug %}" novalidate>
         {% csrf_token %}
         <p class="section-title">extend judging</p>
@@ -166,7 +158,7 @@
               <td class="num">
                 <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
                 <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
-                <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+                {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
               </td>
             </tr>
           {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
@@ -235,7 +227,7 @@
             <td class="num">
               <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'question' q.pk %}">edit</a>
               <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'question' q.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if q.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if q.is_hidden %}show{% else %}hide{% endif %}</button></form>
-              <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+              {% if q.n %}<span class="faint" title="a question with answers can be hidden, not deleted">answered</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
             </td>
           </tr>
         {% endfor %}

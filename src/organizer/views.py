@@ -13,7 +13,6 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
 from accounts.guards import portal_required, refuse
-from core import audit
 from events import services
 from core import deadlines
 from imports.models import FixtureRef
@@ -116,12 +115,7 @@ def event_control(request, slug):
         if not form.is_valid():
             event.refresh_from_db()
             return _control(request, event, status=400, settings_form=form)
-        try:
-            event = services.update_event(request, event, form)
-        except services.EventRuleError as error:
-            form.add_error("submissions_close_at", str(error))
-            event.refresh_from_db()
-            return _control(request, event, status=409, settings_form=form)
+        event = services.update_event(request, event, form)
         messages.success(request, "event settings saved.")
         return redirect("organizer:event", slug=event.slug)
     return _control(request, event)
@@ -346,21 +340,6 @@ def judging_extend(request, slug):
             return redirect(f"/organizer/events/{event.slug}/#judging")
     event.refresh_from_db()
     return _control(request, event, status=400, judging_form=form)
-
-
-@require_POST
-@portal_required("organizer")
-def judging_end(request, slug):
-    event = services.get_managed_event(request.user, slug)
-    try:
-        services.end_judging_now(event, actor=request.user, origin=audit.origin_of(request))
-    except services.EventRuleError as error:
-        messages.error(request, str(error))
-    else:
-        messages.success(request, "judging ended. final results can be computed now.")
-    if request.POST.get("next") == "results":
-        return redirect("organizer:results", slug=event.slug)
-    return redirect(f"/organizer/events/{event.slug}/#judging")
 
 
 @require_POST

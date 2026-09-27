@@ -56,24 +56,9 @@ def create_event(request, form):
     return event
 
 
-def _refuse_if_voting_scheduled(request, event, new_close, attempted):
-    """Voting opens at or after the last moment a project can change; refuse anything that would
-    move that moment past voting's opening (the 409 voting_scheduled rule)."""
-    from voting.services import close_blocked_by_voting
-
-    reason = close_blocked_by_voting(event, new_close)
-    if reason:
-        audit.record(AuditAction.EVENT_CHANGE_REFUSED, request=request, subject=event.slug,
-                     attempted=attempted, reason="voting_scheduled", requested=new_close.isoformat())
-        raise EventRuleError(reason)
-
-
 def update_event(request, event, form):
     changed = form.changed_data
     old_close = Event.objects.values_list("submissions_close_at", flat=True).get(pk=event.pk)
-    new_close = form.cleaned_data.get("submissions_close_at")
-    if "submissions_close_at" in changed and new_close and new_close > old_close:
-        _refuse_if_voting_scheduled(request, event, new_close, "move the submission close")
     event = form.save()
     if "submissions_close_at" in changed and event.submissions_close_at != old_close:
         audit.record(
@@ -418,7 +403,6 @@ def extend_deadline(request, event, new_close, reason):
         raise EventRuleError("An extension must move the close later. To bring it earlier, edit the settings.")
     if new_close <= now:
         raise EventRuleError("The new close must be in the future, or no team can submit anything.")
-    _refuse_if_voting_scheduled(request, event, new_close, "extend the deadline")
     if event.original_submissions_close_at is None:
         event.original_submissions_close_at = old_close
     moved = {}
@@ -481,48 +465,6 @@ def extend_judging(request, event, new_end, reason):
     return event
 
 
-def end_judging_now(event, *, actor, origin=None):
-    """Close judging at this instant: `judging_ends_at` = the database clock. It only ever moves
-    the end earlier. Refused (audited) when judging has already ended, and before judging has
-    started (the end must stay after the start). The event row is locked, so this cannot race an
-    extension or a second press. The first end is kept in `original_judging_ends_at`; a results
-    date, if set, is already after the old end and so stays after the new one."""
-    from django.core.exceptions import PermissionDenied
-
-    from core.deadlines import db_now
-
-    def refuse(reason, message, **detail):
-        audit.record(AuditAction.JUDGING_END_REFUSED, origin=origin, actor=actor, subject=event.slug,
-                     reason=reason, **detail)
-        raise EventRuleError(message)
-
-    if not can_manage(actor, event):
-        audit.record(AuditAction.JUDGING_END_REFUSED, origin=origin, actor=actor, subject=event.slug,
-                     reason="not an organizer")
-        raise PermissionDenied("Only the event's organizers can end judging.")
-    problem = None
-    with transaction.atomic():
-        locked = Event.objects.select_for_update().get(pk=event.pk)
-        now = db_now()
-        old_end = locked.judging_ends_at
-        if now >= old_end:
-            problem = ("already ended", f"Judging already ended at {old_end.isoformat()}.")
-        elif now <= locked.judging_starts_at:
-            problem = ("not started", "Judging has not started yet, so there is nothing to end. "
-                       "Edit the dates in the settings instead.")
-        else:
-            if locked.original_judging_ends_at is None:
-                locked.original_judging_ends_at = old_end
-            locked.judging_ends_at = now
-            locked.save(update_fields=["judging_ends_at", "original_judging_ends_at", "updated_at"])
-    if problem:
-        refuse(problem[0], problem[1], judging_ends_at=old_end.isoformat())
-    audit.record(AuditAction.JUDGING_ENDED_EARLY, origin=origin, actor=actor, subject=event.slug,
-                 old=old_end.isoformat(), new=now.isoformat())
-    event.refresh_from_db()
-    return event
-
-
 def grant_extension(request, event, team, until, reason):
     from teams.models import TeamExtension
 
@@ -534,7 +476,6 @@ def grant_extension(request, event, team, until, reason):
 
     if until <= db_now():
         raise EventRuleError("An extension must end in the future.")
-    _refuse_if_voting_scheduled(request, event, until, f"extend {team.name}")
     if until >= event.judging_starts_at:
         raise EventRuleError(
             "An extension must end before judging starts "

@@ -34,21 +34,24 @@ Rules:
 
 from __future__ import annotations
 
+import csv
 import io
+import json
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import cached_property
 
 from django.db import connection, transaction
 from django.db.models import Count, Q
+from django.http import HttpResponse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
 
 from accounts.roles import Role, is_organizer_of
 from core import audit
 from core.api import error
-from core.csvfile import FORMULA_START, cell, download as _download, stamp as _stamp, to_csv  # noqa: F401
 from core.deadlines import db_now
 from core.models import AuditAction, AuditLog
 from events.models import CustomQuestion, Event, EventMembership, JudgeInvite, Prize, Track
@@ -58,7 +61,42 @@ from scoring.models import (Assignment, AssignmentRound, AssignmentStatus, Crite
                             ResultSnapshot, Score, SnapshotKind)
 from teams.models import Team, TeamExtension, TeamMember
 
-# Cell formatting and the CSV writer are shared (winners.csv, voter-links.csv): core/csvfile.py.
+# --- cell formatting ------------------------------------------------------------------------------
+
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def cell(value):
+    """A value as it should appear in a spreadsheet cell."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if hasattr(value, "isoformat") and hasattr(value, "tzinfo"):
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, int):
+        return str(value)  # a number, even a negative one, is never a formula
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, float):
+        return f"{value:.6f}".rstrip("0").rstrip(".") if value == value else ""
+    if isinstance(value, (list, tuple)):
+        value = "; ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        value = json.dumps(value, sort_keys=True, ensure_ascii=False)
+    text = str(value)
+    if text.startswith(FORMULA_START):
+        return "'" + text
+    return text
+
+
+def to_csv(header, rows) -> bytes:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow([cell(h) for h in header])
+    for row in rows:
+        writer.writerow([cell(v) for v in row])
+    return ("﻿" + buffer.getvalue()).encode("utf-8")
 
 
 # --- the sheets -----------------------------------------------------------------------------------
@@ -542,6 +580,15 @@ def _caller_events(request):
     return list(managed.order_by("-submissions_close_at", "slug")), None
 
 
+def _stamp(now):
+    return now.strftime("%Y%m%d-%H%MZ")
+
+
+def _download(body, content_type, filename):
+    response = HttpResponse(body, content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @never_cache

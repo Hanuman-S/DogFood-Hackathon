@@ -13,9 +13,6 @@ from events.services import can_manage, get_visible_event
 from projects import gallery as gallery_query
 from projects.models import Project
 from projects.services import can_view
-from scoring.results import results_page, results_visible
-from voting import services as voting_services
-from core.deadlines import db_now
 
 
 @never_cache
@@ -42,22 +39,8 @@ def event_detail(request, slug):
             "is_judge": is_judge_of(request.user, event),
             "submitted_count": event.projects.filter(status="submitted").count(),
             "team_count": event.teams.count(),
-            "results_visible": results_visible(event, request.user),
-            "voting_open": voting_services.is_open(voting_services.voting_for(event), db_now()),
         },
     )
-
-
-@never_cache
-def event_results(request, slug):
-    """/events/<slug>/results. A 404 -- the same as for an event that does not exist -- unless the
-    result is published with a public visibility, or the caller organizes the event (or is a
-    platform admin), in which case they see a full preview. Rules: scoring.results."""
-    event = get_visible_event(request.user, slug)
-    page = results_page(event, request.user)
-    if page is None:
-        raise Http404("No such results.")
-    return render(request, "public/results.html", {"event": event, "page": page})
 
 
 @never_cache

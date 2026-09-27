@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from django import forms
 
-from scoring.models import WINNERS_TOP_N_MAX, ResultVisibility
 from scoring.services import RubricRow
 
 
@@ -85,17 +84,3 @@ class CriterionTextForm(forms.Form):
             str(n): self.cleaned_data.get(f"level_{n}", "")
             for n in range(self.criterion.min_value, self.criterion.max_value + 1)
         }
-
-
-class ResultSettingsForm(forms.Form):
-    """Who sees the published result. Rules and the audit row: scoring.services.set_result_settings."""
-
-    visibility = forms.ChoiceField(
-        choices=ResultVisibility.choices, widget=forms.RadioSelect,
-        help_text="applies only once a final result is published. organizers and admins always see everything.",
-    )
-    winners_top_n = forms.IntegerField(
-        min_value=1, max_value=WINNERS_TOP_N_MAX, label="winners overall",
-        help_text="the top places named as winners overall (a tie on the cut includes everyone on it), "
-        "plus the top project of each track.",
-    )
