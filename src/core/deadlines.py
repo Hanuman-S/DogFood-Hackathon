@@ -26,8 +26,8 @@ without one.
 
 **The import bypass.** Historical fixture data is, by construction, already past its
 deadline. The importer therefore does not call this module at all -- it writes through
-`projects.services.import_project` and friends, which are named for it and are not reachable
-from any URL. See `core.services` for the boundary and DATA-MODEL.md for the rationale.
+`seed/importer.py`, whose methods are named `_import_*` / `_seed_*` and which appears in no
+`urls.py`. See CLAUDE.md ("The import path bypasses the deadline guard") for the boundary.
 """
 
 from __future__ import annotations
@@ -49,24 +49,33 @@ class HasSubmissionWindow(Protocol):
     submissions_close_at: object
 
 
-def submissions_are_open(event: HasSubmissionWindow) -> bool:
+def submissions_are_open(event: HasSubmissionWindow, *, now=None) -> bool:
     """Non-raising form, for templates and serializers deciding what to offer.
 
     This is a convenience for rendering, never the enforcement. A template that hides the
     submit button is a courtesy; `assert_submissions_open` is what actually refuses.
     """
-    moment = clock.now()
+    moment = now or clock.now()
     return event.submissions_open_at <= moment < event.submissions_close_at
 
 
-def assert_submissions_open(event: HasSubmissionWindow) -> None:
-    """Raise unless the submission window is open right now.
+def assert_submissions_open(event: HasSubmissionWindow, *, now=None) -> None:
+    """Raise unless the submission window is open at `now`.
+
+    Args:
+        now: the instant to judge against, defaulting to `clock.now()`. Service functions
+            read the clock **once** per request and pass that value here, so the instant that
+            passes the deadline check is the same one that gets stamped on the row. Two
+            separate reads leave a gap in which a write can be admitted by the guard and then
+            recorded with a `submitted_at` after the close instant -- rare, but it would put a
+            provably-late timestamp on an accepted submission, which is exactly the thing this
+            module exists to make impossible.
 
     Raises:
         SubmissionsNotOpen: the window has not started.
         SubmissionsClosed: the window has ended (or ends exactly now).
     """
-    moment = clock.now()
+    moment = now or clock.now()
 
     if moment < event.submissions_open_at:
         raise SubmissionsNotOpen(

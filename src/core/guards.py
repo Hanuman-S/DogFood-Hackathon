@@ -26,6 +26,7 @@ def guard_submissions_open(
     action: str,
     target=None,
     request=None,
+    now=None,
 ) -> None:
     """Refuse a participant write outside the submission window, and record the refusal.
 
@@ -33,12 +34,15 @@ def guard_submissions_open(
         action: a short description of what was attempted, e.g. `"create_team"`. It lands in the
             audit row's metadata, which is what makes the trail readable: "refused: deadline" on
             its own does not tell an organizer what the participant was trying to do.
+        now: the instant to judge against, passed through to `assert_submissions_open`. A
+            service that also stamps a timestamp on the row reads the clock once and passes
+            the same value to both, so the two can never disagree.
 
     Raises:
         SubmissionsClosed: including its `SubmissionsNotOpen` subclass.
     """
     try:
-        assert_submissions_open(event)
+        assert_submissions_open(event, now=now)
     except SubmissionsClosed as exc:
         audit.record_refusal(
             reason=exc.code,

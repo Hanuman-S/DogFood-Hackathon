@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}{% if project %}Edit {{ project.name }}{% else %}New project{% endif %} · {{ event.name }}{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>{% if project %}Edit project{% else %}Start a project{% endif %}</h1>
+    <p>
+      <a href="/events/{{ event.slug }}">{{ event.name }}</a>
+      · <a href="/teams/{{ team.pk }}">{{ team.name }}</a>
+      {% if project %}
+        <span class="status-pill status-{{ project.status }}">{{ project.status }}</span>
+      {% endif %}
+    </p>
+  </hgroup>
+
+  {% comment %}
+  The banner and the hidden buttons below are a courtesy only. Every one of these actions is
+  refused by the service layer after the deadline, whatever the page offers.
+  {% endcomment %}
+  {% if not submissions_open %}
+    <div class="deadline-notice" role="alert">
+      <strong>Submissions are closed.</strong>
+      This event closed at {{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC. The project can no
+      longer be edited{% if project and not project.is_submitted %}, and a draft cannot be submitted
+      now{% endif %}.
+    </div>
+  {% endif %}
+
+  {% if project %}
+    {% if project.is_submitted %}
+      <p class="muted">
+        Submitted {{ project.submitted_at|date:"Y-m-d H:i" }} UTC. You can keep editing until the
+        deadline — the submission time stays as it is.
+      </p>
+    {% elif missing %}
+      <div class="flash" role="status">
+        <strong>Not submitted yet.</strong>
+        Still needed before you can submit:
+        <ul>{% for item in missing %}<li>{{ item }}</li>{% endfor %}</ul>
+      </div>
+    {% else %}
+      <div class="flash" role="status">
+        <strong>Ready to submit.</strong> Nothing is missing.
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="muted">
+      A draft needs only a name — save now and fill in the rest later. Nothing is public until you
+      submit.
+    </p>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    {% include "_form.html" %}
+    <button type="submit">{% if project %}Save{% else %}Save draft{% endif %}</button>
+    {% if project %}
+      <a href="/projects/{{ project.pk }}" role="button" class="secondary outline">View</a>
+    {% else %}
+      <a href="/teams/{{ team.pk }}" role="button" class="secondary outline">Cancel</a>
+    {% endif %}
+  </form>
+
+  {% if project and not project.is_submitted %}
+    <h2>Submit</h2>
+    <p class="muted">
+      Submitting makes the project visible in the public gallery. You can still edit it until the
+      deadline.
+    </p>
+    <form method="post" action="/projects/{{ project.pk }}/submit">
+      {% csrf_token %}
+      <button type="submit" {% if missing or not submissions_open %}disabled{% endif %}>
+        Submit project
+      </button>
+    </form>
+  {% endif %}
+
+  {% if project %}
+    <h2>Thumbnail</h2>
+    <p class="muted">
+      One image, shown on the project's card in the gallery. It does not count towards the
+      {{ max_images }} gallery images below.
+    </p>
+    {% if project.thumbnail %}
+      <p><img src="/projects/{{ project.pk }}/thumbnail.img" alt="Current thumbnail" width="240"></p>
+    {% endif %}
+    <form method="post" action="/projects/{{ project.pk }}/thumbnail" enctype="multipart/form-data">
+      {% csrf_token %}
+      <input type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
+      <button type="submit" class="secondary">Upload thumbnail</button>
+    </form>
+
+    <h2>Images ({{ images|length }} of {{ max_images }})</h2>
+    {% if images %}
+      <div class="image-grid">
+        {% for image in images %}
+          <figure>
+            <img src="/projects/images/{{ image.pk }}" alt="{{ image.alt_text }}" width="240">
+            <figcaption>
+              {% if image.alt_text %}{{ image.alt_text }}{% else %}
+                <span class="muted">no alt text</span>
+              {% endif %}
+              <form method="post" action="/projects/images/{{ image.pk }}/delete" class="inline-form">
+                {% csrf_token %}
+                <button type="submit" class="secondary outline">Remove</button>
+              </form>
+            </figcaption>
+          </figure>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No images yet.</p>
+    {% endif %}
+
+    {% if images|length < max_images %}
+      <form method="post" action="/projects/{{ project.pk }}/images" enctype="multipart/form-data">
+        {% csrf_token %}
+        {% include "_form.html" with form=image_form %}
+        <button type="submit" class="secondary">Add image</button>
+      </form>
+    {% else %}
+      <p class="muted">Remove an image before adding another.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

@@ -121,6 +121,30 @@ a.brand { text-decoration: none; }
   background: rgba(0, 0, 0, 0.05);
 }
 
+/* Project pages. `.prose` holds sanitized markdown, so it must style whatever markdown-it
+ * produces -- headings included -- without assuming a wrapper per element. */
+.tagline { font-size: 1.1rem; color: var(--dogfood-muted); margin-top: -0.5rem; }
+.prose > :first-child { margin-top: 0; }
+.prose pre { overflow-x: auto; }
+.prose img { max-width: 100%; }  /* defensive: render_markdown strips <img>, but a future
+                                  * allow-list change should not break the layout. */
+
+/* Uploaded images, on the editor and the detail page. Fixed aspect keeps a portrait screenshot
+ * from stretching the page while a landscape one sits beside it. */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.image-grid figure { margin: 0; }
+.image-grid img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.04);
+}
+.image-grid figcaption { font-size: 0.8rem; color: var(--dogfood-muted); }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --dogfood-warning-bg: #3a2d14;

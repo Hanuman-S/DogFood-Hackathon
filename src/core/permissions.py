@@ -232,7 +232,7 @@ def can_view_project(user, project) -> bool:
     if project is None:
         return False
 
-    if _is_publicly_visible(project):
+    if is_publicly_visible(project):
         return True
 
     return (
@@ -242,7 +242,7 @@ def can_view_project(user, project) -> bool:
     )
 
 
-def _is_publicly_visible(project) -> bool:
+def is_publicly_visible(project) -> bool:
     """The gallery's four conditions, applied to a single object.
 
     Mirrors `projects.models.ProjectQuerySet.gallery_visible`. The queryset version is what runs
@@ -258,6 +258,12 @@ def _is_publicly_visible(project) -> bool:
         and not project.hidden_by_organizer
         and project.event.gallery_public
     )
+
+
+# The original private spelling, kept because the name appears in a test's docstring and reads
+# naturally there. Public because the media view needs it to decide whether an image may be
+# cached by anything other than the viewer's own browser.
+_is_publicly_visible = is_publicly_visible
 
 
 def can_view_project_scores(user, project) -> bool:

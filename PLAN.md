@@ -426,3 +426,155 @@ emulates cascades in Python rather than in the database.
 Next: phase 5 — project draft/edit/submit UI and API, uploads with Pillow verification, protected
 media, custom answers. This is the phase that must turn the acceptance checker's third T1 check
 from an accidental 404 into a genuine 409 `submissions_closed`.
+
+### Phase 5 — Projects ✅ (2026-09-26)
+
+Decisions confirmed by the user before building (do not silently revisit):
+
+- **Admin/organizer authoring: the permission matrix reading stands.** Neither an organizer nor a
+  platform admin may create, edit or submit a project; only members of the owning team can. They
+  keep full *visibility* (drafts included) and moderation (hide, flag duplicate), but never author
+  on a team's behalf. Confirmed 2026-09-26, against the looser "admin can do everything" prose
+  elsewhere in the brief. Implemented at `core/permissions.py::can_edit_project`, asserted by
+  `tests/test_permissions.py::test_neither_organizers_nor_admins_may_edit_a_teams_project` and
+  `tests/test_projects.py::test_neither_an_organizer_nor_an_admin_may_author`. Do not "fix" it later.
+- **Withdrawal: not built.** The dangling promise in `leave_team` was reworded instead. No code path
+  moves a project from `submitted` back to `draft`, for anyone.
+- **API surface: the create POST only.** Editing and submitting are UI-only in T1 (brief 7.6 lists
+  only the create write). Recorded in "Not done yet" below.
+- **No live duplicate detection.** The one-active-project partial index covers the realistic case;
+  organizers flag duplicates by hand from the dashboard. The brief specifies flagging for the
+  importer only.
+- **The thumbnail sits outside the <=8 image cap** (separate field, separate limit), and **tags are
+  capped at 10** per project - a limit the brief does not specify, imposed because tags feed both the
+  gallery filter list and the search vector's weight-B term.
+
+Done:
+
+- `projects/services.py` - the whole participant write surface: `create_project`,
+  `guard_project_create`, `update_project`, `submit_project`, `set_tags`, `save_answers`,
+  `add_image`, `remove_image`, `set_thumbnail`, plus `normalize_tag`, `parse_tags`,
+  `render_markdown`, `missing_to_submit`, `verify_image`. Every public function calls the deadline
+  guard then the permission guard, before any transaction, and each entry point reads
+  `clock.now()` **once** and passes that instant to both the guard and `submitted_at`
+  (`assert_submissions_open` / `guard_submissions_open` gained a `now=` parameter for this).
+- Draft/submit state machine. A draft needs only a name; submitting needs name, tagline,
+  description, track, repo URL and every required question answered; editing after submitting is
+  allowed until the deadline and never rewrites `submitted_at`; a submitted project cannot be
+  edited back into an incomplete state; a required question added *after* submission is
+  grandfathered (`missing_to_submit(grandfather=True)`), so an organizer's form edit cannot freeze
+  existing teams out of their own editor.
+- UI at the URLs phase-4 templates already linked to: `/events/<slug>/projects/new`,
+  `/projects/<id>`, `/projects/<id>/edit`, plus the `/submit`, `/images` and `/thumbnail` POST
+  targets. Refusals render with their own status code (409 for the deadline), not a 200.
+- `POST /api/events/sample-hack-2026/projects` - the one T1 write endpoint, at exactly the
+  advertised string. Order: authenticate -> resolve event (404) -> deadline (409) -> permission
+  (403) -> validation (400). The body is validated on the line *after* the guards precisely so
+  argument evaluation cannot reorder them.
+- Uploads: Pillow-verified by decoding, `MAX_IMAGE_PIXELS` lowered to 40M with
+  `DecompressionBombWarning` promoted to an error, `verify()` then rewind-and-reopen, format checked
+  against the allow-list, and the image **re-encoded** so EXIF (GPS included) is stripped and
+  polyglots do not survive. Randomized filenames. The <=8 cap is enforced under
+  `select_for_update()` on the project row, because count-then-insert is racy under READ COMMITTED
+  and "at most N rows per parent" is not expressible as a constraint. Thumbnail is outside the cap.
+- Protected media: `/projects/images/<id>` and `/projects/<id>/thumbnail.img` re-apply
+  `can_view_project`, 404 (never 403), send the Content-Type recorded from the decoded format
+  (new `ProjectImage.content_type` / `Project.thumbnail_content_type` columns, migration 0002),
+  plus `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store` for anything not
+  publicly visible. A missing file is a 404, not a 500.
+- Markdown: markdown-it-py (`html=False`) then nh3 against an allow-list that excludes `<img>`
+  (a remote image would break the offline rule and leak every reader's IP) and rewrites links with
+  `rel="noopener noreferrer nofollow"`; schemes limited to http/https/mailto.
+- File deletion deferred to `transaction.on_commit`, so a rollback can never leave a row pointing
+  at a deleted file. The inverse gap (a crash between commit and unlink leaves an orphan file) is
+  accepted and goes in the README.
+- `teams/services.py::rename_team` now reindexes the team's projects: the team name carries weight
+  B in the search vector, so a rename without reindexing left every project findable only under the
+  old name - silently, with no error to notice.
+- The withdrawal promise is gone. `leave_team` no longer tells the last member to "ask an organizer
+  to withdraw the submission"; nothing implements withdrawal and nothing will in T1.
+
+Bugs found and fixed while building:
+
+1. **`full_clean()` raised Django's `ValidationError`, which nothing translated** - an unhandled
+   exception, so any field-level problem arriving through the API would have been a **500**. Now
+   funnelled through `_full_clean()`, which maps it to `ValidationFailed` (400) or, when it names
+   the one-active-project constraint, to `ProjectExists` (409). Found by the test written to prove
+   the constraint is what enforces the rule.
+2. **Argument-evaluation order would have broken the check-order promise.** The first draft called
+   `services.create_project_for_event(..., **_validated(serializer))`; Python evaluates arguments
+   first, so the serializer would have run before the deadline guard and a late POST with an
+   unrecognised body would have answered 400 instead of 409. Split into `guard_project_create`,
+   then validation, then the write.
+3. Three of my own tests asserted on substrings of rendered markdown. markdown-it *escapes* raw
+   HTML rather than dropping it, so `onclick` legitimately appears inside inert escaped text.
+   Rewritten to assert on the tags and attributes actually produced.
+
+Tests: **416 green** (293 before, +123). New: `tests/test_projects.py` (lifecycle, permissions,
+tags, answers, markdown, URL schemes, rename reindexing), `tests/test_project_uploads.py`
+(verification, EXIF stripping, polyglots, decompression bomb, the row lock, protected media
+headers), `tests/test_api_submit.py` (the checker's exact request, ordering, the 201 path, auth),
+`tests/test_acceptance_contract.py` (`.dogfood.toml` against the URLconf, T2 routes honestly 404).
+`tests/test_audit_trail.py` gained a parameterized sweep over all eight project write paths **plus**
+a reflection test asserting that sweep's list equals every public write function in
+`projects.services`, so a new unguarded write cannot slip in untested.
+
+Verified live: clean `down -v && up --build`; check 3 answers
+`409 {"error":"submissions_closed","closed_at":"2026-03-01T18:00:00Z"}` in one hop with the refusal
+in the audit log; no token -> 401; unknown slug -> 404; a second create for a team -> 409
+`project_exists`; a missing name -> 400; a genuine create on the open demo event -> 201 with
+`missing_to_submit` listing what is left; a draft's detail page -> 404 for anonymous; a submitted
+fixture project renders with UTC-labelled timestamps.
+
+**Note on the acceptance report:** it is byte-identical to the previous run, because check 3 passes
+on any 4xx and it was previously getting an accidental 404 from a route that did not exist. The
+report cannot tell those two apart - which is exactly why this phase mattered. The 409 is pinned by
+`tests/test_api_submit.py` and by the live request above.
+
+For the README's "Not done yet" (phase 7):
+
+- No API for editing or submitting; the create POST is the only T1 write endpoint (brief 7.6).
+- No submission withdrawal, and no organizer path from `submitted` back to `draft`.
+- No live duplicate detection on submit; organizers flag duplicates by hand from the dashboard.
+- Orphaned media files are possible if the process dies between commit and unlink, and there is no
+  cleanup command.
+- Custom-question answers are stored as text for every kind, with no per-kind columns.
+
+## ▶ Handoff — start of phase 6
+
+State: phases 1-5 committed. 416 tests green. Acceptance: T1 check 3 PASS, checks 1-2 FAIL because
+the gallery does not exist yet, four T2 checks FAIL honestly.
+
+Phase 6 is the gallery, and it is what turns checks 1 and 2 green:
+
+- **`/projects` at exactly that string**, registered at the root in `config/urls.py` - not under the
+  `projects/` include, which only handles `/projects/<...>`. `.dogfood.toml` advertises it, and
+  `tests/test_acceptance_contract.py` already asserts the T1 paths carry no query string; extend it
+  to assert this one resolves and answers 200 anonymously.
+- Defaults are settled and load-bearing: sort `newest`, page size **50**
+  (`settings.GALLERY_PAGE_SIZE` / `GALLERY_DEFAULT_SORT`). All 40 visible fixture projects fit page
+  one, so all three titles the checker looks for are present under any sort. Nothing may inspect the
+  request to decide what to show.
+- Search over `Project.search_vector` (GIN index; weights A name / B tagline+tags+team /
+  C description, already maintained by `projects.search.rebuild_search_vector`). Filters: event,
+  track, tag. Sorts: newest, name. **All state in query params**, so a filtered view is a URL
+  somebody can paste.
+- Scope every list through `core.permissions.gallery_projects()` or `visible_projects(user)` - never
+  a hand-rolled filter. `ProjectQuerySet.gallery_visible()` and `permissions.is_publicly_visible()`
+  must stay in agreement; `tests/test_permissions.py` asserts that across the whole fixture set.
+- `/events/<slug>/projects` for the per-event gallery (phase-4 templates already link to it).
+- JSON equivalents under `/api/projects` - read-only, same scoping.
+- The fixture summaries are identical across many projects (`tests/test_import_fixtures.py` notes
+  this), so search relevance will look odd on fixture data. Say so in the README rather than tuning
+  the weights around it.
+
+Already in place for phase 6 to reuse rather than reinvent: `project_detail` and the protected media
+views in `projects/views.py`, `services.render_markdown`, the `.project-card` / `.project-thumb` CSS
+classes (already in `portal.css`, unused until now), and `GALLERY_PAGE_SIZE`.
+
+Then phase 7: real acceptance run committed, README (with the "Not done yet" list above and the
+build-needs-network caveat), ARCHITECTURE.md, DATA-MODEL.md (Mermaid ER + fixture mapping),
+JUDGING.md stub, final clean-clone test with the network off. **Stop for go-ahead after phase 7.**
+
+Environment gotchas: see CLAUDE.md (Git Bash path mangling - `MSYS_NO_PATHCONV=1` is needed for
+`docker compose exec ... /app/src/manage.py` too; python3 Store shim).

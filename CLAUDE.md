@@ -159,6 +159,60 @@ Two classes, both configured in `REST_FRAMEWORK`:
 The acceptance checker can attach exactly one header, so it cannot send a CSRF token. The
 Bearer path is what makes its closed-event POST a real test of the deadline.
 
+### 8. Uploads are hostile input, and uploaded bytes are served by a view
+
+`projects.services.verify_image` is the only way a file reaches storage. It ignores the extension,
+the filename and the browser's declared content type, and consults only what the bytes decode to:
+size checked first, `Image.MAX_IMAGE_PIXELS` capped at 40M with `DecompressionBombWarning`
+**promoted to an error**, `verify()` then a rewind-and-reopen (verify leaves the image unusable),
+format checked against `settings.ALLOWED_IMAGE_FORMATS`, then the image **re-encoded**. The
+re-encode is not cosmetic: it strips EXIF, including the GPS tags a phone attaches, and it
+neutralises polyglot files, which pass a format check but do not survive a decode. Stored names are
+random; the uploaded name never reaches the filesystem or a URL.
+
+Serving goes through `projects/views.py`, never a static handler -- `settings.MEDIA_URL` is `None`
+so a stray `{{ image.url }}` fails loudly. The view re-applies `can_view_project` (404, not 403),
+sends the Content-Type recorded from the decoded format, adds `X-Content-Type-Options: nosniff`, and
+uses `Cache-Control: private, no-store` for anything not publicly visible so a draft's image cannot
+sit in a shared cache.
+
+Deleting a stored file happens in `transaction.on_commit`. Inline deletion means a rolled-back
+transaction leaves a row pointing at nothing; the deferred version can only leave an orphan file,
+which is the better direction to fail in. Orphans are documented in the README, not swept up by a
+daemon.
+
+### 9. No write path may answer 500
+
+Two translations exist because of this, and both are easy to undo by accident:
+
+- `Model.full_clean()` raises Django's `ValidationError`, which the API exception handler knows
+  nothing about. `projects.services._full_clean` maps it to `ValidationFailed` (400), or to
+  `ProjectExists` (409) when it names the one-active-project constraint. Any new service that calls
+  `full_clean` needs the same treatment.
+- An `IntegrityError` naming `project_one_active_per_team_per_event` becomes the same 409. Every
+  other `IntegrityError` is re-raised: disguising an unknown one as a conflict hides a real bug
+  behind a plausible message.
+
+Counts that a constraint cannot express are enforced with a row lock. `add_image` takes
+`select_for_update()` on the project before counting, because count-then-insert under READ COMMITTED
+lets two uploads both read 7 and both insert.
+
+### 10. Guard inside the service, and read the clock once
+
+Every *public* function in a services module runs the deadline guard then the permission guard
+itself. Not just the top-level ones: `set_tags`, `add_image` and friends are each reachable from a
+view, and a public write that trusts its caller to have checked is one refactor from being an
+unguarded write. `tests/test_audit_trail.py` sweeps all of them, and a reflection test there fails
+if a new public write appears without being added to the sweep.
+
+Each entry point takes `now = clock.now()` once and passes it to the guard *and* to any timestamp it
+stores (`assert_submissions_open(event, now=...)`). Two separate reads leave a window where a
+submission is admitted by the guard and then stamped with a time after the deadline.
+
+Where a request body has to be validated, validate it **after** the guards -- on a later statement,
+not in the same expression. Python evaluates arguments before the call, so
+`service(..., **validate(body))` runs the validation first and turns a late request into a 400.
+
 ## Running things
 
 ```bash
@@ -206,3 +260,5 @@ These are scored, and they matter more than feature count:
 
 Boring, readable Django over cleverness. Thin views, explicit service functions, comments
 that explain *why* rather than restate the code. Match the surrounding file.
+
+Before starting any phase, read plan.md — especially the latest handoff section.

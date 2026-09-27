@@ -15,6 +15,7 @@ from django.urls import include, path
 
 from core.admin_site import portal_admin_site
 from core.views import healthz, home
+from projects import urls as projects_urls
 from teams import urls as teams_urls
 
 
@@ -39,7 +40,14 @@ urlpatterns = [
     path("events/", include("events.urls")),
     # `/events/<slug>/teams/new` belongs to the teams app but reads naturally under the event.
     path("events/", include(teams_urls.event_team_urlpatterns)),
+    # Likewise `/events/<slug>/projects/new`: a project is created inside an event, and afterwards
+    # has an identity of its own under /projects/<id>.
+    path("events/", include(projects_urls.event_project_urlpatterns)),
     path("teams/", include("teams.urls")),
+    path("projects/", include("projects.urls")),
+    # The JSON API. `/api/events/<slug>/projects` is the route `.dogfood.toml` advertises as
+    # `submit`; it is registered at exactly that string, with no trailing slash.
+    path("api/", include("api.urls")),
     # Admin is gated on is_platform_admin by PortalAdminSite.has_permission.
     path("admin/", portal_admin_site.urls),
 ]

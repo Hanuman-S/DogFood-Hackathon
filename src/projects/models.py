@@ -87,6 +87,9 @@ class Project(models.Model):
         blank=True,
         help_text="Verified with Pillow on upload; never trusted by file extension.",
     )
+    # Recorded at upload from the format Pillow actually decoded, so the media view can send a
+    # Content-Type without sniffing the bytes or trusting the filename at serve time.
+    thumbnail_content_type = models.CharField(max_length=40, blank=True, editable=False)
 
     # http/https only, and rendered as links rather than embeds. An iframe for a video would
     # need an external host at view time, which the offline rule forbids, and would widen the
@@ -207,6 +210,8 @@ class ProjectImage(models.Model):
         help_text="Described for screen readers. Empty means decorative.",
     )
     order = models.PositiveSmallIntegerField(default=0)
+    # As above: the decoded format, recorded once, so serving never has to guess.
+    content_type = models.CharField(max_length=40, blank=True, editable=False)
 
     created_at = models.DateTimeField(default=clock.now, editable=False)
 

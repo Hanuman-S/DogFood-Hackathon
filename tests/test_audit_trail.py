@@ -28,6 +28,7 @@ from tests.factories import (
     make_invite,
     make_judge,
     make_organizer,
+    make_question,
     make_submitted_project,
     make_team,
     make_track,
@@ -152,6 +153,118 @@ def test_every_guarded_team_path_records_its_own_refusal(closed_event, path):
     assert AuditLog.objects.filter(
         action=AuditAction.REFUSED_DEADLINE, metadata__attempted=path
     ).exists(), f"{path} refused without recording it"
+
+
+# --------------------------------------------------------------------------------------
+# the same, for every project write path
+# --------------------------------------------------------------------------------------
+
+PROJECT_WRITE_PATHS = [
+    "create_project",
+    "update_project",
+    "submit_project",
+    "set_tags",
+    "save_answers",
+    "add_image",
+    "remove_image",
+    "set_thumbnail",
+]
+
+
+@pytest.mark.parametrize("path", PROJECT_WRITE_PATHS)
+def test_every_guarded_project_path_records_its_own_refusal(closed_event, path):
+    """One sweep over every public write function in `projects.services`.
+
+    The list is exhaustive on purpose: adding a guarded path without its audit entry fails here,
+    and so does adding a *public* write function that forgets to guard at all -- which is the more
+    dangerous mistake, since it would accept a submission after the deadline.
+    """
+    import io
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    from projects import services as project_services
+
+    team = make_team(closed_event)
+    member = team.captain().user
+    # Built directly rather than through the service layer: the event is already closed, so no
+    # participant write path could produce this state. This is the same reason the fixture
+    # importer bypasses the guard.
+    project = make_submitted_project(team, name="Already There")
+    question = make_question(closed_event, prompt="Anything?")
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buffer, format="PNG")
+    upload = SimpleUploadedFile("x.png", buffer.getvalue(), "image/png")
+
+    existing_image = project.images.create(image="projects/none.png", order=0)
+
+    calls = {
+        "create_project": lambda: project_services.create_project(
+            actor=member, event=closed_event, team=make_team(closed_event), name="Too Late"
+        ),
+        "update_project": lambda: project_services.update_project(
+            actor=member, project=project, tagline="edited late"
+        ),
+        "submit_project": lambda: project_services.submit_project(actor=member, project=project),
+        "set_tags": lambda: project_services.set_tags(
+            actor=member, project=project, tags="late"
+        ),
+        "save_answers": lambda: project_services.save_answers(
+            actor=member, project=project, answers={question.pk: "late"}
+        ),
+        "add_image": lambda: project_services.add_image(
+            actor=member, project=project, upload=upload
+        ),
+        "remove_image": lambda: project_services.remove_image(actor=member, image=existing_image),
+        "set_thumbnail": lambda: project_services.set_thumbnail(
+            actor=member, project=project, upload=upload
+        ),
+    }
+
+    with pytest.raises(SubmissionsClosed):
+        calls[path]()
+
+    assert AuditLog.objects.filter(
+        action=AuditAction.REFUSED_DEADLINE, metadata__attempted=path
+    ).exists(), f"{path} refused without recording it"
+
+
+def test_the_project_sweep_covers_every_public_write_function():
+    """Guards the list above against drift.
+
+    A new public write in `projects.services` that nobody adds here would otherwise go untested
+    for the one property that matters most about it.
+    """
+    import inspect
+
+    from projects import services as project_services
+
+    # Functions that write but are not participant write paths, with why each is exempt.
+    exempt = {
+        "guard_project_create",  # the guards themselves; covered via create_project
+        "normalize_tag",
+        "parse_tags",
+        "render_markdown",
+        "missing_to_submit",
+        "can_submit",
+        "verify_image",  # pure validation, writes nothing
+    }
+
+    public_writes = {
+        name
+        for name, obj in vars(project_services).items()
+        if not name.startswith("_")
+        and inspect.isfunction(obj)
+        and obj.__module__ == project_services.__name__
+        and name not in exempt
+    }
+
+    assert public_writes == set(PROJECT_WRITE_PATHS), (
+        "projects.services gained or lost a public write function; add it to "
+        "PROJECT_WRITE_PATHS (and make sure it guards itself) or to the exempt list above"
+    )
 
 
 # --------------------------------------------------------------------------------------

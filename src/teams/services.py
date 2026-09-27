@@ -106,8 +106,20 @@ def rename_team(*, actor: User, team: Team, name: str, request=None) -> Team:
 
     old = team.name
     team.name = name
-    team.full_clean()
-    team.save(update_fields=["name", "updated_at"])
+
+    with transaction.atomic():
+        team.full_clean()
+        team.save(update_fields=["name", "updated_at"])
+
+        # The team name carries weight B in the project search vector, so a rename that did not
+        # reindex would leave every one of this team's projects findable under the *old* name and
+        # invisible under the new one -- a silent, permanent search bug with no error to notice.
+        # Imported here rather than at module level to keep the teams app free of a hard
+        # dependency on projects.
+        from projects.search import rebuild_search_vector
+
+        for project in team.projects.all():
+            rebuild_search_vector(project)
 
     audit.record(
         AuditAction.TEAM_RENAMED,
@@ -417,7 +429,11 @@ def leave_team(*, actor: User, team: Team, request=None) -> dict:
             raise ConflictError(
                 "You are the last member of this team and it has a submitted project. "
                 "Leaving would leave that submission with no owner, so it is not allowed. "
-                "Invite someone else first, or ask an organizer to withdraw the submission."
+                "Invite someone else to the team first."
+                # Deliberately does not offer "ask an organizer to withdraw it". Withdrawal is
+                # not implemented -- no code path moves a project from submitted back to draft --
+                # and a refusal that names a feature nobody can provide sends the participant to
+                # an organizer who can only shrug. See the README's "Not done yet".
             )
 
     event = team.event
