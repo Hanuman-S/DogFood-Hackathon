@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{% if event %}Edit {{ event.name }}{% else %}New event{% endif %} · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <h1>{% if event %}Edit {{ event.name }}{% else %}Create an event{% endif %}</h1>
+
+  <p class="flash flash-warning">
+    {# Browsers render datetime-local inputs in the viewer's own timezone without saying which. #}
+    {# A deadline misread by a timezone is the most expensive mistake this software can cause, so #}
+    {# it is stated here as well as on every field label. #}
+    <strong>All times are UTC.</strong>
+    The values you type are stored and displayed exactly as entered, in UTC — not in your local
+    timezone.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    {% include "_form.html" %}
+    <button type="submit">{% if event %}Save changes{% else %}Create event{% endif %}</button>
+    {% if event %}<a href="/events/{{ event.slug }}/manage" role="button" class="secondary outline">Cancel</a>{% endif %}
+  </form>
+
+  {% if event %}
+    <p><small class="muted">
+      Changing any date is recorded in the audit log with its old and new value. Extending the
+      submission deadline is allowed, including after it has passed.
+    </small></p>
+  {% endif %}
+{% endblock %}

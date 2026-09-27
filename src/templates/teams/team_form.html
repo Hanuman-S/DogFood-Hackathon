@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}New team · {{ event.name }}{% endblock %}
+
+{% block content %}
+  <h1>Create a team</h1>
+  <p class="muted">{{ event.name }}</p>
+
+  {% if not submissions_open %}
+    <div class="deadline-notice" role="alert">
+      <strong>Submissions are closed.</strong>
+      This event closed at {{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC, so new teams can no
+      longer be created.
+    </div>
+  {% endif %}
+
+  <p>
+    You become the team's captain and are registered as a participant of this event. Team names do
+    not have to be unique.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    {% include "_form.html" %}
+    <button type="submit">Create team</button>
+    <a href="/events/{{ event.slug }}" role="button" class="secondary outline">Cancel</a>
+  </form>
+{% endblock %}

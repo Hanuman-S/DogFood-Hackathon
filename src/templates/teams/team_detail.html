@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.name }} · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>{{ team.name }}</h1>
+    <p><a href="/events/{{ event.slug }}">{{ event.name }}</a></p>
+  </hgroup>
+
+  {% if not submissions_open %}
+    <div class="deadline-notice" role="status">
+      <strong>Submissions are closed.</strong>
+      This event closed at {{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC, so the team can no
+      longer be changed and the project can no longer be edited.
+    </div>
+  {% endif %}
+
+  <h2>Members ({{ members|length }} of {{ event.max_team_size }})</h2>
+  <table>
+    <tbody>
+      {% for member in members %}
+        <tr>
+          <td>
+            {{ member.user.display_name }}
+            {% if member.is_captain %}<span class="status-pill">captain</span>{% endif %}
+          </td>
+          <td><small class="muted">joined {{ member.created_at|date:"Y-m-d H:i" }} UTC</small></td>
+          <td>
+            {% if is_captain and not member.is_captain and submissions_open %}
+              <form method="post" action="/teams/{{ team.pk }}/captain" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="user_id" value="{{ member.user.pk }}">
+                <button type="submit" class="secondary outline">Make captain</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Project</h2>
+  {% if project %}
+    <p>
+      <a href="/projects/{{ project.pk }}">{{ project.name }}</a>
+      <span class="status-pill status-{{ project.status }}">{{ project.status }}</span>
+    </p>
+    {% if is_member and submissions_open %}
+      <p><a href="/projects/{{ project.pk }}/edit" role="button">Edit project</a></p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No project yet.</p>
+    {% if is_member and submissions_open %}
+      <p><a href="/events/{{ event.slug }}/projects/new" role="button">Start a project</a></p>
+    {% endif %}
+  {% endif %}
+
+  {% if is_captain %}
+    <h2>Invite links</h2>
+    <p>
+      There is no email in this deployment, so an invite is a link you copy and send however you
+      like. Only a hash of each link is stored — once the page that showed it is gone, the link
+      cannot be displayed again.
+    </p>
+
+    {% if submissions_open %}
+      <form method="post" action="/teams/{{ team.pk }}/invites">
+        {% csrf_token %}
+        {% include "_form.html" with form=invite_form %}
+        <button type="submit">Create invite link</button>
+      </form>
+    {% else %}
+      <p class="muted">Invite links cannot be created after submissions close.</p>
+    {% endif %}
+
+    {% if invites %}
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Created (UTC)</th><th scope="col">Expires (UTC)</th>
+            <th scope="col">Uses</th><th scope="col">State</th><th scope="col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for invite in invites %}
+            <tr>
+              <td>{{ invite.created_at|date:"Y-m-d H:i" }}</td>
+              <td>{{ invite.expires_at|date:"Y-m-d H:i" }}</td>
+              <td>{{ invite.use_count }}{% if invite.max_uses %} of {{ invite.max_uses }}{% endif %}</td>
+              <td><span class="status-pill">{{ invite.state }}</span></td>
+              <td>
+                {% if invite.state == "live" %}
+                  <form method="post" action="/teams/{{ team.pk }}/invites/{{ invite.pk }}/revoke" class="inline-form">
+                    {% csrf_token %}
+                    <button type="submit" class="secondary outline">Revoke</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endif %}
+
+  {% if is_member %}
+    <h2>Leave</h2>
+    {% if is_captain and members|length > 1 %}
+      <p class="muted">
+        As captain, transfer captaincy to another member before leaving, so the team is not left
+        without one.
+      </p>
+    {% elif members|length == 1 %}
+      <p class="muted">
+        You are the last member. Leaving deletes the team and its draft project. If the project has
+        been submitted, leaving is refused instead — a submission must keep an owner.
+      </p>
+    {% endif %}
+    <form method="post" action="/teams/{{ team.pk }}/leave">
+      {% csrf_token %}
+      <button type="submit" class="secondary">Leave this team</button>
+    </form>
+  {% endif %}
+{% endblock %}

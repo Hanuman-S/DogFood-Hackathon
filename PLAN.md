@@ -370,5 +370,59 @@ in the suite. Fixed by scoping them to their own rows, and one test now delibera
 object-level and queryset-level visibility rules agree across the entire real fixture set —
 including `prj_41`, the row where they are most likely to diverge.
 
-Next: phase 4 — organizer event/track/prize/question management, memberships, team creation,
-invite links, join/leave.
+### Phase 4 — Events and teams ✅ (2026-09-26)
+
+Done:
+
+- **Organizer management**: create/edit events (every date labelled UTC, with a `UTCDateTimeField`
+  so a `datetime-local` input cannot silently shift a deadline into the viewer's timezone),
+  tracks, prizes, custom questions, and a `reorder` helper shared by all three.
+- **Refuse-on-referenced-delete**: a track with projects cannot be deleted (checked before the
+  `PROTECT` constraint would raise a 500), and a question with answers cannot be deleted — nor can
+  its `kind` change, which would silently reinterpret every stored answer.
+- **Memberships**: add a judge (with tracks) or co-organizer by email. Refuses an unknown address
+  (no email delivery exists, so an invitation cannot be sent), refuses a participant as a
+  conflict of interest, and refuses removing the last organizer.
+- **Organizer dashboard**: counts, every project including drafts, flagged duplicates, teams,
+  judges/organizers, and the 25 most recent audit entries for the event.
+- **Teams**: create (creator becomes captain and is registered as a participant), `/invite/<token>`
+  landing page that works while logged out, join, leave, transfer captaincy.
+- **All seven named invite refusals**, each with its own sentence, asserted distinct by test:
+  unknown, expired, revoked, exhausted, team full, already on a team, judge/organizer.
+- **293 tests pass** (+98 this phase).
+
+#### The bug this phase nearly shipped
+
+`tests/test_invites.py::test_a_refused_join_is_audited` failed, and the cause was worth the
+detour: **every service function was decorated `@transaction.atomic`**, so when a guard recorded
+"refused: deadline" and then raised, the audit row was rolled back along with the write it
+described. The audit trail would have contained *nothing* for refusals — silently failing the
+brief's explicit requirement to log "every refused write due to the deadline".
+
+`core/guards.py` already documented why the guard must run outside the transaction; the service
+layer then violated it. Fixed properly: no service function is decorated any more. Guards run
+first, outside any transaction, and only the writes sit in an explicit `with transaction.atomic():`
+block — added just where several writes must land together (event + first organizer membership,
+membership + judge tracks, demote + promote on captaincy transfer, the reorder sweep).
+`join_via_invite` catches its own refusal outside the atomic block specifically so the entry
+survives.
+
+`tests/test_audit_trail.py` now pins this down, including a parameterized sweep over all six
+guarded team paths asserting each records its own refusal with the attempted action named. Also
+verified: a deadline refusal records the exact `closed_at` instant, so an organizer can see how
+late an attempt was.
+
+Two smaller fixes: a URL namespace (`include((patterns, "invites"))`) made every
+`reverse("invite_accept")` fail at runtime rather than at import — now included as a bare pattern
+list; and `save_track` recorded `created` by testing `pk is None` *after* saving, which is never
+true.
+
+Verified on the live stack, not just in tests: signed up a new account arriving from the seeded
+invite link, was returned to the invite rather than the home page, accepted it, and the team page
+showed both members with the captain flag and the draft project. Then removed that test account
+through the ORM — a raw SQL `DELETE` was correctly refused by the foreign keys, since Django
+emulates cascades in Python rather than in the database.
+
+Next: phase 5 — project draft/edit/submit UI and API, uploads with Pillow verification, protected
+media, custom answers. This is the phase that must turn the acceptance checker's third T1 check
+from an accidental 404 into a genuine 409 `submissions_closed`.

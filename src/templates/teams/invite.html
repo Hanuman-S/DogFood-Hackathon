@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Team invitation · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <h1>Team invitation</h1>
+
+  {% if team %}
+    <p>
+      You have been invited to join <strong>{{ team.name }}</strong>
+      in <a href="/events/{{ event.slug }}">{{ event.name }}</a>.
+    </p>
+    <p>
+      <small class="muted">
+        {{ team.member_count }} of {{ event.max_team_size }} places taken ·
+        submissions close {{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC
+      </small>
+    </p>
+  {% endif %}
+
+  {% if refusal %}
+    {# Every refusal is specific. "Invalid link" would leave the recipient unable to tell whether #}
+    {# they mistyped the URL, arrived late, or are already on another team. #}
+    <div class="deadline-notice" role="alert">
+      <strong>This invitation cannot be used.</strong>
+      {{ refusal }}
+    </div>
+    <p><a href="/">Back to the portal</a></p>
+
+  {% elif not user.is_authenticated %}
+    <p>Sign in or create an account to accept this invitation.</p>
+    <p>
+      {# `next` brings them back to this exact invite rather than to the home page. #}
+      <a href="/login?next=/invite/{{ token|urlencode }}" role="button">Sign in</a>
+      <a href="/signup?next=/invite/{{ token|urlencode }}" role="button" class="secondary">Sign up</a>
+    </p>
+
+  {% else %}
+    <p>
+      Accepting registers you as a participant of {{ event.name }} and adds you to this team.
+      You can only belong to one team per event.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit">Join {{ team.name }}</button>
+    </form>
+  {% endif %}
+{% endblock %}

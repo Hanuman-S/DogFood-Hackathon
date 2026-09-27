@@ -15,6 +15,7 @@ from django.urls import include, path
 
 from core.admin_site import portal_admin_site
 from core.views import healthz, home
+from teams import urls as teams_urls
 
 
 def robots_txt(request):
@@ -29,6 +30,16 @@ urlpatterns = [
     path("robots.txt", robots_txt),
     # Auth and profile at the root: /login, /signup, /profile.
     path("", include("accounts.urls")),
+    # Invite links live at the root so they stay short enough to paste into chat.
+    #
+    # Included as a bare pattern list rather than `include((patterns, "namespace"))`: the namespaced
+    # form would make the URL name `invites:invite_accept`, and every `reverse("invite_accept")` in
+    # the views would fail at runtime rather than at import time. No namespace means no ambiguity.
+    path("", include(teams_urls.invite_urlpatterns)),
+    path("events/", include("events.urls")),
+    # `/events/<slug>/teams/new` belongs to the teams app but reads naturally under the event.
+    path("events/", include(teams_urls.event_team_urlpatterns)),
+    path("teams/", include("teams.urls")),
     # Admin is gated on is_platform_admin by PortalAdminSite.has_permission.
     path("admin/", portal_admin_site.urls),
 ]

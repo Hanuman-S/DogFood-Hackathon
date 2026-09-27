@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event.name }} · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>{{ event.name }}</h1>
+    <p>
+      {% if submissions_open %}
+        Submissions are open until
+        <strong><time datetime="{{ event.submissions_close_at|date:'c' }}">{{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC</time></strong>.
+      {% else %}
+        {# Naming the instant, not just "closed": a participant needs to know whether they missed #}
+        {# it by a minute or a month. #}
+        Submissions closed at
+        <strong><time datetime="{{ event.submissions_close_at|date:'c' }}">{{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC</time></strong>.
+      {% endif %}
+    </p>
+  </hgroup>
+
+  {% if not event.gallery_public %}
+    <p class="flash flash-warning">
+      This event's gallery is not public. Its submitted projects are visible only to the teams,
+      its judges and its organizers.
+    </p>
+  {% endif %}
+
+  {% if event.description %}<p>{{ event.description|linebreaks }}</p>{% endif %}
+
+  <table>
+    <tbody>
+      <tr><th scope="row">Event starts</th><td>{{ event.starts_at|date:"Y-m-d H:i" }} UTC</td></tr>
+      <tr><th scope="row">Submissions open</th><td>{{ event.submissions_open_at|date:"Y-m-d H:i" }} UTC</td></tr>
+      <tr><th scope="row">Submissions close</th><td>{{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC</td></tr>
+      {% if event.judging_ends_at %}
+        <tr><th scope="row">Judging ends</th><td>{{ event.judging_ends_at|date:"Y-m-d H:i" }} UTC</td></tr>
+      {% endif %}
+      <tr><th scope="row">Max team size</th><td>{{ event.max_team_size }}</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    <a href="/events/{{ event.slug }}/projects" role="button">Browse this event's gallery</a>
+    {% if can_manage %}
+      <a href="/events/{{ event.slug }}/manage" role="button" class="secondary">Organizer dashboard</a>
+    {% endif %}
+  </p>
+
+  {% if my_roles %}
+    <p>Your role{{ my_roles|length|pluralize }} in this event: <strong>{{ my_roles|join:", " }}</strong>.</p>
+  {% endif %}
+
+  <h2>Your team</h2>
+  {% if my_team %}
+    <p>You are on <a href="/teams/{{ my_team.pk }}">{{ my_team.name }}</a>.</p>
+  {% elif user.is_authenticated %}
+    {% if can_register %}
+      {% if submissions_open %}
+        <p>
+          <a href="/events/{{ event.slug }}/teams/new" role="button">Create a team</a>
+          or open an invite link a captain sends you.
+        </p>
+        {% if not my_roles %}
+          <form method="post" action="/events/{{ event.slug }}/register">
+            {% csrf_token %}
+            <button type="submit" class="secondary">Register as a participant</button>
+          </form>
+        {% endif %}
+      {% else %}
+        <p class="muted">Team formation closed with submissions.</p>
+      {% endif %}
+    {% else %}
+      <p class="muted">
+        You are a judge or organizer of this event, so you cannot also compete in it.
+      </p>
+    {% endif %}
+  {% else %}
+    <p><a href="/login?next=/events/{{ event.slug }}">Sign in</a> to join or create a team.</p>
+  {% endif %}
+
+  <h2>Tracks</h2>
+  {% if tracks %}
+    <ul>
+      {% for track in tracks %}
+        <li>
+          <strong>{{ track.name }}</strong>
+          {% if track.description %} — {{ track.description }}{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No tracks defined.</p>
+  {% endif %}
+
+  <h2>Prizes</h2>
+  {% if prizes %}
+    <ul>
+      {% for prize in prizes %}
+        <li>
+          <strong>{{ prize.name }}</strong>
+          {% if prize.value_text %} — {{ prize.value_text }}{% endif %}
+          {% if prize.track %} <small class="muted">({{ prize.track.name }})</small>{% endif %}
+          {% if prize.description %}<br><small>{{ prize.description }}</small>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No prizes announced.</p>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Not allowed · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <h1>Not allowed</h1>
+  <p>
+    Your account does not have permission to do that.
+  </p>
+  <p>
+    {# Actionable rather than a dead end: the most common reason to land here is lacking the #}
+    {# event-creation grant, which an administrator can give. #}
+    If you expected to be able to, ask a platform administrator to grant your account the
+    necessary access.
+  </p>
+  <p><a href="/">Back to the portal</a></p>
+{% endblock %}

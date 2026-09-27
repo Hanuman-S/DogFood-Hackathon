@@ -58,6 +58,7 @@ class AuditAction(models.TextChoices):
 
     # teams
     TEAM_CREATED = "team.created", "Team created"
+    TEAM_RENAMED = "team.renamed", "Team renamed"
     TEAM_JOINED = "team.joined", "Joined a team"
     TEAM_LEFT = "team.left", "Left a team"
     TEAM_DELETED = "team.deleted", "Team deleted"
