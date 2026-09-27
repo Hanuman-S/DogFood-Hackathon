@@ -21,7 +21,8 @@ from events.services import get_managed_event
 from voting import services
 from voting.errors import VotingError
 from voting.forms import VotingConfigForm
-from voting.models import Method
+from voting import links
+from voting.models import Method, VoterLink
 
 TALLY_HEADER = ["rank", "project", "team", "track", "influence", "ballots", "credits"]
 
@@ -47,6 +48,10 @@ def _page(request, event, form=None, status=200):
         "tally": services.tally(event, request.user) if config else [],
         "counts": services.ballot_counts(event) if config else {},
         "effective_close": services.effective_close(event),
+        "voter_links": [(link, f"{_base_url(request)}/events/{event.slug}/vote/{links.link_token(link)}")
+                        for link in VoterLink.objects.filter(event=event).order_by("email")] if config else [],
+        "open_link": (f"{_base_url(request)}/events/{event.slug}/vote/{links.open_token(config)}"
+                      if config and config.access_mode == "open_link" and config.open_link_nonce else ""),
     }, status=status)
 
 
@@ -143,3 +148,72 @@ def tally_api(request, slug):
         "projects": [{"project_id": r.project.pk, "project": r.project.name, "influence": round(r.influence, 6),
                       "ballots": r.ballots, "credits": r.credits} for r in rows],
     })
+
+
+# --- email links and the open link ------------------------------------------------------------------
+
+def _base_url(request):
+    return request.build_absolute_uri("/").rstrip("/")
+
+
+@require_POST
+@portal_required("organizer")
+def voter_links_add(request, slug):
+    event = get_managed_event(request.user, slug)
+    upload = request.FILES.get("csv_file")
+    if upload is not None and upload.size > 2 * 1024 * 1024:
+        messages.error(request, "the file is too large (2 MB at most).")
+        return redirect("organizer:voting", slug=event.slug)
+    try:
+        created, reissued, unchanged, rejected = services.add_voter_links(
+            event, actor=request.user, origin=audit.origin_of(request), text=request.POST.get("emails", ""),
+            csv_bytes=upload.read() if upload is not None else b"")
+    except VotingError as error:
+        messages.error(request, str(error))
+    else:
+        note = f"{len(created)} link{'s' if len(created) != 1 else ''} created"
+        if reissued:
+            note += f", {len(reissued)} revoked link{'s' if len(reissued) != 1 else ''} reissued"
+        if unchanged:
+            note += f", {len(unchanged)} already allowlisted"
+        if rejected:
+            note += f"; not an email, skipped: {', '.join(rejected[:5])}{' ...' if len(rejected) > 5 else ''}"
+        messages.success(request, note + ".")
+    return redirect("organizer:voting", slug=event.slug)
+
+
+@require_POST
+@portal_required("organizer")
+def voter_link_revoke(request, slug, link_id):
+    event = get_managed_event(request.user, slug)
+    try:
+        link = services.revoke_voter_link(event, link_id, actor=request.user, origin=audit.origin_of(request))
+    except VotingError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, f"link for {link.email} revoked.")
+    return redirect("organizer:voting", slug=event.slug)
+
+
+@never_cache
+@require_GET
+@portal_required("organizer")
+def voter_links_csv(request, slug):
+    event = get_managed_event(request.user, slug)
+    rows = services.voter_links_rows(event, actor=request.user, base_url=_base_url(request),
+                                     origin=audit.origin_of(request))
+    return download(to_csv(services.VOTER_LINKS_HEADER, rows), "text/csv; charset=utf-8",
+                    f"{event.slug}-voter-links-{stamp(db_now())}.csv")
+
+
+@require_POST
+@portal_required("organizer")
+def open_link_rotate(request, slug):
+    event = get_managed_event(request.user, slug)
+    try:
+        services.rotate_open_link(event, actor=request.user, origin=audit.origin_of(request))
+    except VotingError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, "new open link made; the old one no longer works.")
+    return redirect("organizer:voting", slug=event.slug)

@@ -69,6 +69,28 @@ class VotingConfigLocked(VotingError):
     code = "voting_config_locked"
 
 
-class AccessModeUnavailable(VotingError):
+class WrongAccessMode(VotingError):
+    """This event's vote is not cast this way (e.g. logged in, when it is by email link)."""
+
+    status = 403
+    code = "wrong_access_mode"
+
+
+class LinkRevoked(VotingError):
+    status = 403
+    code = "link_revoked"
+
+
+class NoSuchLink(VotingError):
+    status = 404
+    code = "no_such_link"
+
+
+class CookieRequired(VotingError):
     status = 400
-    code = "access_mode_unavailable"
+    code = "cookie_required"
+
+
+class InvalidAllowlist(VotingError):
+    status = 400
+    code = "invalid_allowlist"

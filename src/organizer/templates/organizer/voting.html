@@ -54,6 +54,46 @@
     </div>
   </section>
 
+  {% if config and config.access_mode == "email_gated" %}
+  <section class="frame" id="voter-links">
+    <header class="frame__bar"><h2 class="frame__title">voter links</h2><span class="frame__meta">{{ voter_links|length }} allowlisted</span></header>
+    <div class="frame__body grid-2">
+      <form method="post" action="{% url 'organizer:voter_links_add' event.slug %}" enctype="multipart/form-data" class="form stack">
+        {% csrf_token %}
+        <div class="field"><label class="field__label" for="emails"><span class="ps1">$</span> <span class="cmd">allowlist --emails</span></label><textarea id="emails" name="emails" rows="5" placeholder="one per line, or separated by commas"></textarea></div>
+        <div class="field"><label class="field__label" for="csv_file"><span class="ps1">$</span> <span class="cmd">--csv</span></label><input id="csv_file" name="csv_file" type="file" accept=".csv,text/csv"><p class="field__help">every cell with an @ in it is read as an email.</p></div>
+        <div class="actions"><button class="btn btn--small" type="submit">add</button></div>
+      </form>
+      <div class="stack">
+        <p class="faint">one personal link per email. there is no outbound mail: download the links and send each person theirs. if an email matches an account, that account's rules still apply (the event's judges and organizers cannot vote; nobody votes for their own team). a revoked link stops working; its ballot is kept until you void it.</p>
+        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:voter_links_csv' event.slug %}">download voter-links.csv</a></p>
+      </div>
+    </div>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col">email</th><th scope="col">link</th><th scope="col">status</th><th scope="col"></th></tr></thead>
+        <tbody>
+        {% for link, url in voter_links %}
+          <tr><td>{{ link.email }}</td><td class="dim"><span class="secret">{{ url }}</span></td><td>{% if link.revoked_at %}<span class="badge badge--warn">revoked</span>{% else %}<span class="badge badge--on">active</span>{% endif %}</td>
+          <td>{% if not link.revoked_at %}<form method="post" action="{% url 'organizer:voter_link_revoke' event.slug link.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">revoke</button></form>{% endif %}</td></tr>
+        {% empty %}<tr><td colspan="4" class="faint">no emails yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if config and config.access_mode == "open_link" %}
+  <section class="frame" id="open-link">
+    <header class="frame__bar"><h2 class="frame__title">open link</h2><span class="frame__meta"><span class="badge badge--warn">weakest mode</span></span></header>
+    <div class="frame__body stack">
+      <p class="msg msg--warning">anyone with this link can vote, and each browser counts as a voter: a new browser or cleared cookies is a new ballot. it can be gamed. give any prize decided by it a small weight.</p>
+      <p><span class="secret">{{ open_link }}</span></p>
+      <form method="post" action="{% url 'organizer:open_link_rotate' event.slug %}" class="actions">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">make a new link</button><span class="faint">the old link stops working; ballots already cast stay.</span></form>
+    </div>
+  </section>
+  {% endif %}
+
   {% if config %}
   <section class="frame">
     <header class="frame__bar"><h2 class="frame__title">tally</h2><span class="frame__meta">organizers and admins only{% if state == "open" %} · live{% endif %}</span></header>

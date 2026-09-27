@@ -39,23 +39,60 @@ from projects.models import Project, Status
 from scoring.models import Publication
 from teams.models import TeamExtension, TeamMember
 
-from .errors import (AccessModeUnavailable, AccountTooNew, InvalidBallot, InvalidVotingConfig, NoVoting,
-                     OverBudget, OwnProject, StaffCannotVote, VotingClosed, VotingConfigLocked, VotingNotOpen)
-from .models import CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VotingConfig
+from . import links
+from .errors import (AccountTooNew, InvalidAllowlist, InvalidBallot, InvalidVotingConfig,
+                     LinkRevoked, NoSuchLink, NoVoting, OverBudget, OwnProject, StaffCannotVote, VotingClosed,
+                     VotingConfigLocked, VotingNotOpen, WrongAccessMode)
+from .models import CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VoterLink, VotingConfig
 
 TRIGGER_MARKER = "dogfood_voting_closed"
-BUILT_ACCESS_MODES = (AccessMode.AUTHENTICATED,)
 
 
 @dataclass(frozen=True)
 class Voter:
-    """Who is voting. In this stage always an account."""
+    """Who is voting, as the views identified them:
 
-    user: object
+    * kind "user": a logged-in account (authenticated mode);
+    * kind "link": an email link (email_gated); `user` is the account with that email, if any;
+    * kind "cookie": the random id in an open-link cookie (open_link); `user` is the logged-in
+      visitor, if any.
+
+    `user` is who the account rules apply to (the event's judges and organizers, admins, accounts
+    too new, your own team's project); None when the voter has no account we can match.
+    """
+
+    user: object = None
+    kind: str = "user"
+    link: object = None
+    cookie: str = ""
+
+    @classmethod
+    def by_link(cls, link):
+        from accounts.models import User
+
+        return cls(user=User.objects.filter(email__iexact=link.email).first(), kind="link", link=link)
+
+    @classmethod
+    def by_cookie(cls, voter_id, user=None):
+        return cls(user=user if getattr(user, "is_authenticated", False) else None, kind="cookie", cookie=voter_id)
+
+    def ballot_filter(self):
+        if self.kind == "link":
+            return {"voter_link": self.link}
+        if self.kind == "cookie":
+            return {"voter_cookie": self.cookie}
+        return {"voter_user": self.user}
 
     @property
     def label(self):
+        if self.kind == "link":
+            return f"link:{self.link.email}"
+        if self.kind == "cookie":
+            return f"open link:{self.cookie[:8]}"
         return self.user.email
+
+
+MODE_OF_KIND = {"user": AccessMode.AUTHENTICATED, "link": AccessMode.EMAIL_GATED, "cookie": AccessMode.OPEN_LINK}
 
 
 def voting_for(event):
@@ -114,7 +151,6 @@ def set_voting_config(event, *, actor, opens_at, closes_at, access_mode, method,
     * PermissionDenied: not an organizer of the event (nor an admin).
     * InvalidVotingConfig (400): opens_at not before closes_at; opens_at before the effective
       submission close; a budget out of range; an unknown method or access mode.
-    * AccessModeUnavailable (400): email_gated and open_link are not built yet.
     * VotingConfigLocked (409): once voting has opened, only closes_at may change, and it must stay
       in the future; once voting has closed nothing changes; closes_at may never be after an active
       publication of the results.
@@ -131,8 +167,6 @@ def set_voting_config(event, *, actor, opens_at, closes_at, access_mode, method,
         refuse(InvalidVotingConfig(f"method must be one of {', '.join(Method.values)}."), "invalid method")
     if access_mode not in AccessMode.values:
         refuse(InvalidVotingConfig(f"access_mode must be one of {', '.join(AccessMode.values)}."), "invalid access mode")
-    if access_mode not in BUILT_ACCESS_MODES:
-        refuse(AccessModeUnavailable("Only logged-in voting is available so far."), "access mode not built")
     if method == Method.ONE_PERSON_ONE_VOTE:
         credit_budget = 1
     if not isinstance(credit_budget, int) or isinstance(credit_budget, bool) \
@@ -179,6 +213,8 @@ def set_voting_config(event, *, actor, opens_at, closes_at, access_mode, method,
                 config.original_closes_at = config.closes_at
             for name, value in wanted.items():
                 setattr(config, name, value)
+            if config.access_mode == AccessMode.OPEN_LINK and not config.open_link_nonce:
+                config.open_link_nonce = links.new_nonce()
             config.updated_by = actor
             config.save()
     if problem:
@@ -249,7 +285,7 @@ def end_voting_now(event, *, actor, origin=None) -> VotingConfig:
 
 def _refuse_vote(error, *, event, voter, origin, attempted, action=AuditAction.VOTE_REFUSED, **detail):
     audit.record(action, origin=origin, actor=voter.user, subject=event.slug, attempted=attempted,
-                 reason=error.code, **detail)
+                 reason=error.code, voter=voter.label, **detail)
     raise error
 
 
@@ -268,7 +304,9 @@ def _check_window(event, config, *, voter, origin, attempted):
 
 
 def ineligibility(event, config, user):
-    """Why `user` may not vote in `event`, as a VotingError -- or None."""
+    """Why `user` may not vote in `event`, as a VotingError -- or None. No account, no account rule."""
+    if user is None:
+        return None
     if is_admin(user):
         return StaffCannotVote("Platform admins can see every tally, so they cannot vote.")
     staff = roles_in(user, event) & STAFF_ROLES
@@ -280,6 +318,8 @@ def ineligibility(event, config, user):
 
 
 def own_project_ids(event, user):
+    if user is None:
+        return set()
     teams = TeamMember.objects.filter(event=event, user=user).values("team_id")
     return set(Project.objects.filter(event=event, team_id__in=teams).values_list("pk", flat=True))
 
@@ -301,14 +341,14 @@ def ballot_order(config, ballot_id, project_ids):
 
 
 def ballot_of(event, voter):
-    return Ballot.objects.filter(event=event, voter_user=voter.user).first()
+    return Ballot.objects.filter(event=event, **voter.ballot_filter()).first()
 
 
 def _create_ballot(event, config, voter, now, ip_hash):
     """The ballot with every project on it at 0 credits, in this ballot's own order. Inside the
     caller's transaction; a concurrent create for the same voter hits the unique constraint."""
-    ballot = Ballot.objects.create(event=event, voter_user=voter.user, created_at=now, updated_at=now,
-                                   ip_hash=ip_hash)
+    ballot = Ballot.objects.create(event=event, created_at=now, updated_at=now, ip_hash=ip_hash,
+                                   **voter.ballot_filter())
     order = ballot_order(config, ballot.pk, ballot_project_ids(event, voter.user))
     BallotLine.objects.bulk_create(
         BallotLine(ballot=ballot, project_id=pk, credits=0, shown_position=i) for i, pk in enumerate(order)
@@ -321,6 +361,12 @@ def _eligible(event, voter, *, origin, attempted):
     if config is None:
         raise NoVoting("This event has no community vote.")
     _check_window(event, config, voter=voter, origin=origin, attempted=attempted)
+    if MODE_OF_KIND[voter.kind] != config.access_mode:
+        _refuse_vote(WrongAccessMode(f"This vote is by {config.get_access_mode_display().lower()}, not this way."),
+                     event=event, voter=voter, origin=origin, attempted=attempted)
+    if voter.kind == "link" and voter.link.revoked_at is not None:
+        _refuse_vote(LinkRevoked("This voting link has been revoked."), event=event, voter=voter, origin=origin,
+                     attempted=attempted)
     problem = ineligibility(event, config, voter.user)
     if problem:
         _refuse_vote(problem, event=event, voter=voter, origin=origin, attempted=attempted)
@@ -348,7 +394,8 @@ def open_ballot(event, voter, *, ip_hash="", origin=None) -> Ballot:
         return ballot_of(event, voter)
     except DatabaseError as error:
         _late_from_trigger(error, event, voter, origin, "open ballot")
-    audit.record(AuditAction.BALLOT_OPENED, origin=origin, actor=voter.user, subject=event.slug, ballot=ballot.pk)
+    audit.record(AuditAction.BALLOT_OPENED, origin=origin, actor=voter.user, subject=event.slug, ballot=ballot.pk,
+                 voter=voter.label)
     return ballot
 
 
@@ -407,7 +454,7 @@ def cast(event, voter, ip_hash, lines, actor=None, *, origin=None) -> Ballot:
         _refuse_vote(problem, event=event, voter=voter, origin=origin, attempted=attempted, ballot=ballot.pk)
     first = not before
     audit.record(AuditAction.VOTE_CAST if first else AuditAction.VOTE_CHANGED, origin=origin, actor=voter.user,
-                 subject=event.slug, ballot=ballot.pk,
+                 subject=event.slug, ballot=ballot.pk, voter=voter.label,
                  before={str(k): v for k, v in sorted(before.items())},
                  after={str(k): v for k, v in sorted(after.items())}, total=sum(after.values()), budget=budget)
     return ballot
@@ -418,7 +465,7 @@ def _apply(event, config, voter, wanted, budget, ip_hash):
     ballot row and its lines locked."""
     problem, before, after = None, {}, {}
     with transaction.atomic():
-        ballot = (Ballot.objects.select_for_update().filter(event=event, voter_user=voter.user).first())
+        ballot = Ballot.objects.select_for_update().filter(event=event, **voter.ballot_filter()).first()
         now = db_now()
         if ballot is None:
             ballot = _create_ballot(event, config, voter, now, ip_hash)
@@ -506,3 +553,112 @@ def tally_export(event, *, actor, origin=None):
     audit.record(AuditAction.TALLY_EXPORTED, origin=origin, actor=actor, subject=event.slug, rows=len(rows),
                  state=state(config, db_now()))
     return rows
+
+
+# --- email links and the open link ----------------------------------------------------------------------
+
+def _require_organizer(event, actor, what):
+    if not is_organizer_of(actor, event):
+        raise PermissionDenied(f"Only the event's organizers can {what}.")
+
+
+def add_voter_links(event, *, actor, text="", csv_bytes=b"", origin=None):
+    """Allowlist emails for email_gated voting: one link per email. Returns (created, reissued,
+    unchanged, rejected entries). An email already allowlisted keeps its link; a revoked one gets a
+    new link (new nonce, so the revoked link stays dead). Refused once voting has closed."""
+    _require_organizer(event, actor, "allowlist voters")
+    try:
+        emails, rejected = links.parse_emails(text, csv_bytes)
+    except ValueError as error:
+        raise InvalidAllowlist(str(error)) from None
+    if not emails:
+        raise InvalidAllowlist("No valid email addresses found." + (f" Rejected: {', '.join(rejected[:5])}." if rejected else ""))
+    config = voting_for(event)
+    if config is not None and state(config, db_now()) == "closed":
+        raise VotingConfigLocked("Voting has closed; no more voters can be added.")
+    created, reissued, unchanged = [], [], []
+    with transaction.atomic():
+        now = db_now()
+        existing = {link.email: link for link in VoterLink.objects.select_for_update().filter(event=event, email__in=emails)}
+        for email in emails:
+            link = existing.get(email)
+            if link is None:
+                link = VoterLink(event=event, email=email, nonce=links.new_nonce(), token_digest="pending:" + links.new_nonce(),
+                                 created_at=now, created_by=actor)
+                link.save()
+                link.token_digest = links.digest(links.link_token(link))
+                link.save(update_fields=["token_digest"])
+                created.append(email)
+            elif link.revoked_at is not None:
+                link.nonce, link.revoked_at, link.revoked_by = links.new_nonce(), None, None
+                link.token_digest = links.digest(links.link_token(link))
+                link.save(update_fields=["nonce", "revoked_at", "revoked_by", "token_digest"])
+                reissued.append(email)
+            else:
+                unchanged.append(email)
+    audit.record(AuditAction.VOTER_LINKS_ADDED, origin=origin, actor=actor, subject=event.slug,
+                 created=created, reissued=reissued, unchanged=len(unchanged), rejected=len(rejected))
+    return created, reissued, unchanged, rejected
+
+
+def revoke_voter_link(event, link_id, *, actor, origin=None):
+    """Stop one link. Its ballot, if any, is kept as it is (void it separately to drop its votes)."""
+    _require_organizer(event, actor, "revoke voter links")
+    with transaction.atomic():
+        link = VoterLink.objects.select_for_update().filter(event=event, pk=link_id).first()
+        if link is None:
+            raise NoSuchLink("No such voter link in this event.")
+        if link.revoked_at is None:
+            link.revoked_at, link.revoked_by = db_now(), actor
+            link.save(update_fields=["revoked_at", "revoked_by"])
+    audit.record(AuditAction.VOTER_LINK_REVOKED, origin=origin, actor=actor, subject=event.slug,
+                 email=link.email, link=link.pk, had_ballot=link.ballots.exists())
+    return link
+
+
+VOTER_LINKS_HEADER = ["email", "link", "status", "ballot opened"]
+
+
+def voter_links_rows(event, *, actor, base_url, origin=None):
+    """voter-links.csv: one row per allowlisted email, with its link. Organizers only; audited."""
+    _require_organizer(event, actor, "download voter links")
+    opened = set(Ballot.objects.filter(event=event, voter_link__isnull=False).values_list("voter_link_id", flat=True))
+    rows = [[link.email, f"{base_url}/events/{event.slug}/vote/{links.link_token(link)}",
+             "revoked" if link.revoked_at else "active", link.pk in opened]
+            for link in VoterLink.objects.filter(event=event).order_by("email")]
+    audit.record(AuditAction.VOTER_LINKS_EXPORTED, origin=origin, actor=actor, subject=event.slug, rows=len(rows))
+    return rows
+
+
+def rotate_open_link(event, *, actor, origin=None):
+    """A new open link; the old one stops working. Voters who already have a ballot keep it (their
+    cookie still identifies them), but nobody new can arrive through the old link."""
+    _require_organizer(event, actor, "change the open link")
+    with transaction.atomic():
+        config = VotingConfig.objects.select_for_update().filter(event=event).first()
+        if config is None or config.access_mode != AccessMode.OPEN_LINK:
+            raise WrongAccessMode("This event's vote does not use an open link.")
+        if state(config, db_now()) == "closed":
+            raise VotingConfigLocked("Voting has closed.")
+        config.open_link_nonce = links.new_nonce()
+        config.save(update_fields=["open_link_nonce", "updated_at"])
+    audit.record(AuditAction.OPEN_LINK_ROTATED, origin=origin, actor=actor, subject=event.slug)
+    return config
+
+
+def resolve_token(event, token, *, origin=None):
+    """("open", None) for the event's open link, ("link", VoterLink) for one of its email links.
+    Anything else -- unknown, malformed, another event's -- is NoSuchLink (404), audited, the same
+    answer for each so a token cannot be probed."""
+    config = voting_for(event)
+    if config is None:
+        raise NoVoting("This event has no community vote.")
+    token = (token or "")[:128]
+    if links.is_open_token(config, token):
+        return "open", None
+    link = VoterLink.objects.filter(event=event, token_digest=links.digest(token)).first() if token else None
+    if link is None:
+        audit.record(AuditAction.VOTE_REFUSED, origin=origin, subject=event.slug, attempted="use a voting link",
+                     reason="no_such_link", token_prefix=token[:6])
+        raise NoSuchLink("This voting link does not exist.")
+    return "link", link

@@ -55,6 +55,9 @@ class VotingConfig(models.Model):
         help_text="Refuse accounts created at or after voting opens (makes sign-up stuffing harder).",
     )
     ballot_secret = models.CharField(max_length=64, editable=False)
+    # open_link mode: the event's one link is derived from this (voting.links); a new nonce is a new
+    # link, and the old one stops working. Empty until the organizer first shows the link.
+    open_link_nonce = models.CharField(max_length=32, blank=True, editable=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -86,9 +89,40 @@ class VotingConfig(models.Model):
         return 1 if self.method == Method.ONE_PERSON_ONE_VOTE else self.credit_budget
 
 
+class VoterLink(models.Model):
+    """email_gated mode: one ballot link per allowlisted email.
+
+    The link's token is not stored. It is derived (voting.links.link_token: an HMAC keyed from
+    SECRET_KEY over the link id and `nonce`), so the organizer can download voter-links.csv at any
+    time; only a SHA-256 digest is stored, to find the link from a token. Revoking stops the link;
+    re-adding a revoked email issues a new nonce, so the old link stays dead.
+    """
+
+    event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="voter_links")
+    email = models.EmailField(max_length=254)
+    nonce = models.CharField(max_length=32, editable=False)
+    token_digest = models.CharField(max_length=64, unique=True, editable=False)
+    created_at = models.DateTimeField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+
+    class Meta:
+        ordering = ["event", "email"]
+        constraints = [
+            models.UniqueConstraint(fields=["event", "email"], name="voterlink_one_per_email_per_event"),
+        ]
+
+    def __str__(self):
+        return f"voter link for {self.email}"
+
+
 class Ballot(models.Model):
-    """One voter's ballot in one event. The voter is identified by exactly one identity; in this
-    stage only an account (`voter_user`). Unique per identity per event.
+    """One voter's ballot in one event. The voter is identified by exactly one identity, matching
+    the event's access mode: an account (`voter_user`), an email link (`voter_link`), or the random
+    id in an open-link cookie (`voter_cookie`). Unique per identity per event.
 
     `ip_hash` is a keyed hash of the address of the last write (core.net.hash_ip); no IP is
     stored. A voided ballot is kept (with who, when and why) and left out of every tally.
@@ -98,6 +132,9 @@ class Ballot(models.Model):
     voter_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="ballots"
     )
+    voter_link = models.ForeignKey(VoterLink, null=True, blank=True, on_delete=models.PROTECT, related_name="ballots")
+    # open_link mode: the random id in the voter's signed cookie.
+    voter_cookie = models.CharField(max_length=64, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
     ip_hash = models.CharField(max_length=64, blank=True)
@@ -114,7 +151,21 @@ class Ballot(models.Model):
                 fields=["event", "voter_user"], condition=Q(voter_user__isnull=False),
                 name="ballot_one_per_user_per_event",
             ),
-            models.CheckConstraint(condition=Q(voter_user__isnull=False), name="ballot_has_a_voter"),
+            models.UniqueConstraint(
+                fields=["event", "voter_link"], condition=Q(voter_link__isnull=False),
+                name="ballot_one_per_link_per_event",
+            ),
+            models.UniqueConstraint(
+                fields=["event", "voter_cookie"], condition=~Q(voter_cookie=""),
+                name="ballot_one_per_cookie_per_event",
+            ),
+            # Exactly one identity.
+            models.CheckConstraint(
+                condition=Q(voter_user__isnull=False, voter_link__isnull=True, voter_cookie="")
+                | Q(voter_user__isnull=True, voter_link__isnull=False, voter_cookie="")
+                | (Q(voter_user__isnull=True, voter_link__isnull=True) & ~Q(voter_cookie="")),
+                name="ballot_has_exactly_one_voter",
+            ),
             models.CheckConstraint(
                 condition=Q(voided_at__isnull=True, voided_by__isnull=True)
                 | Q(voided_at__isnull=False, voided_by__isnull=False),

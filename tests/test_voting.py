@@ -18,7 +18,7 @@ from events.services import EventRuleError, end_judging_now
 from projects.models import Project, Status
 from teams.models import TeamExtension
 from voting import services
-from voting.errors import (AccessModeUnavailable, AccountTooNew, InvalidBallot, InvalidVotingConfig, OverBudget,
+from voting.errors import (AccountTooNew, InvalidBallot, InvalidVotingConfig, OverBudget,
                            OwnProject, StaffCannotVote, VotingClosed, VotingConfigLocked, VotingNotOpen, VotingOpen)
 from voting.models import Ballot, BallotLine, Method, VotingConfig
 
@@ -247,8 +247,8 @@ def test_config_rules(make_event):
         configure(event, opens_at=event.submissions_close_at - timedelta(minutes=1))
     with pytest.raises(InvalidVotingConfig):
         configure(event, closes_at=event.submissions_close_at)
-    with pytest.raises(AccessModeUnavailable):
-        configure(event, access_mode="open_link")
+    with pytest.raises(InvalidVotingConfig):
+        configure(event, access_mode="carrier_pigeon")
     with pytest.raises(InvalidVotingConfig):
         configure(event, credit_budget=0)
     config = configure(event, method="one_person_one_vote", credit_budget=16)
@@ -426,3 +426,72 @@ def test_voting_page_casts_through_the_form(vote_event, client_for):
     assert credits_of(vote_event, vote_event.outsider) == {p[1].pk: 9, p[2].pk: 7}
     page = client.get(url).content.decode()
     assert "16 of 16 credits placed" in page
+
+
+# --- concurrency and the database admin -------------------------------------------------------------------------
+
+@TX
+def test_concurrent_first_casts_make_one_ballot_within_budget(vote_event):
+    """Two tabs cast the same voter's first ballot at the same instant: one creates the ballot, the
+    other hits the unique constraint, retries on the now-existing row (locked), and replaces it.
+    Exactly one ballot, and its credits are one of the two casts -- never their sum."""
+    import threading
+
+    from django.db import connection
+
+    p = vote_event.projects_list
+    casts = [{p[1].pk: 16}, {p[2].pk: 16}]
+    barrier, errors = threading.Barrier(2), []
+
+    def run(lines):
+        try:
+            barrier.wait()
+            cast(vote_event, vote_event.outsider, lines)
+        except Exception as error:  # noqa: BLE001 -- reported below
+            errors.append(error)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=run, args=(lines,)) for lines in casts]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert Ballot.objects.filter(event=vote_event, voter_user=vote_event.outsider).count() == 1
+    assert credits_of(vote_event, vote_event.outsider) in casts
+    assert sum(credits_of(vote_event, vote_event.outsider).values()) <= 16
+
+
+@pytest.mark.django_db
+def test_database_admin_refuses_to_delete_a_voter_or_a_ballot(vote_event, client_for, old_user):
+    """Ballot.voter_user is PROTECT: the database admin shows its "protected objects" page instead of
+    deleting (or crashing), on the single delete and the bulk action. Ballots have no delete there."""
+    ballot = cast(vote_event, vote_event.outsider, {vote_event.projects_list[1].pk: 4})
+    admin = client_for(old_user(role=ADMIN))
+    url = f"/admin/db/accounts/user/{vote_event.outsider.pk}/delete/"
+    page = admin.get(url)
+    assert page.status_code == 200 and "cannot delete user" in page.content.decode().lower()
+    assert admin.post(url, {"post": "yes"}).status_code == 200
+    bulk = admin.post("/admin/db/accounts/user/", {"action": "delete_selected", "_selected_action": [vote_event.outsider.pk],
+                                                   "post": "yes"})
+    assert bulk.status_code in (200, 302)
+    assert User.objects.filter(pk=vote_event.outsider.pk).exists()
+    assert admin.get(f"/admin/db/voting/ballot/{ballot.pk}/delete/").status_code == 403
+    assert admin.get(f"/admin/db/voting/ballot/{ballot.pk}/change/").status_code == 200
+    assert Ballot.objects.filter(pk=ballot.pk).exists()
+
+
+@pytest.mark.django_db
+def test_end_voting_now_is_the_one_way_to_close_at_once(vote_event):
+    """Editing the close while voting is open only moves it to a future time; "end voting now" is
+    the one exception, and it closes at the database clock's current instant."""
+    config = vote_event.config
+    base = dict(opens_at=config.opens_at, access_mode="authenticated", method="quadratic", credit_budget=16,
+                accounts_before_open_only=True)
+    with pytest.raises(VotingConfigLocked):
+        services.set_voting_config(vote_event, actor=vote_event.organizer,
+                                   closes_at=timezone.now() - timedelta(seconds=1), **base)
+    ended = services.end_voting_now(vote_event, actor=vote_event.organizer)
+    assert ended.closes_at <= timezone.now() + timedelta(seconds=1)
+    assert services.state(ended, timezone.now() + timedelta(seconds=1)) == "closed"

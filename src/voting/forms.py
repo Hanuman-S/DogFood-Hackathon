@@ -19,7 +19,9 @@ class VotingConfigForm(forms.Form):
     )
     access_mode = forms.ChoiceField(
         choices=AccessMode.choices, widget=forms.RadioSelect, initial=AccessMode.AUTHENTICATED,
-        help_text="only logged-in voting is available so far.",
+        help_text="strongest to weakest. logged-in: one ballot per account. email allowlist: one personal link "
+        "per email you add below (there is no outbound mail; download voter-links.csv and send them yourself). "
+        "open link: one shared link, each browser is a voter -- easy to game, so give any prize it decides a small weight.",
     )
     accounts_before_open_only = forms.BooleanField(
         required=False, initial=True, label="only accounts created before voting opens",

@@ -11,6 +11,7 @@ The page never shows how anyone else voted, nor any tally.
 from django.contrib import messages
 from django.http import Http404
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
@@ -32,25 +33,35 @@ def _voting_event(request, slug):
     return event, config
 
 
+def ballot_page(request, event, config, voter, *, via, open_url, cast_url):
+    """The ballot page for any access mode (templates/vote.html). Reads only."""
+    ballot, lines = services.ballot_view(event, voter)
+    spent = sum(credits for _, _, credits in lines)
+    return render(request, "vote.html", {
+        "event": event,
+        "config": config,
+        "state": services.state(config, db_now()),
+        "wrong_mode": services.MODE_OF_KIND[voter.kind] != config.access_mode,
+        "refusal": services.ineligibility(event, config, voter.user),
+        "ballot": ballot,
+        "lines": lines,
+        "spent": spent,
+        "quadratic": config.method == Method.QUADRATIC,
+        "via": via,
+        "voter_email": voter.link.email if voter.link else "",
+        "link_revoked": bool(voter.link and voter.link.revoked_at),
+        "open_url": open_url,
+        "cast_url": cast_url,
+    })
+
+
 @never_cache
 @portal_required("participant")
 def vote(request, slug):
     event, config = _voting_event(request, slug)
-    voter = services.Voter(request.user)
-    now = db_now()
-    ballot, lines = services.ballot_view(event, voter)
-    spent = sum(credits for _, _, credits in lines)
-    return render(request, "participant/vote.html", {
-        "event": event,
-        "config": config,
-        "state": services.state(config, now),
-        "refusal": services.ineligibility(event, config, request.user),
-        "ballot": ballot,
-        "lines": lines,
-        "spent": spent,
-        "left": config.budget - spent,
-        "quadratic": config.method == Method.QUADRATIC,
-    })
+    return ballot_page(request, event, config, services.Voter(request.user), via="account",
+                       open_url=reverse("participant:vote_open", args=[event.slug]),
+                       cast_url=reverse("participant:vote_cast", args=[event.slug]))
 
 
 @require_POST

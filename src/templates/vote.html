@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · vote{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">community vote</h1>
+      <span class="frame__meta">{{ event.name }}
+        {% if state == "open" %}<span class="badge badge--on">open</span>{% elif state == "scheduled" %}<span class="badge">opens {{ config.opens_at|utc }}</span>{% else %}<span class="badge badge--warn">closed</span>{% endif %}
+      </span>
+    </header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">open</th><td>{{ config.opens_at|utc }} &ndash; {{ config.closes_at|utc }}</td></tr>
+        <tr><th scope="row">method</th><td>{{ config.get_method_display }}</td></tr>
+        {% if quadratic %}<tr><th scope="row">your credits</th><td>{{ config.budget }} to spread over the projects you like. a project gets the square root of the credits you give it: 1 credit = 1, 4 credits = 2, 9 credits = 3. spreading counts for more than piling on.</td></tr>{% endif %}
+      </table>
+      <p class="faint">you can change your vote until voting closes. nobody sees any count while voting is open. your own team's project is not on your ballot.</p>
+      {% if via == "link" %}<p class="faint">voting as {{ voter_email }}, through your personal link. keep it to yourself: whoever has it can change this vote.</p>{% endif %}
+      {% if via == "open" %}<p class="msg msg--warning">open-link voting is the weakest kind: this browser is remembered by a cookie, so a new browser counts as a new voter. organizers should give a prize decided this way a small weight.</p>{% endif %}
+    </div>
+  </section>
+
+  {% if link_revoked %}
+    <ul class="msgs"><li class="msg msg--warning">this voting link has been revoked. ask the organizers if you think that is a mistake.</li></ul>
+  {% elif wrong_mode %}
+    <ul class="msgs"><li class="msg msg--warning">this vote is by {{ config.get_access_mode_display|lower }}{% if config.access_mode == "email_gated" %}: use the personal link the organizers gave you{% elif config.access_mode == "open_link" %}: use the link the organizers shared{% endif %}.</li></ul>
+  {% elif refusal %}
+    <ul class="msgs"><li class="msg msg--warning">{{ refusal.detail }}</li></ul>
+  {% elif state == "scheduled" %}
+    <p class="faint">voting opens {{ config.opens_at|utc }}.</p>
+  {% elif not ballot and state == "open" %}
+    <form method="post" action="{{ open_url }}" class="actions">
+      {% csrf_token %}<button class="btn" type="submit">open my ballot</button>
+      <span class="faint">the projects are shown in an order made for your ballot, so no project is always first.</span>
+    </form>
+  {% elif ballot %}
+    <form method="post" action="{{ cast_url }}" class="frame form">
+      {% csrf_token %}
+      <header class="frame__bar"><h2 class="frame__title">your ballot</h2><span class="frame__meta">{% if quadratic %}{{ spent }} of {{ config.budget }} credits placed{% endif %}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th scope="col" class="num">#</th><th scope="col">project</th><th scope="col">track</th><th scope="col" class="num">{% if quadratic %}credits{% else %}your vote{% endif %}</th></tr></thead>
+          <tbody>
+          {% for position, project, credits in lines %}
+            <tr>
+              <td class="num faint">{{ position }}</td>
+              <td><a href="{% url 'public:project' project.pk %}">{{ project.name }}</a> <span class="faint">· {{ project.team.name }}</span></td>
+              <td class="dim">{{ project.track.name|default:"--" }}</td>
+              <td class="num">
+                {% if quadratic %}<label class="visually-hidden" for="p_{{ project.pk }}">credits for {{ project.name }}</label><input id="p_{{ project.pk }}" name="p_{{ project.pk }}" type="number" min="0" max="{{ config.budget }}" step="1" value="{{ credits }}"{% if state != "open" %} disabled{% endif %}>
+                {% else %}<label class="check"><input type="radio" name="choice" value="{{ project.pk }}"{% if credits %} checked{% endif %}{% if state != "open" %} disabled{% endif %}> <span class="visually-hidden">vote for {{ project.name }}</span></label>{% endif %}
+              </td>
+            </tr>
+          {% empty %}<tr><td colspan="4" class="faint">no projects on this ballot.</td></tr>{% endfor %}
+          {% if not quadratic %}<tr><td></td><td class="dim">no vote</td><td></td><td class="num"><label class="check"><input type="radio" name="choice" value="none"{% if not spent %} checked{% endif %}{% if state != "open" %} disabled{% endif %}> <span class="visually-hidden">no vote</span></label></td></tr>{% endif %}
+          </tbody>
+        </table>
+      </div>
+      {% if state == "open" %}<div class="frame__body actions"><button class="btn" type="submit">save my vote</button>{% if quadratic %}<span class="faint">at most {{ config.budget }} credits in total.</span>{% endif %}</div>{% endif %}
+    </form>
+  {% else %}
+    <p class="faint">voting has closed.</p>
+  {% endif %}
+  <p class="actions"><a class="btn btn--ghost" href="{% url 'public:event_detail' event.slug %}">back to {{ event.name }}</a></p>
+</div>
+{% endblock %}

@@ -114,6 +114,10 @@ class AuditAction(models.TextChoices):
     VOTE_REFUSED = "vote_refused", "Refused a vote"
     VOTE_LATE_REFUSED = "vote_late_refused", "Refused a vote outside the voting window"
     TALLY_EXPORTED = "tally_exported", "Downloaded a vote tally"
+    VOTER_LINKS_ADDED = "voter_links_added", "Allowlisted voter emails"
+    VOTER_LINK_REVOKED = "voter_link_revoked", "Revoked a voter link"
+    VOTER_LINKS_EXPORTED = "voter_links_exported", "Downloaded voter links"
+    OPEN_LINK_ROTATED = "open_link_rotated", "Replaced an event's open voting link"
 
 
 class AuditLog(models.Model):
