@@ -313,3 +313,38 @@ def test_seeded_closed_event_refuses_the_checkers_post(settings):
                              content_type="application/json", HTTP_AUTHORIZATION="Bearer demo-participant-token")
     assert_closed(response)
     assert Project.objects.filter(event__slug="dogfood-archive-2026").count() == before   # nothing was created
+
+
+def test_the_deadline_cannot_move_once_judging_has_started(world, client_for):
+    """Moving the close mid-judging would push judging into the future and unlock the rubric."""
+    event = close(world["event"], ago=timedelta(days=1))
+    now = timezone.now()
+    Event.objects.filter(pk=event.pk).update(judging_starts_at=now - timedelta(hours=1), judging_ends_at=now + timedelta(days=1))
+    event.refresh_from_db()
+    before = (event.submissions_close_at, event.judging_starts_at, event.judging_ends_at)
+    organizer = client_for(event.organizer)
+    response = organizer.post(f"/organizer/events/{event.slug}/deadline/extend",
+                              {**dt_fields("new_close", now + timedelta(hours=3)), "reason": "r"})
+    assert response.status_code == 400 and b"judging has already started" in response.content.lower()
+    event.refresh_from_db()
+    assert (event.submissions_close_at, event.judging_starts_at, event.judging_ends_at) == before
+    assert not AuditLog.objects.filter(action=AuditAction.DEADLINE_EXTENDED).exists()
+    page = organizer.get(f"/organizer/events/{event.slug}/").content.decode()
+    assert "submission deadline is final" in page and "deadline/extend" not in page
+
+
+def test_extending_to_a_time_already_past_is_refused(world, client_for):
+    event = close(world["event"], ago=timedelta(hours=5))
+    response = client_for(event.organizer).post(
+        f"/organizer/events/{event.slug}/deadline/extend",
+        {**dt_fields("new_close", timezone.now() - timedelta(hours=2)), "reason": "r"},
+    )
+    assert response.status_code == 400 and b"must be in the future" in response.content
+    assert not AuditLog.objects.filter(action=AuditAction.DEADLINE_EXTENDED).exists()
+
+
+def test_an_ended_extension_is_marked_and_cannot_be_revoked(world, client_for):
+    event = close(world["event"], ago=timedelta(hours=5))
+    TeamExtension.objects.create(team=world["team"], until=timezone.now() - timedelta(hours=1), reason="r")
+    page = client_for(event.organizer).get(f"/organizer/events/{event.slug}/").content.decode()
+    assert ">ended<" in page and "/revoke" not in page

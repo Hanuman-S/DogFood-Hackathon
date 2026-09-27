@@ -386,10 +386,23 @@ def extend_deadline(request, event, new_close, reason):
     """Move the close later for everyone. The timeline stays in order: if the new close reaches
     the judging start, judging (start and end) and the results date, if set, all move later by
     the same amount, so judging keeps its length. The first close is kept in
-    `original_submissions_close_at` so pages can say what changed."""
+    `original_submissions_close_at` so pages can say what changed. Refused once judging has
+    started, and when the new close is already past."""
+    from core.deadlines import db_now
+
     old_close = event.submissions_close_at
+    now = db_now()
+    if now >= event.judging_starts_at:
+        # Judges are already reviewing: moving the close now would push judging into the future
+        # (locking judges out mid-review) and unlock a rubric that reviews were written against.
+        raise EventRuleError(
+            "Judging has already started, so the submission deadline is final. "
+            "To give judges more time, extend judging instead."
+        )
     if new_close <= old_close:
         raise EventRuleError("An extension must move the close later. To bring it earlier, edit the settings.")
+    if new_close <= now:
+        raise EventRuleError("The new close must be in the future, or no team can submit anything.")
     if event.original_submissions_close_at is None:
         event.original_submissions_close_at = old_close
     moved = {}

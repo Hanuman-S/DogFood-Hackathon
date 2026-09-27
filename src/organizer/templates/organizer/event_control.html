@@ -58,6 +58,10 @@
         {% if event.original_submissions_close_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_submissions_close_at|utc }}</td></tr>{% endif %}
         <tr><th scope="row">enforced by</th><td class="dim">the server and the database, on the database clock</td></tr>
       </table>
+      {% if not judging_window.not_started %}
+      {% if extend_form.errors or extension_form.errors %}<ul class="msgs" role="alert">{% for e in extend_form.new_close.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}{% for e in extension_form.until.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}</ul>{% endif %}
+      <p class="faint">judging has started, so the submission deadline is final and no team can get more time. to give judges more time, <a href="#judging">extend judging</a>.</p>
+      {% else %}
       <div class="grid-2">
         <form class="form" method="post" action="{% url 'organizer:deadline_extend' event.slug %}" novalidate>
           {% csrf_token %}
@@ -77,6 +81,8 @@
           <div class="actions"><button class="btn btn--small" type="submit">grant extension</button></div>
         </form>
       </div>
+      <p class="faint">an extension for one team must end after the close and before judging starts ({{ event.judging_starts_at|utc }}). extending for everyone past that moves judging and the results date later by the same amount.</p>
+      {% endif %}
     </div>
     {% if extensions %}
     <div class="frame__body frame__body--flush table-wrap">
@@ -85,8 +91,8 @@
         <tbody>
         {% for x in extensions %}
           <tr>
-            <td>{{ x.team.name }}</td><td>{{ x.until|utc }}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
-            <td class="num"><form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form></td>
+            <td>{{ x.team.name }}</td><td>{{ x.until|utc }}{% if x.until <= window.now %} <span class="badge">ended</span>{% endif %}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
+            <td class="num">{% if x.until > window.now %}<form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>

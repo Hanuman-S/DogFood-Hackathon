@@ -86,7 +86,8 @@ def test_a_nudge_is_logged_and_written_out_for_the_organizers_mail(world, client
     assert f"mailto:{judges['Idle'].user.email.replace('@', '%40')}" in body and "Reminder" in body
     entry = AuditLog.objects.get(action=AuditAction.JUDGE_NUDGED)
     assert entry.detail["email"] == judges["Idle"].user.email and entry.actor == event.organizer
-    assert progress_data(event)["judge_rows"][0]["nudged"] is not None
+    page = client.get(f"/organizer/events/{event.slug}/progress").content.decode()
+    assert "nudged" not in page  # the mail goes from the organizer's own inbox, so we never claim it went
 
 
 def test_a_judge_of_another_event_cannot_be_nudged_from_here(world, client_for, make_event, make_user):

@@ -96,6 +96,10 @@
         });
     };
     setInterval(refresh, every);
+    // Coming back to the tab (say, after assigning judges in another one) refreshes at once.
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) refresh();
+    });
   });
 
   // [ copy ] buttons: <button data-copy="#target-id">

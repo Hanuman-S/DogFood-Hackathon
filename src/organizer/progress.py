@@ -49,10 +49,6 @@ def progress_data(event):
         if updated_at and (judge_id not in last_active or updated_at > last_active[judge_id]):
             last_active[judge_id] = updated_at
 
-    nudged = {}
-    for entry in event_nudges(event):
-        nudged.setdefault(entry.detail.get("judge_id"), entry.created_at)
-
     judge_rows = []
     for j in judges:
         mine = assigned[j.pk]
@@ -69,7 +65,7 @@ def progress_data(event):
         judge_rows.append({
             "judge": j, "assigned": len(mine), "submitted": done,
             "drafts": len(mine & drafts[j.pk]), "unstarted": len(mine) - started,
-            "state": state, "last_active": last_active.get(j.pk), "nudged": nudged.get(j.pk),
+            "state": state, "last_active": last_active.get(j.pk),
             "tracks": [jt.track.name for jt in j.judge_tracks.all()],
         })
     judge_rows.sort(key=lambda r: (JUDGE_ORDER[r["state"]], -r["unstarted"], r["judge"].user.name.lower()))
@@ -83,11 +79,20 @@ def progress_data(event):
     for judge_id, projects_of in assigned.items():
         for p in projects_of:
             reviewers[p] += 1
-    project_rows = sorted(
-        ({"project": p, "in": reviews_in[p.pk], "assigned": reviewers[p.pk],
-          "short": max(0, target - reviewers[p.pk])} for p in projects),
-        key=lambda r: (r["in"] >= target, r["in"], r["project"].name.lower()),
-    )
+    def project_state(done, assigned):
+        if done >= target:
+            return "done"
+        if assigned >= target:
+            return "waiting"  # enough judges assigned; their reviews are not all in yet
+        return "short"  # needs more judges: assign on the assignment page
+
+    project_rows = [
+        {"project": p, "in": reviews_in[p.pk], "assigned": reviewers[p.pk],
+         "short": max(0, target - reviewers[p.pk]), "state": project_state(reviews_in[p.pk], reviewers[p.pk])}
+        for p in projects
+    ]
+    order = {"short": 0, "waiting": 1, "done": 2}
+    project_rows.sort(key=lambda r: (order[r["state"]], r["in"], r["project"].name.lower()))
 
     tracks = defaultdict(lambda: {"projects": 0, "in": 0, "needed": 0, "judges": set()})
     judge_tracks = {j.pk: {jt.track_id for jt in j.judge_tracks.all()} for j in judges}
@@ -119,12 +124,6 @@ def progress_data(event):
     }
 
 
-def event_nudges(event):
-    from core.models import AuditLog
-
-    return AuditLog.objects.filter(action=AuditAction.JUDGE_NUDGED, subject=event.slug).order_by("-created_at")
-
-
 @never_cache
 @portal_required("organizer")
 def progress(request, slug):
@@ -143,7 +142,8 @@ def nudge(request, slug, membership_id):
     The portal sends no email itself (it runs offline), so the reminder goes from the organizer's
     mailbox: the page gives a mail link and the text to copy. (A redirect straight to `mailto:`
     would be blocked by the `form-action 'self'` security policy.) The audit log keeps who was
-    nudged, when, and by whom; the dashboard shows the last nudge.
+    nudged, when, and by whom. The dashboard does not show it: the portal cannot know whether
+    the mail was actually sent.
     """
     event = get_managed_event(request.user, slug)
     judge = get_object_or_404(

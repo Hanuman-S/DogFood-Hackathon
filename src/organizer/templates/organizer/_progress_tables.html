@@ -25,7 +25,7 @@
             <td class="num">{{ r.submitted }}/{{ r.assigned }}</td>
             <td class="num">{{ r.drafts }}</td>
             <td class="num{% if r.unstarted %} bright{% endif %}">{{ r.unstarted }}</td>
-            <td class="faint">{{ r.last_active|utc:"never" }}{% if r.nudged %}<br>nudged {{ r.nudged|utc }}{% endif %}</td>
+            <td class="faint">{{ r.last_active|utc:"never" }}</td>
             <td class="num">
               {% if r.unstarted %}
               <form class="inline-form" method="post" action="{% url 'organizer:judge_nudge' event.slug r.judge.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit" title="log a reminder and open it in your mail app">nudge</button></form>
@@ -39,20 +39,20 @@
     </div>
   </section>
 
-  <div class="grid-2">
     <section class="frame" id="projects-progress">
-      <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">fewest reviews first</span></header>
+      <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">target {{ target }} reviews each &middot; needing judges first</span></header>
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table">
-          <thead><tr><th>project</th><th class="num">in</th><th class="num">assigned</th></tr></thead>
+          <thead><tr><th>project</th><th class="num">reviews in</th><th class="num">judges assigned</th><th class="num">status</th></tr></thead>
           <tbody>
           {% for r in project_rows %}
             <tr>
               <td>{{ r.project.name }}<br><span class="faint">{{ r.project.track.name|default:"no track" }}</span></td>
-              <td class="num{% if r.in < target %} bright{% endif %}">{{ r.in }}/{{ target }}</td>
-              <td class="num">{{ r.assigned }}{% if r.short %} <span class="badge badge--warn">{{ r.short }} short</span>{% endif %}</td>
+              <td class="num">{{ r.in }} <span class="faint">of {{ target }}</span></td>
+              <td class="num">{{ r.assigned }}</td>
+              <td class="num">{% if r.state == "done" %}<span class="badge badge--on">done</span>{% elif r.state == "waiting" %}<span class="badge">waiting on judges</span>{% else %}<a class="badge badge--warn" href="{% url 'organizer:assignments' event.slug %}#project-{{ r.project.pk }}">needs {{ r.short }} more judge{{ r.short|pluralize }}</a>{% endif %}</td>
             </tr>
-          {% empty %}<tr><td colspan="3" class="faint">no submitted projects.</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="4" class="faint">no submitted projects.</td></tr>{% endfor %}
           </tbody>
         </table>
       </div>
@@ -75,5 +75,4 @@
         </table>
       </div>
     </section>
-  </div>
 </div>
