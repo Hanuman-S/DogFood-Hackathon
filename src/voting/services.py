@@ -24,10 +24,11 @@ import hmac
 import math
 import random
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from django.core.exceptions import PermissionDenied
-from django.db import DatabaseError, IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.db.models import Max
 
 from accounts.roles import STAFF_ROLES, is_admin, is_organizer_of, roles_in
@@ -662,3 +663,24 @@ def resolve_token(event, token, *, origin=None):
                      reason="no_such_link", token_prefix=token[:6])
         raise NoSuchLink("This voting link does not exist.")
     return "link", link
+
+
+@contextmanager
+def voting_bypass(reason, *, actor=None, origin=None, subject=""):
+    """The one way past the voting trigger: `dogfood.voting_bypass` is on for this block only.
+    SET LOCAL would last to the end of the *outermost* transaction when this runs inside another, so
+    it is switched off again on the way out (as core.deadlines.deadline_bypass does). Audited even if
+    the block fails. For repairs by an admin only; no page or API uses it."""
+    try:
+        with transaction.atomic():
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL dogfood.voting_bypass = 'on'")
+            try:
+                yield
+            finally:
+                if connection.vendor == "postgresql" and not connection.needs_rollback:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL dogfood.voting_bypass = 'off'")
+    finally:
+        audit.record(AuditAction.VOTING_BYPASSED, origin=origin, actor=actor, subject=subject, reason=reason)

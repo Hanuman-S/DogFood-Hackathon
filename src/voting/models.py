@@ -4,7 +4,10 @@ Writes go only through `voting/services.py`. The window is enforced twice, like 
 deadline: the service checks it first, and a Postgres trigger (voting/migrations/0002) refuses any
 INSERT or UPDATE of a ballot or ballot line outside [opens_at, closes_at) by the database clock.
 The one exception is voiding: an UPDATE of a ballot that changes only its void fields is allowed
-at any time, so an organizer can void a ballot after voting has closed.
+at any time, so an organizer can void a ballot after voting has closed. DELETE of a ballot or a
+line is refused once voting has opened (voting/migrations/0004), and the foreign keys into these
+tables from events, projects and accounts are PROTECT, so no cascade can remove a vote either.
+`voting.services.voting_bypass` is the one, audited, way past the trigger.
 
 Nobody but the event's organizers and platform admins reads a tally (`voting.services.tally`).
 """
@@ -128,7 +131,8 @@ class Ballot(models.Model):
     stored. A voided ballot is kept (with who, when and why) and left out of every tally.
     """
 
-    event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="ballots")
+    # PROTECT: an event with ballots cannot be deleted (ballots are records; see the trigger).
+    event = models.ForeignKey("events.Event", on_delete=models.PROTECT, related_name="ballots")
     voter_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="ballots"
     )
@@ -182,7 +186,8 @@ class BallotLine(models.Model):
     voter's ballot (the per-ballot shuffle), kept for the position-bias check."""
 
     ballot = models.ForeignKey(Ballot, on_delete=models.CASCADE, related_name="lines")
-    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="ballot_lines")
+    # PROTECT: a project with ballot lines cannot be deleted, directly or through its team.
+    project = models.ForeignKey("projects.Project", on_delete=models.PROTECT, related_name="ballot_lines")
     credits = models.PositiveSmallIntegerField(default=0)
     shown_position = models.PositiveSmallIntegerField()
 

@@ -118,6 +118,7 @@ class AuditAction(models.TextChoices):
     VOTER_LINK_REVOKED = "voter_link_revoked", "Revoked a voter link"
     VOTER_LINKS_EXPORTED = "voter_links_exported", "Downloaded voter links"
     OPEN_LINK_ROTATED = "open_link_rotated", "Replaced an event's open voting link"
+    VOTING_BYPASSED = "voting_bypassed", "Wrote to ballots past the voting trigger (bypass)"
 
 
 class AuditLog(models.Model):

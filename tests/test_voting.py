@@ -80,8 +80,11 @@ def credits_of(event, user):
 
 
 def shift_voting(event, **deltas):
+    """Move the window in a test. Once voting has opened the config row is guarded by the trigger,
+    so this goes through the audited bypass, the same way a real repair would."""
     now = timezone.now()
-    VotingConfig.objects.filter(event=event).update(**{k: now + v for k, v in deltas.items()})
+    with services.voting_bypass("test: move the voting window"):
+        VotingConfig.objects.filter(event=event).update(**{k: now + v for k, v in deltas.items()})
     event.config.refresh_from_db()
 
 
@@ -495,3 +498,114 @@ def test_end_voting_now_is_the_one_way_to_close_at_once(vote_event):
     ended = services.end_voting_now(vote_event, actor=vote_event.organizer)
     assert ended.closes_at <= timezone.now() + timedelta(seconds=1)
     assert services.state(ended, timezone.now() + timedelta(seconds=1)) == "closed"
+
+
+
+# --- votes cannot be deleted once voting has opened ------------------------------------------------------------
+
+def tally_snapshot(event):
+    return [(r.project.pk, r.influence, r.ballots) for r in services.tally(event, event.organizer)]
+
+
+@pytest.mark.django_db
+def test_leave_and_delete_team_with_voted_project_is_refused_and_tally_unchanged(vote_event, client_for):
+    """The last member leaving deletes the team (and its project). After voting opens that is refused
+    -- first by the submission deadline (409), and under the deadline bypass by PROTECT -- and the
+    tally does not move."""
+    from django.db.models import ProtectedError
+
+    from core.deadlines import deadline_bypass
+
+    team = vote_event.projects_list[0].team
+    cast(vote_event, vote_event.outsider, {vote_event.projects_list[0].pk: 16})
+    before = tally_snapshot(vote_event)
+    client = client_for(vote_event.voter)
+    client.post(f"/participant/teams/{team.pk}/leave", {"confirm": "yes"})
+    assert team.__class__.objects.filter(pk=team.pk).exists()
+    with pytest.raises(ProtectedError), deadline_bypass(None, "test: delete a team with votes"):
+        team.delete()
+    assert team.__class__.objects.filter(pk=team.pk).exists()
+    assert tally_snapshot(vote_event) == before
+
+
+@pytest.mark.django_db
+def test_deleting_a_project_or_event_with_votes_is_refused(vote_event):
+    from django.db.models import ProtectedError
+
+    from core.deadlines import deadline_bypass
+
+    project = vote_event.projects_list[1]
+    cast(vote_event, vote_event.outsider, {project.pk: 4})
+    before = tally_snapshot(vote_event)
+    with pytest.raises(ProtectedError), deadline_bypass(None, "test: delete a project with votes"):
+        project.delete()
+    with pytest.raises(ProtectedError):
+        Event.objects.get(pk=vote_event.pk).delete()
+    assert Project.objects.filter(pk=project.pk).exists()
+    assert tally_snapshot(vote_event) == before
+
+
+@pytest.mark.django_db
+def test_raw_sql_delete_of_votes_is_refused_after_voting_opens(vote_event):
+    from django.db import connection
+
+    ballot = cast(vote_event, vote_event.outsider, {vote_event.projects_list[1].pk: 4})
+    line = ballot.lines.get(credits=4)
+    for sql, arg in (("DELETE FROM voting_ballotline WHERE id = %s", line.pk),
+                     ("DELETE FROM voting_ballot WHERE id = %s", ballot.pk),
+                     ("DELETE FROM voting_votingconfig WHERE id = %s", vote_event.config.pk),
+                     ("UPDATE voting_votingconfig SET opens_at = now() + interval '1 day' WHERE id = %s",
+                      vote_event.config.pk)):
+        with pytest.raises(DatabaseError, match="dogfood_voting_closed"), transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(sql, [arg])
+    shift_voting(vote_event, closes_at=-timedelta(seconds=1))  # after the close too
+    with pytest.raises(DatabaseError, match="dogfood_voting_closed"), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM voting_ballotline WHERE id = %s", [line.pk])
+    assert BallotLine.objects.filter(pk=line.pk).exists()
+
+
+@pytest.mark.django_db
+def test_voting_bypass_is_the_audited_way_past_the_trigger(vote_event):
+    from django.db import connection
+
+    ballot = cast(vote_event, vote_event.outsider, {vote_event.projects_list[1].pk: 4})
+    with services.voting_bypass("test: repair", actor=vote_event.organizer):
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM voting_ballotline WHERE ballot_id = %s", [ballot.pk])
+    assert not BallotLine.objects.filter(ballot=ballot).exists()
+    entry = AuditLog.objects.filter(action=AuditAction.VOTING_BYPASSED, detail__reason="test: repair").get()
+    assert entry.actor == vote_event.organizer
+
+
+def test_every_foreign_key_touching_the_voting_tables_is_as_documented():
+    from django.apps import apps
+
+    found = {}
+    for model in apps.get_models():
+        for f in model._meta.concrete_fields:
+            if f.is_relation and "voting" in (model._meta.app_label, f.related_model._meta.app_label):
+                found[f"{model._meta.label}.{f.name}"] = f.remote_field.on_delete.__name__
+    assert found == {
+        "voting.VotingConfig.event": "CASCADE", "voting.VotingConfig.created_by": "SET_NULL",
+        "voting.VotingConfig.updated_by": "SET_NULL",
+        "voting.VoterLink.event": "CASCADE", "voting.VoterLink.created_by": "SET_NULL",
+        "voting.VoterLink.revoked_by": "SET_NULL",
+        "voting.Ballot.event": "PROTECT", "voting.Ballot.voter_user": "PROTECT",
+        "voting.Ballot.voter_link": "PROTECT", "voting.Ballot.voided_by": "PROTECT",
+        "voting.BallotLine.ballot": "CASCADE", "voting.BallotLine.project": "PROTECT",
+    }
+
+
+@pytest.mark.django_db
+def test_voting_bypass_does_not_leak_past_its_block_inside_a_transaction(vote_event):
+    from django.db import connection
+
+    ballot = cast(vote_event, vote_event.outsider, {vote_event.projects_list[1].pk: 4})
+    with transaction.atomic():
+        with services.voting_bypass("test: nested"):
+            pass
+        with pytest.raises(DatabaseError, match="dogfood_voting_closed"), transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM voting_ballot WHERE id = %s", [ballot.pk])
