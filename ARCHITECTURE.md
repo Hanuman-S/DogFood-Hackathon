@@ -37,7 +37,9 @@ platform_admin/ /admin/         and the database admin at /admin/db/
 ```
 
 Each portal is its own Django app with its own `urls.py`, `views.py` and `templates/<app>/`.
-Models and rules shared between portals live in `events/`, `teams/` and `projects/`. A
+Models and rules shared between portals live in `events/`, `teams/`, `projects/`, `scoring/`
+(rubric, assignment, the engine, results) and `voting/` (the community vote); a template several
+portals share (the results body, the ballot) lives in `src/templates/`. A
 teammate can own one portal and rarely touch anyone else's files. Shared things live in `core/`
 (audit log, headers, errors) and `accounts/` (identity), plus the shared layout in
 `src/templates/`.
@@ -130,8 +132,9 @@ cross-site POSTs; and `Secure` behind TLS.
 At hackathon scale, one indexed lookup per request costs nothing. Being able to revoke a
 session instantly is exactly what an organizer needs when a judge's laptop goes missing.
 
-On top of Django's session row, a `UserSession` row records the device, IP, start time and
-last-seen time. This powers the *active sessions* list. "Last seen" is refreshed at most once
+On top of Django's session row, a `UserSession` row records the device, a keyed hash of the IP
+(never the address; the list says "this network" for the current one), start time and last-seen
+time. This powers the *active sessions* list. "Last seen" is refreshed at most once
 every 5 minutes per session, to avoid writing to the database on every request.
 
 Session lifetime is 14 days if "remember this terminal" is ticked. Otherwise the cookie ends
@@ -165,9 +168,10 @@ checker, which sends exactly one header per request and cannot do a login form.
 
 ### Login throttle
 
-The limits are 5 failures per (email, IP) and 30 per IP, within a sliding 15-minute window.
-They are counted from audit-log rows in Postgres, so they survive restarts and are shared
-across gunicorn workers. A successful login resets that email-and-IP counter. The throttle is
+The limits are 5 failures per (email, IP) and 30 per IP, within a sliding 15-minute window on
+the database clock. They are counted from audit-log rows in Postgres (by IP hash), so they survive
+restarts and are shared across gunicorn workers. `core/ratelimit.py` generalises the pattern: the
+vote-write limits count audit rows the same way. A successful login resets that email-and-IP counter. The throttle is
 checked **before** the password, so a throttled guess reveals nothing.
 
 **Why not lock the account after N failures?** That lets anyone lock a judge out on judging day
@@ -200,9 +204,10 @@ for admins, because an audit trail an admin can edit proves nothing.
 ### Audit log
 
 `core.AuditLog` is append-only. Each row holds who did it (plus an email snapshot, so the row
-outlives the account), the action, the subject, the IP, the user agent and JSON detail. It is
-written through a single function, `core.audit.record()`. Later modules add their own actions
-(submission edits, score changes, votes) the same way.
+outlives the account), the action, the subject, a keyed hash of the IP, the user agent and JSON
+detail. It is written through a single function, `core.audit.record()`. Services take an
+`audit.Origin` (IP hash and user agent) built by the view, never the request itself, so the same
+service runs from a page, the API, a command or a test. Refusals are audited too.
 
 ## Events, teams and projects
 
@@ -437,6 +442,53 @@ boot when `SEED_FIXTURES=1` (the default under compose), and by hand with
   Nothing reads scores yet (see JUDGING.md).
 - **Team members** become participants of the event (`EventMembership`), and in demo mode the
   demo organizer and both demo judges are given their roles in the fixture event.
+
+## Secrets, keys and addresses
+
+- **SECRET_KEY** comes from `DJANGO_SECRET_KEY`, or else from a file the entrypoint generates on
+  first boot in the `secrets` Docker volume (`config/secret_key.py`: random, mode 0600, created
+  with O_EXCL). Nothing in the repository is a usable key, `docker compose up` stays one command,
+  and every install has its own. Outside `DEMO_MODE` the portal refuses to start with a key from the
+  repository or one shorter than 32 characters.
+- **Derived keys.** Nothing uses SECRET_KEY directly: `core.keys.derived_key(purpose)` =
+  HMAC(SECRET_KEY, purpose), one per use ("ip-hash", "voter-links", "open-link").
+- **No IP address is stored.** `core.net.hash_ip` (HMAC under the "ip-hash" key) is the only form
+  an address takes in the database. It is enough to count (rate limits) and to cluster (voting
+  integrity flags), not to say where anyone was. Rotating SECRET_KEY resets both.
+
+## Results
+
+`scoring/services.py` writes (compute, publish, unpublish, settings, weights); `scoring/results.py`
+reads (who sees what, shared ranks, tie groups, winners, People's Choice). `compute_snapshot` runs
+the pure engine inside its own REPEATABLE READ transaction, so a result is computed from one
+consistent view of the database, and it refuses to run inside another transaction (views that call
+it are `non_atomic_requests`). Snapshots are immutable and publications append-only, by Postgres
+triggers. Publishing checks the vote window first, like every deadline. The public page is a 404
+unless a result is published with a public visibility.
+
+## Community voting
+
+`voting/` holds the models and rules; the pages are in `participant/` (logged-in voters),
+`public/` (link voters) and `organizer/` (setup, tally, integrity).
+
+- **Two layers, as with the deadline.** The service checks the window first (409), then the rate
+  limit (429), the access mode and link (403), the voter (403), the ballot (400) and the budget
+  (400, with the ballot row locked). A Postgres trigger is the backstop: no ballot write outside
+  the window, no delete once voting has opened, and the vote's own row fixed once open. Foreign keys
+  into ballots are PROTECT, so nothing cascades into them. The audited `voting_bypass` is the only
+  way past the trigger, and it switches itself off on the way out so it cannot leak into an outer
+  transaction.
+- **A GET never writes.** A ballot, and the per-ballot shuffle of its projects (seeded from the
+  ballot id and a per-event secret), is created by the first POST; an open-link voter's cookie is
+  set on the page view (a cookie, not a row).
+- **Identity** is exactly one of an account, an email link (token derived from a key and stored as
+  a digest only) or an open-link cookie (signed, event-scoped), with a unique constraint per kind.
+- **Tallies are read only by organizers and admins.** A final result after the close freezes an
+  immutable, append-only tally inside `compute_snapshot`'s transaction, with the vote's row locked and
+  a counter bumped, so two concurrent finals cannot both record a stale "previous" tally (the second
+  fails to serialize and is retried).
+- **The combination** of judges and community (`scoring/engine/combine.py`) is pure and exact
+  (fractions), so it lives in the engine with the other scoring code. See [JUDGING.md](JUDGING.md).
 
 ## Design system: violet CRT
 

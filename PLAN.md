@@ -338,7 +338,9 @@ verified"; T3's evidence will be `t3-report.txt` (Stage 7).
 | 2 voting core | `001b6ba`, `93ad2b1` | `voting` app, window trigger, per-ballot order, hidden tallies, publish refused while voting is open |
 | 3 access modes | `55df4ca`, `4984c78`, `9e78e54` | email links, open link; votes undeletable once voting opens (trigger + PROTECT); per-install SECRET_KEY and derived keys |
 | 4 anti-abuse | `5bbbbd0`, `c0103b7` | IP hashes only, rate limits, flags, void/restore, integrity page |
-| 5 final score | `e5205b3`, (next) | weights + lock, frozen tallies, percentile combination, combined page, People's Choice |
+| 5 final score | `e5205b3`, `4b846bf`, `058f3cc` | weights + lock, frozen tallies, percentile combination, combined page, People's Choice, results.csv; `4b846bf` went in with one failing test, fixed in `058f3cc` |
+| 7 seed, evidence, docs | `5ad591b` + the reports | demo votes, results API, t3-check, Normalization Proof, full docs pass, fresh-boot reports |
+| 6 comments | not built | cut: listed under "What it does not do yet" |
 
 ### Caveats for the docs (JUDGING.md / README, Stage 7)
 - **one_person_one_vote: the identical-ballots flag cannot fire.** It only looks at ballots spread
@@ -359,6 +361,6 @@ verified"; T3's evidence will be `t3-report.txt` (Stage 7).
 - **Tests move the voting window** through the audited `voting_bypass`, like a real repair: once
   voting has opened, the trigger guards the config row too.
 
-## S4: docs (deferred)
-Deferred by the user. The docs are written once, in the final docs pass, against the complete T2
-system. See the S4 list in `docs/t2-scoring-plan.md`.
+## S4: docs (done in T3 stage 7)
+Written against the complete system: README, ARCHITECTURE.md, DATA-MODEL.md and JUDGING.md
+(which now carries every caveat above and the generated Normalization Proof).
