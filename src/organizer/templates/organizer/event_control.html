@@ -211,7 +211,8 @@
 
   {# --- custom questions ------------------------------------------------ #}
   <section class="frame" id="questions">
-    <header class="frame__bar"><h2 class="frame__title">submission questions</h2><span class="frame__meta">asked of every project</span></header>
+    <header class="frame__bar"><h2 class="frame__title">submission questions</h2><span class="frame__meta">optional extra fields teams fill in when they submit</span></header>
+    {% if questions %}
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
         <thead><tr><th>question</th><th>kind</th><th>required</th><th class="num">answers</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
@@ -228,10 +229,11 @@
               <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
             </td>
           </tr>
-        {% empty %}<tr><td colspan="5" class="faint">no custom questions. every project still answers the standard fields.</td></tr>{% endfor %}
+        {% endfor %}
         </tbody>
       </table>
     </div>
+    {% endif %}
     <div class="frame__body">
       {% include "_form_errors.html" with form=question_form %}
       <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'question' %}" novalidate>
@@ -285,7 +287,7 @@
           {% for t in teams %}
             <tr>
               <td>{{ t.name }}</td>
-              <td class="num">{{ t.n }}/{{ event.max_team_size }}</td>
+              <td class="num">{{ t.n }}</td>
               <td>{% if t.project %}{{ t.project.name }} <span class="badge{% if t.project.is_submitted %} badge--on{% endif %}">{{ t.project.status }}</span>{% else %}<span class="faint">none yet</span>{% endif %}</td>
             </tr>
           {% empty %}<tr><td colspan="3" class="faint">no teams yet.</td></tr>{% endfor %}

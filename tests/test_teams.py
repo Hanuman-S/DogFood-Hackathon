@@ -180,7 +180,7 @@ def test_last_member_leaving_disbands_the_team_and_its_draft(make_event, make_te
     event = make_event()
     team = make_team(event)
     Project.objects.create(team=team, name="Draft")
-    client_for(team.captain).post(f"/participant/teams/{team.pk}/leave")
+    client_for(team.captain).post(f"/participant/teams/{team.pk}/leave", {"confirm": "yes"})
     assert not Team.objects.filter(pk=team.pk).exists()
     assert not Project.objects.exists()
     assert AuditLog.objects.filter(action=AuditAction.TEAM_DISBANDED).exists()
@@ -194,3 +194,28 @@ def test_last_member_cannot_disband_a_submitted_project(make_event, make_team, c
     Project.objects.create(team=team, name="Done", status=Status.SUBMITTED, submitted_at=timezone.now())
     client_for(team.captain).post(f"/participant/teams/{team.pk}/leave")
     assert Team.objects.filter(pk=team.pk).exists()
+
+
+def test_the_last_member_is_asked_before_the_team_and_draft_are_deleted(make_event, make_user, client_for):
+    from projects.models import Project
+
+    event = make_event()
+    me = make_user()
+    client = client_for(me)
+    client.post(f"/participant/events/{event.slug}/project", {"name": "Solo Draft"})
+    team = Team.objects.get(captain=me)
+    assert "leave and delete team" in client.get(f"/participant/events/{event.slug}/").content.decode()
+    page = client.post(f"/participant/teams/{team.pk}/leave")
+    assert page.status_code == 200 and "Solo Draft" in page.content.decode() and "cannot be undone" in page.content.decode()
+    assert Team.objects.filter(pk=team.pk).exists() and Project.objects.filter(team=team).exists()
+    done = client.post(f"/participant/teams/{team.pk}/leave", {"confirm": "yes"})
+    assert done.status_code == 302 and not Team.objects.filter(pk=team.pk).exists()
+    assert not Project.objects.filter(name="Solo Draft").exists()
+
+
+def test_a_member_with_teammates_leaves_without_the_extra_step(make_event, make_team, make_user, client_for):
+    event = make_event()
+    member = make_user()
+    team = make_team(event, members=[member])
+    response = client_for(member).post(f"/participant/teams/{team.pk}/leave")
+    assert response.status_code == 302 and not team.members.filter(user=member).exists()

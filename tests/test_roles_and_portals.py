@@ -155,7 +155,7 @@ def test_a_competitor_cannot_be_made_a_judge_of_the_same_event(make_event, make_
 def test_leaving_a_team_ends_the_participant_role(make_event, make_team, client_for):
     event = make_event()
     team = make_team(event)
-    client_for(team.captain).post(f"/participant/teams/{team.pk}/leave")
+    client_for(team.captain).post(f"/participant/teams/{team.pk}/leave", {"confirm": "yes"})
     assert roles_in(team.captain, event) == frozenset()
 
 

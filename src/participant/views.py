@@ -137,11 +137,25 @@ def team_remove(request, team_id, member_id):
 @require_POST
 @portal_required("participant")
 def team_leave(request, team_id):
+    """Leave the team. When the caller is the last member, leaving deletes the team and its
+    draft project, so that case first shows a page asking to confirm (no JS dialogs: the CSP
+    forbids inline scripts, and a page works everywhere)."""
     team = _my_team(request, team_id)
     event = team.event
-    _, error = _team_action(request, team_services.leave_team, team)
+    project = getattr(team, "project", None)
+    last_one = not team.members.exclude(user=request.user).exists()
+    if (
+        last_one and request.POST.get("confirm") != "yes"
+        and not deadlines.window(event, team).is_closed
+        and not (project is not None and project.is_submitted)
+    ):
+        return render(request, "participant/leave_confirm.html", {"team": team, "event": event, "project": project})
+    remaining, error = _team_action(request, team_services.leave_team, team)
     if not error:
-        messages.success(request, "you left the team.")
+        if remaining is None:
+            messages.success(request, "you left. your team and its draft project were deleted.")
+        else:
+            messages.success(request, "you left the team.")
     return redirect(_event_url(event))
 
 

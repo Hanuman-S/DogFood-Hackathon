@@ -84,7 +84,7 @@
         {% else %}
           <p class="faint">the captain can share the invite link and manage the team.</p>
         {% endif %}
-        <form method="post" action="{% url 'participant:team_leave' team.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">leave team</button></form>
+        <form method="post" action="{% url 'participant:team_leave' team.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">{% if members|length == 1 %}leave and delete team{% else %}leave team{% endif %}</button></form>
       </div>
     </section>
 
