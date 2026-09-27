@@ -12,9 +12,9 @@ entirely on a laptop with the network off: no cloud accounts, hosted database or
 - deadline enforcement
 - the public gallery with search and filters
 
-`.dogfood.toml` claims **T1**, and `acceptance-report.txt` shows all three T1 checks passing.
-T2 (judging) is next; its four checks fail, and T2 is not claimed. The judging *data* is already
-in: the fixture's judges, their tracks, the rubric and 123 reviews. See [JUDGING.md](JUDGING.md).
+`.dogfood.toml` claims **T1 and T2**, and `acceptance-report.txt` shows all seven checks passing
+(three T1, four T2: own scores, peer scores refused, participant refused, CSV export). Published
+results pages are not built yet. See [JUDGING.md](JUDGING.md).
 
 The portal follows the portal-v2 design (one app per audience, Violet CRT look, deadline trigger)
 with one deliberate change: **roles are held per event**, so the same person can judge one

@@ -7,7 +7,7 @@ departure from the plan. The T1 phase log was deleted in `c6f381c`. It is recove
 
 Scope, from the plan: the scoring and ranking engine and its persistence. No assignment, no
 score entry, no results pages, no publishing service or UI, no CSV export, no seed data.
-`.dogfood.toml` still claims T1 only.
+`.dogfood.toml` claimed T1 only at the time (T2 claimed after PR #3; see below).
 
 ## S1: engine core (done)
 
@@ -301,6 +301,30 @@ score entry, no results pages, no publishing service or UI, no CSV export, no se
   judge judges (those events only); everything else is 403 and audited.
 - **The archive demo event** is in its judging phase at boot, with five submitted projects and one
   fixed-seed assignment round (both demo judges have a queue).
+
+## PR #3 integration (for the final docs pass)
+Merged 2026-09-27 (Hanuman-S: CSV export, open judge invite links, 1-5 scale, extension refusals,
+leave-and-delete confirm). Caveats, to carry into JUDGING.md:
+- **The scale is fixed at 1-5.** Migration `scoring/0007` adds the CHECK
+  `criterion_scale_is_1_to_5`, so an organizer file imported through the CLI whose criteria use
+  any other scale is refused by the database. Rescale such files to 1-5 before importing.
+- **Open judge invite links** (no email) are usable by whoever holds them, once. They are shown
+  once, expire, can be revoked, and the export's `judge_invites` sheet says who accepted each.
+- **Leaving as the last member** shows a confirm page, decided in the view. If the other member
+  leaves between that page and the POST, the team is deleted without the confirm step (low
+  impact; not fixed).
+- **The export is one consistent read.** `organizer.export.consistent_read` refuses to run inside
+  another transaction, like `compute_snapshot`.
+- **The peer-isolation probe** in `.dogfood.toml` used `?judge=judge_a`, which resolves to no
+  account (only email, account id or fixture judge id do since `19000d9`), so its 403 proved
+  nothing. It now names judge_a's email, and a contract test checks that the target resolves.
+
+## Remaining before the freeze (2026-09-28 18:00 UTC)
+1. **CSV export**: shipped in PR #3; verify via `./scripts/acceptance.sh` (the T2 `csv export
+   works` check) and commit the regenerated report. Verified 2026-09-27: PASS, with all seven checks.
+2. Deferred UI work: side-tab navigation on the long pages (organizer event page, assignments,
+   rubric, project edit, account).
+3. Deferred auto-refresh partials: the participant team block and the organizer event overview.
 
 ## S4: docs (deferred)
 Deferred by the user. The docs are written once, in the final docs pass, against the complete T2

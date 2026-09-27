@@ -9,9 +9,9 @@ Every path advertised in `.dogfood.toml` therefore has to be registered at exact
 advertised. These tests read the real file, not a copy, so editing one without the other fails
 here rather than in front of a judge.
 
-What is deliberately *not* asserted: that the T2 routes work. They 404 until T2 exists, and
-`.dogfood.toml` claims only `["T1"]`. A stub that turned those FAILs into PASSes is exactly what
-the honesty rules forbid.
+`.dogfood.toml` claims T1 and T2 because every check passes against the real portal (see
+acceptance-report.txt). The T2 tests below replay the checker's requests against real data; a
+stub that turned a FAIL into a PASS is exactly what the honesty rules forbid.
 """
 
 import json
@@ -42,9 +42,9 @@ def config():
         return tomllib.load(handle)
 
 
-def test_the_config_is_valid_toml_and_claims_only_t1(config):
+def test_the_config_is_valid_toml_and_claims_t1_and_t2(config):
     """`run.py` uses real `tomllib` on Python 3.11+, so a malformed file means zero checks run."""
-    assert config["tiers"]["claimed"] == ["T1"]
+    assert config["tiers"]["claimed"] == ["T1", "T2"]
     assert config["portal"]["base_url"].startswith("http://")
 
 
@@ -92,7 +92,7 @@ def test_the_judge_scores_routes_resolve_with_no_redirect(config):
     assert resolve(path.split("?")[0]).func is judge_api.judge_scores
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_organizer_exports_csv_acceptance_contract(config, make_event):
     """T2 check 4: GET routes.csv_export as the organizer -> 200 and a first line with a comma.
     A judge or participant is refused (organizers only)."""
@@ -155,10 +155,24 @@ def test_judge_sees_own_scores_acceptance_contract(config, make_user):
 
 @pytest.mark.django_db
 def test_judge_cannot_see_peer_scores_acceptance_contract(config, make_user):
-    """T2 check 2: judge cannot see peer scores (403)."""
-    judge_b = make_user(email="judge_b@dogfood.local")
+    """T2 check 2: judge cannot see peer scores (403).
+
+    The probe must name judge_a's *real* account (the one seed_demo gives the judge_a token), in
+    a form `resolve_judge` accepts. `?judge=judge_a` resolved to nobody, so its 403 meant "no such
+    judge" and the check would have passed with isolation broken. judge_a asking the same URL gets
+    200, which proves the target resolves and the 403 is about who is asking."""
+    from urllib.parse import parse_qs, urlsplit
+
+    from accounts.management.commands.seed_demo import DEMO_ACCOUNTS
     from accounts.roles import Role
     from events.models import EventMembership
+
+    probe = config["routes"]["peer_scores"]
+    target = parse_qs(urlsplit(probe).query)["judge"][0]
+    judge_a = make_user(email=DEMO_ACCOUNTS["judge_a"][0])
+    judge_b = make_user(email=DEMO_ACCOUNTS["judge_b"][0])
+    assert judge_api.resolve_judge(target) == judge_a
+
     now = timezone.now()
     event = Event.objects.create(
         slug="test-event", name="Test Event", is_published=True,
@@ -166,15 +180,13 @@ def test_judge_cannot_see_peer_scores_acceptance_contract(config, make_user):
         submissions_close_at=now - timedelta(hours=1), judging_starts_at=now - timedelta(minutes=30),
         judging_ends_at=now + timedelta(days=2),
     )
-    EventMembership.objects.create(event=event, user=judge_b, role=Role.JUDGE)
-    _, raw = ApiToken.issue(judge_b, "judge_b")
-    
-    probe = config["routes"]["peer_scores"]
-    response = Client().get(
-        probe,
-        HTTP_AUTHORIZATION=f"Bearer {raw}",
-    )
-    assert response.status_code == 403
+    for judge in (judge_a, judge_b):
+        EventMembership.objects.create(event=event, user=judge, role=Role.JUDGE)
+    _, raw_a = ApiToken.issue(judge_a, "judge_a")
+    _, raw_b = ApiToken.issue(judge_b, "judge_b")
+
+    assert Client().get(probe, HTTP_AUTHORIZATION=f"Bearer {raw_b}").status_code == 403
+    assert Client().get(probe, HTTP_AUTHORIZATION=f"Bearer {raw_a}").status_code == 200
 
 
 @pytest.mark.django_db

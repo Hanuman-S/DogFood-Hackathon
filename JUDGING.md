@@ -1,6 +1,6 @@
-# Judging (T2): in progress, not claimed
+# Judging (T2): claimed
 
-**Judging is being built and is not claimed.** Built: the organizer's side (below: the rubric,
+**T2 is claimed: all four checks pass.** Built: the organizer's side (below: the rubric,
 judge invites, the judging window, assignment, the progress dashboard), the judge side (a queue
 of assigned projects, draft / submit / reopen, declaring a conflict, and `/api/judge/scores`,
 which returns only the caller's own reviews), and the scoring engine (`scoring/engine/`, with
@@ -12,8 +12,10 @@ the final docs pass.)*
 
 All four T2 acceptance checks pass when the checker is run against a local stack (judge sees own
 scores, judge cannot see peer scores, participant blocked, CSV export). The committed
-[`acceptance-report.txt`](acceptance-report.txt) predates the export and has not been regenerated,
-and `.dogfood.toml` still claims `["T1"]` only: changing the claim is a deliberate team decision.
+[`acceptance-report.txt`](acceptance-report.txt) was regenerated from a fresh stack after PR #3
+(2026-09-27) and shows all seven checks passing, so `.dogfood.toml` claims `["T1", "T2"]`. The peer
+check asks for judge_a's real account (`?judge=judge.a@dogfood.local`); judge_a gets 200 there and
+judge_b 403.
 
 ## What exists
 

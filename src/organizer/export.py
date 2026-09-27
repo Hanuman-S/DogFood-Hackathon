@@ -356,7 +356,7 @@ class EventExport:
         rows = []
         for t in teams:
             x, p = extensions.get(t.pk), project_of.get(t.pk)
-            rows.append((t.pk, t.name, t.captain.name, t.captain.email, t.members.count(),
+            rows.append((t.pk, t.name, t.captain.name, t.captain.email, len(t.members.all()),
                          [m.user.name for m in t.members.all()], t.created_at,
                          p.name if p else "", p.status if p else "no project",
                          x.until if x else "", x.reason if x else "", x.granted_by.email if x and x.granted_by else ""))
@@ -368,9 +368,17 @@ class EventExport:
         return (["team", "name", "email", "captain", "joined"],
                 [(m.team.name, m.user.name, m.user.email, m.team.captain_id == m.user_id, m.joined_at) for m in members])
 
+    @cached_property
+    def reviewers_per_project(self):
+        return Counter(project for _, project in self.live_assignments)
+
+    @cached_property
+    def reviews_in_per_project(self):
+        return Counter(project for (_, project), (done, _) in self.scores.items() if done)
+
     def _project_columns(self, p):
-        reviewers = sum(1 for _, project in self.live_assignments if project == p.pk)
-        reviews_in = sum(1 for (_, project), (done, _) in self.scores.items() if project == p.pk and done)
+        reviewers = self.reviewers_per_project[p.pk]
+        reviews_in = self.reviews_in_per_project[p.pk]
         result = self.result_by_project.get(str(p.pk), {})
         return [
             p.pk, p.name, p.team.name, p.track.name if p.track else "", p.status, p.submitted_at,
@@ -513,16 +521,27 @@ class EventExport:
         return "\n".join(lines) + "\n"
 
 
+class ExportInsideTransaction(RuntimeError):
+    pass
+
+
 def consistent_read():
-    """A read-only transaction in which every query sees the same snapshot of the database."""
+    """A read-only transaction in which every query sees the same snapshot of the database.
+
+    Raises inside another transaction, like `scoring.services.compute_snapshot`: only the
+    outermost transaction can choose its isolation level, so a nested one would silently lose the
+    one-instant guarantee. Views use @transaction.non_atomic_requests; tests use
+    django_db(transaction=True)."""
     class _Snapshot:
         def __enter__(self):
-            # Only the outermost transaction can choose its isolation level (it must be its first
-            # statement). Inside another one -- a test's, say -- the reads share that one anyway.
-            outermost = not connection.in_atomic_block
+            if connection.in_atomic_block:
+                raise ExportInsideTransaction(
+                    "the export opens its own REPEATABLE READ transaction and cannot run inside "
+                    "another. Call it outside transaction.atomic (views: @transaction.non_atomic_requests)."
+                )
             self.atomic = transaction.atomic()
             self.atomic.__enter__()
-            if outermost and connection.vendor == "postgresql":
+            if connection.vendor == "postgresql":
                 with connection.cursor() as cursor:
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             return self

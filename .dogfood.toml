@@ -4,9 +4,10 @@
 base_url = "http://localhost:8080"
 
 [tiers]
-# T1 is claimed because all three T1 checks pass for real (see acceptance-report.txt).
-# T2 (judging) is not built yet, so its four checks fail honestly and it is not claimed.
-claimed = ["T1"]
+# Claimed because every check of both tiers passes for real (see acceptance-report.txt): the
+# three T1 checks and the four T2 checks (own scores, peer scores refused, participant refused,
+# CSV export).
+claimed = ["T1", "T2"]
 pitch = "A self-hosted hackathon portal with a server-guarded portal per role, a deadline enforced by both the server and a Postgres trigger, and a searchable public gallery."
 
 [auth]
@@ -22,7 +23,8 @@ gallery      = "/projects"
 # Built. "Dogfood Archive 2026" is seeded closed, so this POST is refused by the deadline check
 # with 409 {"error": "submissions_closed", ...} -- not by a 404 or a permission error.
 submit       = "/api/events/dogfood-archive-2026/projects"
-# Built (T2), though the file still claims T1 only.
+# Built (T2), and claimed: all four T2 checks pass.
 judge_scores = "/api/judge/scores"
-peer_scores  = "/api/judge/scores?judge=judge_a"
+# judge_a's real account (seed_demo), so judge_b's 403 means "a peer", not "no such judge".
+peer_scores  = "/api/judge/scores?judge=judge.a@dogfood.local"
 csv_export   = "/api/export.csv"

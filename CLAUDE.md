@@ -58,8 +58,9 @@ build step. `docker compose up --build` is the product; it must stay one command
   `ResultSnapshot` is immutable and `Publication` append-only (Postgres triggers, in
   `scoring/migrations/0005`).
 - **Honest claims.** `.dogfood.toml` claims only what `acceptance/run.py` verifies. A T2 route
-  must 404 until it is real (`tests/test_acceptance_contract.py`; today only the CSV export). `acceptance/` is the
-  organizers' and is read-only.
+  must 404 until it is real (`tests/test_acceptance_contract.py`; none is left unimplemented). A
+  probe must test what it names: `peer_scores` asks for judge_a's real account. `acceptance/` is
+  the organizers' and is read-only.
 
 ## Commands
 

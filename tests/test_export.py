@@ -19,7 +19,7 @@ from scoring import services as scoring
 from scoring.models import Assignment, AssignmentSource, Criterion, ResultSnapshot, Score, ScoreItem, SnapshotKind
 from teams.models import TeamExtension
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)  # the export refuses to run inside a transaction
 
 
 def rows_of(body: bytes):
