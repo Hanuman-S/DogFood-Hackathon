@@ -1,0 +1,19 @@
+{
+ "quick": false,
+ "trials": 200,
+ "bootstrap": 500,
+ "noise_copies": 20,
+ "noise_bootstrap": 100,
+ "python": "3.14.7",
+ "numpy": "2.5.3",
+ "lam": {
+  "fixtures": [
+   4.0,
+   4.0
+  ],
+  "dataset": [
+   4.0,
+   4.0
+  ]
+ }
+}

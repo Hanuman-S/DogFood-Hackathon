@@ -78,6 +78,96 @@ score entry, no results pages, no publishing service or UI, no CSV export, no se
   raw_mean,zscore` ranks 41 projects in 20 exact-tie groups, with coverage and the S1 notes.
   `--list` shows `raw_mean` v1 and `zscore` v1.
 
-## S2: M2 and the analysis (not started)
+## S2: M2 and the analysis (done)
+
+**Built:**
+- `methods/m2_ridge.py`: M2, ported from the lab.
+  - Closed-form ridge, with the μ column not penalised.
+  - σ² = max(RSS/(N − trH), 0.05), Cov = σ²M⁻¹, SE_p = √(C₀₀ + C_pp + 2C₀p).
+  - k-fold CV over {0.25, 0.5, 1, 2, 4}². Ties go to the larger λ_b, then the larger λ_q.
+  - Also returns each review's leverage h_ii and `lambda_at_grid_boundary`.
+- `filters.py`:
+  - `exclude_duplicate_submissions`: `exclude` is the lab's rule. `merge` is ours: the kept
+    project's review wins, where the lab averaged the two.
+  - `exclude_flat_judges`: the PDF's §11 rule.
+- `components.py`: union-find. Each component is fitted and ranked on its own. The seed is
+  `cv_seed` for a single component and `(cv_seed, k)` for several. A component below
+  `cv_min_reviews` (20) uses λ = (0.5, 1.0), with the reason recorded.
+- `ties.py`: P(ahead) via `math.erf`, and SE tie chaining at 0.84.
+- `flaggers.py`: `insufficient_reviews`, `near_flat_judges`, and `outlier_residuals`
+  (studentized residuals, k = 2, skipped with a note below 10 reviews or when the method has no
+  fitted values).
+- `explain.py`: the rank-move split (lean + shrinkage) against the raw mean, and the top-8
+  movers.
+- Contract: `ProjectResult.component`, `JudgeResult`, `EngineResult.flags`,
+  `EngineInput.excluded` (for R16 in S3), and `MethodOutput.sigma2`.
+- Config: the default primary is now `m2`, and every M2, filter and flagger setting is in
+  `EngineConfig`. `cv_seed=None` resolves to `sha256(event_id)[:8]`, and results record the
+  resolved seed.
+- CLI: `--config` also takes inline `key=value[,…]`. The output shows reviews in and used, the λ
+  per component, exclusions, flags and movers.
+- S1's `NotImplementedError` path and its "not computed yet" notes are gone.
+
+**Decisions made during S2** (R10 amended, R19 and R20 added to the plan; see
+`docs/t2-scoring-plan.md`):
+- The first golden run failed. Every rank mismatch was an ordering between projects whose lab
+  scores are equal to within 1e-9: last-bit float noise from the lab's 1/3 weights. I stopped and
+  reported. The user chose A + B:
+  - **A:** the lab's arithmetic. Weights are normalised before averaging, and the z floor uses a
+    1e-9 allowance (jdg_03's SD is exactly 0.5, so it is not floored).
+  - **B:** ranks on scores rounded to 9 dp, with ties in input order, for every method.
+- The golden comparison rule, and why, is in `tests/golden/README.md`.
+- The movers port was wrong and is fixed. The lab broke equal move sizes by file order, because
+  its CSV was sorted but the table it sorted was not; I had broken them by M2 rank. File order
+  is R10 as well.
+- **One known deviation, reported and not patched:** M2's accuracy against truth on
+  `syn_medium`. Two M2 score pairs there are equal to within 1e-14, and their order is platform
+  noise, which moves the lab's tie-unaware Spearman, Kendall and MARE: +0.000168, +0.000404 and
+  −0.02. It is a strict `xfail`, and a separate test shows that giving only those pairs the lab's
+  last bits makes every metric match.
+
+**Goldens:** `tests/golden/`. The lab's result files and synthetic events are copied unchanged.
+`expected/*.lab.json` was generated once by `generate_expected.py`, run with the lab's own
+`.venv` (lab commit `ff3057d`). The README lists the sha256 of every file.
+
+**Tests** (engine: 175 in all, 174 passed and 1 strict xfail):
+- `test_engine_m2.py`:
+  - the lab's M2 tests: the worked example, including SD(Δ) P1 vs P3 = 0.584; the tiny
+    illustration; the §6 shrinkage table; a constant shift; zero λ = OLS; a single 5 shrunk; a
+    disconnected graph; CV from the grid; the fixtures in under 10 s
+  - both duplicate policies
+  - the flat judge; single-review shrinkage; near-flat judges jdg_05, 17, 18 and 28
+  - components and seeds, `cv_min_reviews`, `lambda_at_grid_boundary` (fixtures true,
+    `syn_medium` (0.5, 0.5) false)
+  - SE tie chaining; the outlier skip notes; the exact decomposition
+  - the CLI end to end
+- `test_engine_golden.py`:
+  - the fixtures CSVs: rankings, CV table, leans, movers
+  - golden (b) on four inputs
+  - golden (a): the metric port self-check, raw and z tie-aware, and M2 against the CSV
+- `test_engine_colluder.py` reports:
+  - our +2 on `jdg_10:prj_001` is flagged, and is not flagged when clean
+  - the lab's own +1.5 colluder (`jdg_09:prj_013`) is **missed**
+  - honest reviews flagged: clean `syn_small` 7 of 121 (5.8%); with our +2, 5 of 120 (4.2%);
+    fixtures 3 of 119 (2.5%)
+  - `outlier_k` untuned
+- The contract test now also checks the R10 input order inside ties, and SE/P(ahead)
+  consistency for methods with uncertainty.
+
+**Recorded now for S4 (docs):**
+- JUDGING.md must **not** call the outlier flag a mitigation, or a defence against collusion. It
+  states the measured results above, and calls it a review aid with an untuned `outlier_k`.
+- Determinism wording: JSON is byte-identical on the same platform; ranks and tie groups are
+  identical across platforms; full-precision scores may differ in the last bits.
+
+**Verification:**
+- `./scripts/test.sh`: 471 passed, 1 xfailed (the `syn_medium` deviation above), 0 failed.
+- `docker compose down -v && up --build`: boots clean.
+- `./scripts/acceptance.sh`: "claimed T1, verified T1". The T2 checks fail as before, and the
+  report's content is unchanged.
+- Container CLI on `acceptance/fixtures.json`:
+  - default: 40 ranked, 126 in and 119 used, λ = (4, 4) from CV with the event-derived seed
+    1111942736, `lambda_at_grid_boundary=true`, one tie group of 40, exclusions listed
+  - `--config duplicate_policy=merge`: 120 used, and prj_07 has 6 reviews
 ## S3: adapter, persistence, gate (not started)
 ## S4: docs (not started)

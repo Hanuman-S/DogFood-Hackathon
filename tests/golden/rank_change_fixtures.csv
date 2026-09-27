@@ -1,0 +1,9 @@
+project,track,n_reviews,raw_rank,z_rank,M1_rank,M2_rank,M3_rank,M4_rank,M5_rank,raw_mean,M2_score,M2_se,lean_part,shrinkage_part,why
+prj_28,trk_02,3,23,37,23,32,24,21,33,3.4444,3.3959,0.2424,0.2099,-0.1613,"mainly judge-lean correction: raw - corrected = lean +0.21 + shrinkage -0.16; jdg_02 y=3.67 lean +0.39, jdg_30 y=3.33 lean +0.22, jdg_16 y=3.33 lean +0.02"
+prj_35,trk_05,5,19,26,19,28,33,20,27,3.4667,3.4640,0.2158,0.0450,-0.0423,"mainly judge-lean correction: raw - corrected = lean +0.04 + shrinkage -0.04; jdg_11 y=3.00 lean +0.05, jdg_06 y=4.00 lean +0.01, jdg_03 y=3.33 lean +0.12, jdg_17 y=3.33 lean +0.03, jdg_05 y=3.67 lean +0.02"
+prj_09,trk_06,2,29,13,29,21,15,31,23,3.3333,3.4819,0.2604,-0.0787,-0.0699,"mainly judge-lean correction: raw - corrected = lean -0.08 + shrinkage -0.07; jdg_27 y=2.67 lean -0.16, jdg_29 y=4.00 lean +0.00"
+prj_17,trk_06,2,30,14,30,22,26,32,16,3.3333,3.4819,0.2604,-0.0787,-0.0699,"mainly judge-lean correction: raw - corrected = lean -0.08 + shrinkage -0.07; jdg_29 y=3.33 lean +0.00, jdg_27 y=3.33 lean -0.16"
+prj_19,trk_06,1,31,31,31,24,31,28,22,3.3333,3.4795,0.2826,0.0032,-0.1494,mainly shrinkage towards the mean: raw - corrected = lean +0.00 + shrinkage -0.15; jdg_29 y=3.33 lean +0.00
+prj_29,trk_01,2,32,24,32,25,29,24,25,3.3333,3.4770,0.2601,-0.0639,-0.0798,"mainly shrinkage towards the mean: raw - corrected = lean -0.06 + shrinkage -0.08; jdg_24 y=2.67 lean -0.10, jdg_09 y=4.00 lean -0.02"
+prj_03,trk_03,3,26,29,26,30,13,27,30,3.3333,3.4394,0.2423,-0.0028,-0.1033,"mainly shrinkage towards the mean: raw - corrected = lean -0.00 + shrinkage -0.10; jdg_26 y=3.67 lean +0.16, jdg_19 y=3.67 lean -0.11, jdg_21 y=2.67 lean -0.06"
+prj_10,trk_08,2,3,7,3,7,14,3,7,4.1667,3.6804,0.2603,0.1592,0.3271,"mainly shrinkage towards the mean: raw - corrected = lean +0.16 + shrinkage +0.33; jdg_15 y=4.67 lean +0.32, jdg_29 y=3.67 lean +0.00"

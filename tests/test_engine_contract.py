@@ -20,7 +20,10 @@ def _inputs():
         "small": make_input([("A", "J1", 4), ("B", "J1", 2), ("A", "J2", 5), ("C", "J2", 3),
                              ("B", "J3", 3), ("C", "J3", (4, 2, 3))]),
         "unreviewed": make_input([("A", "J1", 4), ("B", "J1", 3)], extra_projects=("Z",)),
-        "all_tied": make_input([(p, j, 3) for p in "ABCD" for j in ("J1", "J2")]),
+        # every project gets each of 2..5 once (a Latin square): all raw means are 3.5
+        "all_tied": make_input([(p, f"J{j}", 2 + (i + j) % 4) for i, p in enumerate("ABCD") for j in range(4)]),
+        "disconnected": make_input([("A", "J1", 4), ("B", "J1", 2), ("A", "J2", 5), ("B", "J2", 3),
+                                    ("C", "J3", 3), ("D", "J3", 5), ("C", "J4", 2), ("D", "J4", 4)]),
         "one_project": make_input([("A", "J1", 4)]),
         "empty": make_input([], extra_projects=("A", "B")),
     }
@@ -29,8 +32,8 @@ def _inputs():
 INPUTS = _inputs()
 
 
-def test_registry_has_the_s1_methods():
-    assert {"raw_mean", "zscore"} <= set(METHODS)
+def test_registry_has_the_builtin_methods():
+    assert {"raw_mean", "zscore", "m2"} <= set(METHODS)
 
 
 @pytest.mark.parametrize("name", METHODS)

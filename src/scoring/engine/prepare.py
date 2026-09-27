@@ -5,7 +5,7 @@ One row per review, in input order:
     ji[i]  judge index of review i (into `judges`, in order of first appearance)
     S[i,c] the value for criterion c, NaN where the review has none
     y[i]   the review's weighted score: sum(w_c * s_c) / sum(w_c over the criteria present)
-           (the lab's rule, from the ridge PDF's section 2)
+           (the lab's rule, from the ridge PDF's section 2), with w normalised to sum to 1
 """
 
 from __future__ import annotations
@@ -30,6 +30,9 @@ class PreparedData:
     ji: np.ndarray
     S: np.ndarray
     y: np.ndarray
+    # Seed for any randomness in a method (M2's CV folds): the resolved cv_seed for a
+    # single-component event, (cv_seed, k) for component k of several.
+    rng_seed: int | tuple = 0
 
     @property
     def P(self) -> int:
@@ -98,7 +101,7 @@ def _validate_review(inp, review: Review):
         raise EngineInputError(f"{where}: every criterion it scores has weight 0.")
 
 
-def prepare(inp: EngineInput, reviews=None, projects=None) -> PreparedData:
+def prepare(inp: EngineInput, reviews=None, projects=None, rng_seed=0) -> PreparedData:
     """Arrays for `reviews` (default: all of them) over `projects` (default: all of them).
 
     Call `validate(inp)` first; this assumes the input is valid.
@@ -116,8 +119,11 @@ def prepare(inp: EngineInput, reviews=None, projects=None) -> PreparedData:
         for c, key in enumerate(criteria):
             if key in review.items:
                 S[i, c] = float(review.items[key])
+    # Normalised to sum to 1 first: the same value in exact arithmetic, and the lab's float
+    # arithmetic (its weights were 1/3 each), so "equal" means come out bit-identical to the lab's.
+    unit = weights / weights.sum() if len(weights) and weights.sum() > 0 else weights
     present = ~np.isnan(S)
-    y = np.nansum(np.where(present, S, 0.0) * weights, axis=1) / np.where(present, weights, 0.0).sum(axis=1)
+    y = np.nansum(S * unit, axis=1) / np.where(present, unit, 0.0).sum(axis=1)
     return PreparedData(
         projects=projects,
         tracks=tuple(inp.projects.get(p) for p in projects),
@@ -128,4 +134,5 @@ def prepare(inp: EngineInput, reviews=None, projects=None) -> PreparedData:
         ji=np.array([jindex[r.judge_id] for r in reviews], dtype=int),
         S=S,
         y=y if len(reviews) else np.zeros(0),
+        rng_seed=rng_seed,
     )

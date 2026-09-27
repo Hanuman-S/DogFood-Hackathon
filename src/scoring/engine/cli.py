@@ -3,6 +3,7 @@
     python -m scoring.engine.cli acceptance/fixtures.json
     python -m scoring.engine.cli FILE --method zscore --compare raw_mean
     python -m scoring.engine.cli FILE --config my.json --weights functionality=0.5,quality=0.3,innovation=0.2
+    python -m scoring.engine.cli FILE --config duplicate_policy=merge,cv_seed=20260926
     python -m scoring.engine.cli FILE --json out.json
     python -m scoring.engine.cli --list
 
@@ -40,7 +41,7 @@ def main(argv=None, out=None) -> int:
         if not args.file:
             print("error: give a file, or --list", file=out)
             return 2
-        config = EngineConfig.from_dict(_read_json(args.config)) if args.config else EngineConfig()
+        config = EngineConfig.from_dict(read_config(args.config)) if args.config else EngineConfig()
         inp, log = load_organizer_file(args.file, weights=_parse_weights(args.weights))
         method = args.method or config.primary
         others = [m.strip() for m in args.compare.split(",") if m.strip()] if args.compare else list(config.compare)
@@ -68,35 +69,100 @@ def print_comparison(result, out):
     primary = result.results[result.primary]
     base = result.baseline
     others = [m for m in result.methods if m != result.primary]
-    group_size = Counter(p.tie_group for p in primary.projects)
+    group_size = Counter((p.component, p.tie_group) for p in primary.projects)
+    several = len(primary.components) > 1
     rows = primary.by_project()
     print(f"method {primary.method} v{primary.method_version} | baseline {base}", file=out)
-    header = f"{'rank':>5} {'tie':>4}  {'project':<14} {'track':<10} {'n':>2} {'score':>14}"
+    header = f"{'rank':>5} {'tie':>4}  {'project':<14} {'track':<10} {'n':>2} {'score':>16}"
     header += "".join(f" {m[:10]:>10}" for m in others) + f" {'chg':>4}  flags"
+    if several:
+        header = "comp " + header
     print(header, file=out)
     for row in result.rows:
         p = rows.get(row.project_id)
         if p is None:
             continue
-        tied = "=" if group_size[p.tie_group] > 1 else " "
-        score = f"{p.score:.3f}" + (f" ±{p.se:.3f}" if p.se is not None else "")
-        line = f"{p.rank:>4}{tied} {p.tie_group:>4}  {p.project_id:<14} {str(p.track_id or '-'):<10} {p.n_reviews:>2} {score:>14}"
+        tied = "=" if group_size[(p.component, p.tie_group)] > 1 else " "
+        score = f"{p.score:.3f}" + (f" +-{p.se:.3f}" if p.se is not None else "")
+        line = f"{p.rank:>4}{tied} {p.tie_group:>4}  {p.project_id:<14} {str(p.track_id or '-'):<10} {p.n_reviews:>2} {score:>16}"
         line += "".join(f" {_fmt(row.ranks[m]):>10}" for m in others)
         line += f" {_signed(row.change_vs_baseline[result.primary]):>4}  {','.join(p.flags)}"
-        print(line, file=out)
-    groups = len(group_size)
-    print(f"# {len(primary.projects)} ranked in {groups} tie group(s); '=' marks a row that shares "
-          "its tie group, whose order inside the group is not a result.", file=out)
+        print((f"{p.component:>4} " if several else "") + line, file=out)
+
+    notes = primary.diagnostics["pipeline"]
+    print(f"# {len(primary.projects)} projects ranked in {len(group_size)} tie group(s); '=' marks a row "
+          "that shares its tie group, whose order inside the group is not a result.", file=out)
+    print(f"# reviews: {notes['reviews_in']} in the input, {notes['reviews_used']} used; "
+          f"ranking: {notes['ranking']}", file=out)
+    if "why_per_component" in notes:
+        print(f"# {notes['why_per_component']}", file=out)
+    for params in primary.params_chosen["components"]:
+        if "lam_q" in params:
+            print(f"# component {params['component']}: lambda_q={params['lam_q']:g} lambda_b={params['lam_b']:g} "
+                  f"({params['lambda_source']}, seed {params['cv_seed']}), "
+                  f"lambda_at_grid_boundary={_bool(params['lambda_at_grid_boundary'])}, "
+                  f"sigma2={params['sigma2']:.4f}, trH={params['trH']:.2f}", file=out)
+    for component in primary.diagnostics["method"]["components"]:
+        if "lambda_reason" in component:
+            print(f"# component {component['component']}: {component['lambda_reason']}", file=out)
     for ex in primary.excluded:
         print(f"# excluded {ex.kind} {ex.id}: {ex.reason}", file=out)
+    for flag in primary.flags["reviews"]:
+        print(f"# flagged review {flag['judge']}:{flag['project']}: {flag['flag']} "
+              f"(y {flag['y']:.2f}, fitted {flag['fitted']:.2f}, studentized {flag['studentized']:+.2f})", file=out)
+    flagged_judges = [(j.judge_id, ",".join(j.flags)) for j in primary.judges if j.flags]
+    if flagged_judges:
+        print("# flagged judges: " + "; ".join(f"{j} ({f})" for j, f in flagged_judges), file=out)
+    for note in primary.flags["notes"]:
+        print(f"# {note}", file=out)
     cov = primary.coverage
     rpp = cov["reviews_per_project"]
     print(f"# coverage: {cov['reviews']} reviews, {cov['judges']} judges; reviews per project "
           f"min {rpp['min']} median {rpp['median']} max {rpp['max']}; "
           f"{len(cov['projects_below_min_reviews'])} project(s) below {cov['min_reviews']}", file=out)
     print(f"# {cov['note']}", file=out)
-    for key, note in primary.diagnostics["pipeline"].items():
-        print(f"# {key}: {note}", file=out)
+    if result.movers:
+        print(f"# biggest moves vs {base} (raw - corrected = judges' lean + shrinkage):", file=out)
+        for m in result.movers:
+            print(f"#   {m['project_id']:<10} raw {m['raw_rank']:>3} -> {m['rank']:>3} ({m['change']:+d}); "
+                  f"{m['explanation']}", file=out)
+
+
+def _bool(value):
+    return "n/a" if value is None else str(value).lower()
+
+
+def read_config(text):
+    """A JSON file path, or inline `key=value[,key=value]` (values parsed as JSON, else strings)."""
+    path = Path(text)
+    if path.is_file():
+        return _read_json(path)
+    if "=" not in text:
+        raise EngineError(f"--config {text!r}: no such file, and not key=value pairs.")
+    values = {}
+    for part in _split_top_level(text):
+        key, sep, raw = part.partition("=")
+        if not key.strip() or not sep:
+            raise EngineError(f"--config: {part!r} is not key=value.")
+        try:
+            values[key.strip()] = json.loads(raw)
+        except json.JSONDecodeError:
+            values[key.strip()] = raw.strip()
+    return values
+
+
+def _split_top_level(text):
+    """Split on commas that are not inside [...] (so lambdas=[0.5,1] stays one value)."""
+    parts, depth, current = [], 0, []
+    for char in text:
+        depth += {"[": 1, "]": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
 
 
 def _fmt(value):
@@ -133,7 +199,7 @@ def _parser():
     p.add_argument("--method", help="primary method (default: the config's primary)")
     p.add_argument("--compare", help="comma-separated methods to show next to it")
     p.add_argument("--baseline", default="raw_mean", help="rank changes are measured against this")
-    p.add_argument("--config", help="JSON file of engine config overrides")
+    p.add_argument("--config", help="engine config overrides: a JSON file, or key=value[,key=value]")
     p.add_argument("--weights", help="criterion weights, e.g. functionality=0.5,quality=0.3")
     p.add_argument("--json", help="also write the full comparison as JSON to this path")
     p.add_argument("--list", action="store_true", help="list the registered methods and exit")

@@ -20,9 +20,9 @@ Rules the pipeline enforces:
 * `scores` has one finite value per project in `data.projects`.
 * `se` is present if and only if the method claims "uncertainty" (and then `cov_q` too, for
   P(ahead) between neighbours). A method without uncertainty never reports an SE.
-* `judge_bias` only with "judge_bias"; `fitted` and `hat` only with "fitted".
+* `judge_bias` only with "judge_bias"; `fitted`, `hat` and `sigma2` only with "fitted".
 * `fit` must be deterministic: no clock, and randomness only from
-  `np.random.default_rng(<seed from config>)`.
+  `np.random.default_rng(data.rng_seed)` (the seed the pipeline resolved for this component).
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ class MethodOutput:
     judge_bias: np.ndarray | None = None  # (J,) with "judge_bias"
     fitted: np.ndarray | None = None      # (N,) with "fitted"
     hat: np.ndarray | None = None         # (N,) leverage h_ii, with "fitted"
+    sigma2: float | None = None           # residual variance estimate, with "fitted"
     params: dict[str, Any] = field(default_factory=dict)       # hyperparameters chosen
     diagnostics: dict[str, Any] = field(default_factory=dict)  # anything worth reporting
 

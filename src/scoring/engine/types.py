@@ -63,12 +63,24 @@ class Review:
 
 
 @dataclass(frozen=True)
+class Exclusion:
+    """Something left out of the ranking, and why. `kind` is "project", "review" or "judge".
+    A review's id is "<judge>:<project>"."""
+
+    kind: str
+    id: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class EngineInput:
     """Everything a method may look at.
 
     `projects` maps project id -> track id (or None), in input order. A project listed here with
     no reviews is reported as excluded ("no reviews"), never silently dropped.
     `duplicates` maps a duplicate submission's id -> the id of the submission that is kept.
+    `excluded` is what the input builder already left out (a review of a project that is not
+    submitted, say); the pipeline reports it alongside its own exclusions.
     `config` is optional: `pipeline.run(..., config=...)` takes precedence over it.
     """
 
@@ -77,21 +89,14 @@ class EngineInput:
     rubric: Rubric
     projects: Mapping[str, str | None]
     duplicates: Mapping[str, str] = field(default_factory=dict)
+    excluded: tuple[Exclusion, ...] = ()
     config: Any = None
 
     def __post_init__(self):
         object.__setattr__(self, "reviews", tuple(self.reviews))
+        object.__setattr__(self, "excluded", tuple(self.excluded))
         object.__setattr__(self, "projects", _frozen_map(self.projects))
         object.__setattr__(self, "duplicates", _frozen_map(self.duplicates))
-
-
-@dataclass(frozen=True)
-class Exclusion:
-    """Something left out of the ranking, and why. `kind` is "project", "review" or "judge"."""
-
-    kind: str
-    id: str
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -100,11 +105,13 @@ class ProjectResult:
 
     `rank` is ordinal (1 = best; exact ties broken by input order), so it must always be read
     together with `tie_group`: projects in one tie group are not separated by the method.
+    `rank` and `tie_group` count within `component`; with one component that is the whole event.
     `se` is None for methods without the "uncertainty" capability.
     """
 
     project_id: str
     track_id: str | None
+    component: int
     score: float
     se: float | None
     rank: int
@@ -119,23 +126,41 @@ class ProjectResult:
 
 
 @dataclass(frozen=True)
+class JudgeResult:
+    """One judge whose reviews were used. `bias` is the method's lean estimate (None without the
+    "judge_bias" capability); `bias_centred` subtracts the mean lean of the judge's component."""
+
+    judge_id: str
+    component: int
+    n_reviews: int
+    bias: float | None = None
+    bias_centred: float | None = None
+    flags: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "flags", tuple(self.flags))
+
+
+@dataclass(frozen=True)
 class EngineResult:
     method: str
     method_version: str
     capabilities: tuple[str, ...]
     config: Mapping[str, Any]
     params_chosen: Mapping[str, Any]
-    components: Any
+    components: tuple[Mapping[str, Any], ...]
     projects: tuple[ProjectResult, ...]
+    judges: tuple[JudgeResult, ...]
     excluded: tuple[Exclusion, ...]
+    flags: Mapping[str, Any]
     coverage: Mapping[str, Any]
     diagnostics: Mapping[str, Any]
 
     def __post_init__(self):
-        for name in ("config", "params_chosen", "coverage", "diagnostics"):
+        for name in ("config", "params_chosen", "flags", "coverage", "diagnostics"):
             object.__setattr__(self, name, _frozen_map(getattr(self, name)))
-        object.__setattr__(self, "projects", tuple(self.projects))
-        object.__setattr__(self, "excluded", tuple(self.excluded))
+        for name in ("components", "projects", "judges", "excluded"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
 
     def by_project(self) -> dict[str, ProjectResult]:
         return {p.project_id: p for p in self.projects}
@@ -170,11 +195,15 @@ class ComparisonResult:
     methods: tuple[str, ...]
     results: Mapping[str, EngineResult]
     rows: tuple[ComparisonRow, ...]
+    # The primary method's biggest rank moves against the raw mean, each split into judges' lean
+    # and shrinkage (only for methods with "decomposition" and a raw_mean baseline).
+    movers: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "methods", tuple(self.methods))
         object.__setattr__(self, "results", _frozen_map(self.results))
         object.__setattr__(self, "rows", tuple(self.rows))
+        object.__setattr__(self, "movers", tuple(_frozen_map(m) for m in self.movers))
 
     def to_json(self) -> str:
         return dumps(self)

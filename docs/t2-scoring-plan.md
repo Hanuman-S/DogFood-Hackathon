@@ -91,8 +91,10 @@ Consequences for this plan:
 - **R4. Duplicates.** `EngineConfig.duplicate_policy` is one of two values:
   - `"exclude"` (the default, and the lab's rule): drop the duplicate project and all of its
     reviews.
-  - `"merge"` (the lab's sensitivity option): move the duplicate's reviews to the kept project.
-    Where a judge reviewed both, the kept project's review wins.
+  - `"merge"`, **our own rule and not the lab's**: move the duplicate's reviews to the kept
+    project, and where a judge reviewed both, keep the kept project's review. The lab's
+    sensitivity "merge" **averages** the two reviews instead. No lab file holds merge output, so
+    there is no golden for `merge`; its tests check counts and which review survives.
 
   The fixture event has 123 reviews in the database. `build_input` recognises jdg_18's review of
   `prj_41` (folded into `prj_07` by the importer) through `FixtureRef(kind="score",
@@ -127,10 +129,31 @@ Consequences for this plan:
 - **R9. Near-flat judges.** The `near_flat_judges` flagger marks judges with var(y) < 0.1 and
   n ≥ 2 who are not flat. It never excludes anyone.
 - **R10. Ranks and exact ties.**
-  - `rank` is ordinal: 1 is best, ties are broken by input order, and NaN ranks last. This is the
-    lab's `rank()`.
+  - `rank` is ordinal: 1 is best, ties are broken by input order, and NaN ranks last.
   - For methods without uncertainty, scores count as equal when they match after `round(9)`.
   - Every output that shows a rank also shows the tie group, and the CLI table marks tied rows.
+  - *(Amended during S2: user decision B.)* Ranks are computed on scores **rounded to
+    `equal_decimals` (9)**, with ties broken by input order, for **every** method. The lab ranked
+    raw floats, so its order inside "equal" scores was last-bit float noise. Movers with equal
+    move sizes are also in input order; that is what the lab's table order amounted to.
+- **R19. The lab's arithmetic** *(amended during S2: user decision A).*
+  - Rubric weights are normalised to sum to 1 before a review's criteria are averaged, which is
+    the lab's arithmetic (1/3 each). The value is identical in exact arithmetic, and the floats
+    now match the lab's.
+  - The z-score floor is tolerance-aware: a judge counts as floored only if their SD is below
+    `z_floor − 1e-9`. Fixture judge jdg_03, whose SD is exactly 0.5 on paper, is not floored,
+    which matches the lab.
+- **R20. The golden comparison rule** *(amended during S2).* It defines correctness and is
+  written, with its reasons, in `tests/golden/README.md`:
+  - numeric tolerances unchanged
+  - ranks compared across lab-distinct scores (differing by more than 1e-9); within lab-equal
+    sets, only the set of ranks
+  - P(ahead) compared per unordered pair
+  - movers compared as a set, plus each one's split
+  - raw and z accuracy metrics tie-aware against the lab's own scores; M2's against the CSV as
+    printed
+  - The one known deviation is M2's accuracy on `syn_medium`, caused only by two near-tie pairs.
+    It is reported, a strict `xfail`, and pinned by a test. It is not patched.
 - **R11. Explain.** The decomposition exists only against `raw_mean`. Other baselines get rank
   changes only, with a note.
 - **R12. Actor for `--save`.** `score_event --save` requires `--as <email>`, and that account is
@@ -140,9 +163,23 @@ Consequences for this plan:
   - `save()` refuses updates, and a Postgres `BEFORE UPDATE` trigger rejects every UPDATE.
     DELETE is still allowed, so the snapshot cascades with its event.
   - The admin is read-only: it offers no add, change or delete.
+  - *(Amended before S3.)* `created_by` is `on_delete=PROTECT`, not `SET_NULL`. SET_NULL would
+    issue an UPDATE, which the trigger rejects.
+    - T1's `AuditLog.actor` uses `SET_NULL` plus a denormalised `actor_email`. That table has no
+      immutability trigger. We can't copy the SET_NULL part, so we match the other half: the
+      snapshot also stores `created_by_email`.
+    - Deleting a user who created a snapshot raises Django's `ProtectedError`, not a trigger
+      error.
+  - The snapshot stores its `rubric` (criterion ids, weights, min, max) next to `input_hash`, so
+    the weights a result was computed with are on record (see Future work).
 - **R14. Publication** (model, migration and constraints only; no service or UI yet).
-  - Fields: `Publication(event FK CASCADE, snapshot FK PROTECT, published_at, published_by FK
-    user null, unpublished_at null, unpublished_by null)`.
+  - Fields: `Publication(event FK CASCADE, snapshot FK RESTRICT, published_at, published_by FK
+    user PROTECT, published_by_email, unpublished_at null, unpublished_by FK user PROTECT null,
+    unpublished_by_email)`.
+  - *(Amended before S3.)*
+    - `snapshot` is `RESTRICT`, not `PROTECT`. PROTECT would block the event cascade; RESTRICT
+      lets it through while still refusing to delete a published snapshot on its own.
+    - The user FKs are `PROTECT`, for the same reason as R13.
   - It is append-only, enforced by a Postgres trigger:
     - On INSERT, `snapshot.kind` must be `'final'`, and `snapshot.event_id` must equal `event_id`.
     - On UPDATE, the only allowed change is setting `unpublished_at` and `unpublished_by` from
@@ -157,11 +194,38 @@ Consequences for this plan:
     none. Any `method=` or `config=` override is refused with `FinalOverrideRefused` (400
     `final_uses_event_config`). `score_event --save final` with `--method`, `--compare` or
     `--config` gives the same refusal.
+  - *(Amended at the start of S2.)* A **weights** override counts as an override too.
+    - A final always uses the event's `Criterion` weights.
+    - `compute_snapshot(..., weights=...)` is allowed for previews only.
+    - `score_event --save final --weights ...` is refused with `final_uses_event_config`, the
+      same as `--method` and `--config`.
+    - S3 tests cover all three flags.
   - `set_engine_config(actor, event, overrides)` runs its checks in this order:
     1. permission (403)
     2. `judging_closed(event, db_now())`, which refuses with 409 `scoring_config_locked`
     3. `EngineConfig.from_dict` validation (400 `invalid_config`)
     4. save and audit (`scoring_config_changed`)
+- **R16. Excluded reviews in `build_input`** *(amended before S3).* A review of a project that
+  is not in `projects` (withdrawn or unsubmitted) is never dropped silently.
+  - `build_input` lists it as `("review", "<judge>:<project>", "project not submitted")`.
+  - It gets there through a new field, `EngineInput.excluded`, which the pipeline copies into
+    `EngineResult.excluded`. The field is added in S2 with the other type changes.
+- **R17. One transaction at REPEATABLE READ** *(amended before S3).*
+  - In `compute_snapshot`, `build_input`, the engine run and the create all happen inside one
+    `transaction.atomic()` whose first statement is
+    `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` (Postgres only).
+  - That statement is valid only as the first one in a transaction. So when `compute_snapshot` is
+    called inside an outer atomic block, it raises instead of silently running at a weaker level.
+    The test that checks the level uses `transaction=True` and reads `SHOW transaction_isolation`
+    inside the block.
+  - Refusal audits stay outside the transaction.
+- **R18. Several finals per event are allowed** *(amended before S3).*
+  - Each final stores, in `ResultSnapshot.diagnostics`:
+    - `previous_final`: `{id, created_at, input_hash}`, or null for the first final
+    - `scores_changed_since_last_final`: `input_hash` differs from the previous final's; `false`
+      for the first final
+  - Tests cover both cases: two finals on unchanged data give false, and a changed `ScoreItem`
+    in between gives true.
 - **Worked example.** Asserts the computed SD(Δ) for P1 vs P3, which is 0.584. The PDF prints
   0.59; that typo appears only as a comment.
 - **numpy.** Pin 2.5.3 if a cp312 wheel exists, since the image is Python 3.12. If it doesn't,
@@ -296,6 +360,75 @@ go-ahead.
   - SE tie chaining
   - flaggers: `insufficient_reviews`, `near_flat_judges`, `outlier_residuals`
   - `explain`
+- **S2 requirements from the user's go-ahead (binding):**
+  1. `EngineConfig`'s default primary becomes `"m2"`, and a test asserts it. The S1
+     `NotImplementedError` path for "uncertainty" is removed completely, along with S1's
+     "not computed yet" notes.
+  2. Goldens are the referee. Expected values come only from the lab's code (run in its `.venv`)
+     or from its existing result files. On a mismatch I **stop and report the diff**. Tolerances,
+     formulas and expected values are never adjusted to get green. The tolerances are fixed now:
+     - lab CSV values printed at 6 dp: `|ours − csv| ≤ 5.01e-7`
+     - `rank_change` parts printed at 4 dp: `≤ 5.01e-5`
+     - golden (b) full-precision JSON: scores, SEs, σ̂², trH and CV MSE within `1e-8` absolute
+     - ranks, tie groups, λ, counts and ids must match exactly
+  3. The S2 summary pastes the CLI output on `acceptance/fixtures.json`, once with the defaults
+     and once with `--config duplicate_policy=merge`. The defaults must show:
+     - 40 projects ranked
+     - 119 reviews used
+     - the exclusions listed
+     - λ = (4, 4) and `lambda_at_grid_boundary` true
+     - one tie group of 40
+
+     The merge run must show 120 reviews used.
+  4. The colluder test reports the false-positive count as well as the hit (see test 5).
+  5. The S3 weights-override amendment is in R15 above, and is also applied to
+     `docs/t2-scoring-plan.md`, marked as an amendment.
+- **Design details decided for S2:**
+  - **Filter order** follows the lab: `exclude_duplicate_submissions`, then `exclude_flat_judges`.
+    The lab resolves duplicates in `load()` before it detects flat judges.
+  - **Merge policy.** See R4: this is our rule, not the lab's. Each moved review keeps its
+    position in the input.
+  - **Seeds.** `cv_seed=None` resolves to `int(sha256(event_id).hexdigest()[:8], 16)`. The engine
+    puts `rng_seed` on `PreparedData`: `seed` for a single component, `(seed, k)` when there are
+    several. M2 calls `default_rng(data.rng_seed)`. `EngineResult.config` carries the resolved
+    integer seed.
+  - **New `EngineConfig` keys:** `filters`, `flaggers`, `duplicate_policy`, `lambda_grid`,
+    `cv_folds`, `cv_seed`, `cv_min_reviews`, `lambdas` (fixed λ that bypasses CV, each > 0),
+    `sigma2_floor`, `outlier_k`, `outlier_min_reviews`, `near_flat_threshold` (0.1). Filter and
+    flagger names are checked against their registries.
+  - **Contract additions.**
+    - `MethodOutput.sigma2` is required with "fitted".
+    - `ProjectResult` gains `component`. With several components, `rank` and `tie_group` are
+      per component.
+    - `EngineResult` gains `judges` (id, n_reviews, bias, bias_centred, flags) and `flags`
+      (flagged reviews, and notes on flaggers that were skipped).
+    - `params_chosen` is `{"components": [{component, lam_q, lam_b, lambda_source, cv_seed, ...}]}`.
+    - The contract test checks ties per component, and SE/P(ahead) for "uncertainty" methods.
+  - **Explain.** It is computed in `run()` for "decomposition" methods, against the raw mean of
+    the same filtered reviews. `ProjectResult.extras` holds `raw_mean`, `lean_part`,
+    `shrinkage_part`, `explanation` and `p_ahead_of_next`. `explain.movers(comparison, k=8)`
+    reproduces the lab's selection: order by the method's rank, then stable-sort by
+    |raw rank − rank|.
+  - **CLI.**
+    - `--config` accepts a JSON file, or inline `key=value[,key=value]` when no such file exists.
+      Values are parsed as JSON, and fall back to plain strings.
+    - It prints the λ per component, `lambda_at_grid_boundary`, reviews in and reviews used, the
+      exclusions, the flags and the top 8 movers.
+  - **Golden files** go in `tests/golden/`, copied from `../scoring-lab`:
+    - `rankings_fixtures.csv`, `m2_cv_fixtures.csv`, `m2_judges_fixtures.csv`,
+      `rank_change_fixtures.csv`, `run_meta.json`
+    - `syn_{small,medium,large}.json` and `*_truth.csv`
+    - `synthetic_events_eval.csv`
+    - `expected/syn_*.lab.json`, generated by `generate_expected.py`, which is run once with the
+      lab's `.venv` Python from the lab root. It uses the lab's `load()` and
+      `registry.run(m, d, lam=None, seed=20260926)` for raw, z and M2, and writes to the
+      scratchpad before the output is copied in.
+    - `README.md`, with the lab commit (`ff3057d`) and the sha256 of every copied file.
+
+    Golden (a) ports `truth_metrics` with a numpy Spearman (Pearson on average ranks) and
+    Kendall tau-b. The port is first checked against the lab's own golden-(b) scores, which must
+    reproduce `synthetic_events_eval.csv`, so a bad metric port can't be mistaken for an engine
+    bug.
 - **Tests:**
   1. Every lab M2 test ported:
      - the worked example: leans; scores and SEs; trH, RSS and σ̂²; the P(ahead) table asserting
@@ -307,7 +440,8 @@ go-ahead.
      - a single 5 pulled towards the mean
      - a disconnected graph detected
      - CV picking from the grid
-     - the fixtures loading and fitting in under 1 s
+     - the fixtures loading and fitting in under 10 s (relaxed from the lab's 1 s, because
+       Docker Desktop on Windows is noisy)
   2. Fixtures golden (seed 20260926):
      - 40 projects and 119 reviews
      - λ = (4, 4), with `lambda_at_grid_boundary` true
@@ -318,8 +452,22 @@ go-ahead.
      - one tie group of 40
   3. The synthetic golden (a): metrics against truth for raw, z and M2 on all three sets.
   4. The synthetic golden (b): per-project ranks, scores, SEs, tie groups and λ on all three sets.
-  5. Colluder: add +2 to one review in a synthetic input, and `outlier_residuals` flags that
-     review. A clean control run does not flag it.
+  5. Colluder:
+     - Take a synthetic input: `tests/golden/syn_small.json` under the default filters.
+     - Pick a colluder deterministically: the first judge, in file order, who has at least 3
+       reviews, is not the flat judge and is not the lab's own injected colluder. On one project
+       where every criterion they gave is ≤ 3, add +2 to each criterion, so nothing is clipped.
+     - Assert `outlier_residuals` flags that review.
+     - Assert the clean run does not flag it.
+     - Record the number of **other** reviews flagged on the same input, both clean and injected.
+       The test prints the numbers and they go in the S2 summary. There is no pass/fail bound on
+       them, because none was agreed.
+     - Also report whether `outlier_residuals` flags **the lab's own injected colluder** in
+       `syn_small`: the target review named in `syn_small_judges_truth.csv`'s role column, with
+       +1.5 on the target. Report the false-positive count on each input: clean `syn_small`,
+       `syn_small` with our +2 injected, and the fixtures.
+     - `outlier_k` stays at 2 and is not tuned. The user expects about 5% false positives at k = 2
+       and will decide later.
   6. `outlier_residuals` below `outlier_min_reviews` is skipped with a note. For a method without
      "fitted", it is also skipped with a note.
   7. `duplicate_policy`:
@@ -340,6 +488,21 @@ go-ahead.
   12. The flat judge is excluded and listed in `excluded`. A single-review judge is kept, and
       their lean is shrunk.
   13. `near_flat_judges` flags jdg_05, jdg_17, jdg_18 and jdg_28 on the fixtures.
+  14. The default primary is `"m2"`.
+  15. The CLI end to end: defaults give 40 ranked, 119 used and λ (4, 4). `--config
+      duplicate_policy=merge` gives 120 used. Inline `--config` parsing is tested.
+- **If a golden does not match:** stop, report the diff, and commit nothing that hides it.
+- **After S2:**
+  - tests
+  - `docker compose down -v && up --build`
+  - `acceptance.sh`: T1 stays green
+  - a `PLAN.md` entry
+  - this plan file copied over `docs/t2-scoring-plan.md`, so the docs copy carries every
+    amendment: R4's wording, R13, R14 and R15's weights, R16–R18, the S3 test changes, and
+    Future work. Amended items are marked "(amended …)".
+  - one commit
+  - a summary with both CLI outputs and the colluder numbers
+  - then stop
 
 ### S3: adapter, persistence, gate
 - **Build:**
@@ -348,19 +511,22 @@ go-ahead.
     - the rubric from `Criterion`, with keys and float weights
     - `projects` holds `{str(pk): track}` for the event's submitted projects
     - duplicates from `FixtureRef`, with the folded review marked (R4)
+    - reviews of projects that are not submitted go into `excluded`, per R16
     - `event_id` set to the slug, for the seed
   - `judging_closed(event, now)`, which is `now >= event.judging_ends_at`. It is the only place
     that compares against `judging_ends_at`.
-  - `compute_snapshot(event, kind, method=None, config=None, actor)`:
-    1. permission
-    2. the final-override refusal (R15)
-    3. for `final`, `judging_closed(event, db_now())`, else `JudgingOpen`
-    4. resolve the config: the event's config, or preview overrides on top of it
-    5. `build_input`
-    6. `pipeline.compare`
-    7. inside `transaction.atomic()`, create the `ResultSnapshot` with `engine_config` fully
-       resolved (seed and λ per component) and `input_hash = sha256(canonical input JSON)`
-    8. audit `snapshot_created`
+  - `compute_snapshot(event, kind, method=None, config=None, weights=None, actor)`:
+    1. Permission.
+    2. The final-override refusal (R15): `method`, `config` or `weights` with `kind="final"`.
+    3. For `final`, `judging_closed(event, db_now())`, else `JudgingOpen`.
+    4. Resolve the config: the event's config, or preview overrides on top of it.
+    5. Open one `transaction.atomic()` at REPEATABLE READ (R17). Inside it:
+       - `build_input`
+       - `pipeline.compare`
+       - for a final, look up the previous final (R18)
+       - create the `ResultSnapshot` with `engine_config` fully resolved (seed and λ per
+         component), `input_hash = sha256(canonical input JSON)`, `rubric`, and `diagnostics`
+    6. Audit `snapshot_created`.
 
     Refusals are audited as `snapshot_refused`, outside the transaction.
   - `set_engine_config`, with the R15 order and audit.
@@ -386,8 +552,9 @@ go-ahead.
      - a platform admin is allowed
      - each refusal writes an audit row
   3. Config lock:
-     - `kind="final"` with a method or config override, and `score_event --save final --method
-       zscore`, are both refused with `final_uses_event_config`
+     - `kind="final"` with a method, config or weights override is refused with
+       `final_uses_event_config`, and so are `score_event --save final` with `--method`,
+       `--config` or `--weights`
      - preview accepts overrides in every phase
      - `set_engine_config` succeeds before `judging_ends_at` and is audited
        (`scoring_config_changed`)
@@ -398,18 +565,34 @@ go-ahead.
      - `ResultSnapshot.objects.filter(pk=…).update(method="x")` is refused by the database
        trigger
      - deleting the event cascades and removes the snapshot
+     - deleting a user who created a snapshot raises `ProtectedError`, not a trigger error
   5. Publication:
      - inserting one that points at a preview snapshot is refused by the database
      - inserting one that points at another event's final snapshot is refused
      - pointing at its own event's final snapshot succeeds
      - a second active publication for the event is refused
      - setting `unpublished_at` once succeeds; changing `snapshot_id` or `published_at` is refused
+     - deleting an event that has a publication succeeds, and the cascade removes the
+       publication and its snapshot
+     - deleting a published snapshot on its own is refused (`RestrictedError`)
+     - deleting a user named in `published_by` raises `ProtectedError`
   6. Adapter:
      - the fixture event has 123 `Score` rows
      - `build_input` gives 122 reviews under `exclude` and 123 under `merge`
      - the fit uses 119 under `exclude` and 120 under `merge`
      - `prj_41`'s review appears in `excluded` with its reason
      - weights come from `Criterion`
+     - a review of a withdrawn (draft) project is listed as
+       `("review", …, "project not submitted")` and is not in the input
+  6b. Transaction:
+     - the isolation level inside `compute_snapshot` is `repeatable read`, read with `SHOW` in a
+       `transaction=True` test
+     - calling it inside an outer atomic block raises, and never silently runs at a weaker level
+  6c. Several finals:
+     - two finals on unchanged data: the second has `previous_final` set and
+       `scores_changed_since_last_final = false`
+     - after a `ScoreItem` change it is `true`
+     - the first final has `previous_final = null` and `false`
   7. The database result equals the file result: `build_input` on the imported fixture event with
      `cv_seed=20260926`, mapped through `FixtureRef`, matches the engine CLI output on
      `acceptance/fixtures.json`.
@@ -430,8 +613,18 @@ go-ahead.
   - the study's summary and its limits:
     - the simulation partly favours M2's own model
     - the fixtures carry no signal, so the fixture event is one tie group
-    - M2 raises a colluder's rank gain, and the outlier flag is the mitigation, as an unvalidated
-      heuristic
+    - M2 raises a colluder's rank gain
+  - *(Amended during S2.)* The outlier flag is **not** called a mitigation, or a defence
+    against collusion. JUDGING.md states the measured results:
+    - our +2 inflation is flagged
+    - the lab's own +1.5 colluder is missed
+    - about 4–6% of honest reviews are flagged at k = 2 (2.5% on the fixtures, which carry no
+      signal)
+    - it is a review aid, and `outlier_k` is untuned
+  - *(Amended during S2.)* The determinism wording:
+    - JSON is byte-identical on the same platform
+    - ranks and tie groups are identical across platforms
+    - full-precision scores may differ in the last bits
   - the app clock (`Event.phase`) vs the database clock (`judging_closed`), and that scoring
     consults only the latter
   - organizer-confirmed duplicates in live events are future work, and T1's "possible duplicate"
@@ -439,6 +632,14 @@ go-ahead.
 - DATA-MODEL.md tables for `EventScoringConfig`, `ResultSnapshot` and `Publication`, with their
   triggers.
 - No change to `.dogfood.toml`.
+
+## Future work (not in T2's engine phases)
+
+- **Rubric weights must lock at the first score** once rubric editing is built. Until then, each
+  snapshot's stored `rubric` is the record of which weights produced it.
+- **Organizer-confirmed duplicates** in live events. T1's "possible duplicate" flags are not used
+  by the engine.
+- **Publishing:** the service and UI on top of `Publication`.
 
 ## 6. Verification (every phase)
 

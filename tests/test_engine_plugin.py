@@ -39,12 +39,15 @@ def test_plugin_runs_through_run_compare_and_cli(plugin):
     inp, _ = load_organizer_file(FIXTURES)
     result = pipeline.run(inp, plugin)
     assert_contract(inp, result)
-    assert result.method_version == "0.1" and result.params_chosen == {"rule": "max"}
+    assert result.method_version == "0.1"
+    assert result.params_chosen == {"components": [{"component": 0, "rule": "max"}]}
 
     comparison = pipeline.compare(inp, [plugin, "zscore"], baseline="raw_mean")
     assert comparison.primary == plugin
     assert comparison.methods == (plugin, "zscore", "raw_mean")
-    assert all(row.ranks[plugin] is not None for row in comparison.rows)
+    ranked = [row for row in comparison.rows if row.ranks[plugin] is not None]
+    assert len(ranked) == 40                       # prj_41, the duplicate, is excluded
+    assert [row.project_id for row in comparison.rows if row.ranks[plugin] is None] == ["prj_41"]
 
     out = io.StringIO()
     assert cli_main(["--list"], out) == 0 and plugin in out.getvalue()

@@ -6,7 +6,7 @@ import json
 
 import numpy as np
 import pytest
-from engine_helpers import FIXTURES, make_input
+from engine_helpers import FIXTURES, NO_FILTERS, make_input
 
 from scoring.engine import pipeline
 from scoring.engine.cli import main as cli_main
@@ -35,7 +35,7 @@ def scores(result):
 
 def test_raw_mean_worked_example_step2():
     """PDF step 2: raw averages with weights 0.5/0.3/0.2, the flat judge still included."""
-    got = scores(pipeline.run(make_input(WORKED, weights=PDF_WEIGHTS), "raw_mean"))
+    got = scores(pipeline.run(make_input(WORKED, weights=PDF_WEIGHTS), "raw_mean", NO_FILTERS))
     for project, expected in {"P4": 4.10, "P5": 3.93, "P1": 3.67, "P3": 3.45, "P2": 3.20}.items():
         assert got[project] == pytest.approx(expected, abs=0.005)
 
@@ -53,15 +53,15 @@ def test_weighted_score_renormalises_over_present_criteria():
 def test_zscore_floor_for_single_and_flat_judges():
     """Lab test: a single-review judge and a flat judge have SD 0, fall to the floor, give z = 0."""
     rows = [("A", "Flat", 3), ("B", "Flat", 3), ("A", "Single", 5), ("B", "N", 2), ("A", "N", 4)]
-    result = pipeline.run(make_input(rows), "zscore")
-    assert result.diagnostics["method"]["sd_floored_judges"] == ["Flat", "Single"]
+    result = pipeline.run(make_input(rows), "zscore", NO_FILTERS)
+    assert result.diagnostics["method"]["components"][0]["sd_floored_judges"] == ["Flat", "Single"]
     # N: mean 3, population SD 1 -> A +1, B -1; Flat and Single contribute 0
     assert scores(result) == pytest.approx({"A": 1 / 3, "B": -0.5})
 
 
 def test_zscore_zero_variance_and_single_review_judges_score_zero():
     rows = [("C", "Flat", 4), ("D", "Flat", 4), ("E", "Single", 5), ("C", "N", 2), ("D", "N", 4)]
-    got = scores(pipeline.run(make_input(rows), "zscore"))
+    got = scores(pipeline.run(make_input(rows), "zscore", NO_FILTERS))
     assert got["E"] == 0.0  # only reviewed by the single-review judge
     assert got["C"] == pytest.approx(-0.5) and got["D"] == pytest.approx(0.5)
 
@@ -97,7 +97,7 @@ def test_project_with_no_reviews_is_excluded_not_ranked():
 
 
 def test_all_tied_is_one_tie_group_in_input_order():
-    result = pipeline.run(make_input([(p, "J1", 3) for p in "DCBA"]), "raw_mean")
+    result = pipeline.run(make_input([(p, "J1", 3) for p in "DCBA"]), "raw_mean", NO_FILTERS)
     assert [p.project_id for p in result.projects] == list("DCBA")
     assert {p.tie_group for p in result.projects} == {0}
 
@@ -108,6 +108,20 @@ def test_equal_means_that_differ_in_the_last_bit_still_tie():
     rank = ordinal_rank(scores_)
     assert list(exact_tie_groups(scores_, rank, 9)) == [0, 0, 1]
     assert list(exact_tie_groups(scores_, rank, 17)) == [0, 1, 2]
+
+
+def test_ranks_on_rounded_scores_break_ties_by_input_order():
+    """R10: 0.3 and 0.1 + 0.2 are equal to 9 dp, so input order decides, not the last bit."""
+    scores_ = np.array([0.3, 0.1 + 0.2, 0.2])
+    assert list(ordinal_rank(scores_)) == [2, 1, 3]          # raw floats: the last bit decides
+    assert list(ordinal_rank(scores_, 9)) == [1, 2, 3]       # rounded: input order decides
+
+
+def test_zscore_floor_allows_for_float_noise_at_the_boundary():
+    """SD exactly 0.5 on paper (weighted scores 13/3 and 10/3) is not floored."""
+    rows = [("A", "J", (5, 4, 4)), ("B", "J", (4, 3, 3)), ("A", "K", 2), ("B", "K", 3)]
+    result = pipeline.run(make_input(rows), "zscore", NO_FILTERS)
+    assert "J" not in result.diagnostics["method"]["components"][0]["sd_floored_judges"]
 
 
 def test_ties_only_on_equal_scores():
@@ -128,7 +142,7 @@ def test_coverage_counts():
 
 def test_compare_reports_rank_change_against_the_baseline():
     rows = [("A", "Harsh", 2), ("B", "Harsh", 1), ("B", "Kind", 5), ("C", "Kind", 5), ("C", "Harsh", 1)]
-    result = pipeline.compare(make_input(rows), ["zscore"], baseline="raw_mean")
+    result = pipeline.compare(make_input(rows), ["zscore"], baseline="raw_mean", config=NO_FILTERS)
     assert result.methods == ("zscore", "raw_mean")
     for row in result.rows:
         raw, z = row.ranks["raw_mean"], row.ranks["zscore"]
@@ -138,8 +152,13 @@ def test_compare_reports_rank_change_against_the_baseline():
 
 def test_compare_defaults_to_the_config_methods():
     result = pipeline.compare(make_input([("A", "J1", 4), ("B", "J1", 3)]))
-    assert result.primary == EngineConfig().primary
-    assert set(result.methods) == {"raw_mean", "zscore"}
+    assert result.primary == EngineConfig().primary == "m2"
+    assert result.methods == ("m2", "raw_mean", "zscore")
+
+
+def test_default_primary_method_is_m2():
+    assert EngineConfig().primary == "m2"
+    assert EngineConfig.from_dict({}).primary == "m2"
 
 
 # ------------------------------------------------------------------ errors
@@ -168,8 +187,29 @@ def test_config_values_are_checked(bad):
 
 
 def test_config_round_trips():
-    config = EngineConfig.from_dict({"compare": ["zscore"], "z_floor": 0.25})
+    config = EngineConfig.from_dict({"compare": ["zscore"], "z_floor": 0.25, "lambdas": [0.5, 1],
+                                     "filters": ["exclude_flat_judges"], "cv_seed": 7})
     assert EngineConfig.from_dict(config.to_dict()) == config
+
+
+@pytest.mark.parametrize("bad", [
+    {"filters": ["exclude_everything"]}, {"flaggers": ["telepathy"]}, {"duplicate_policy": "average"},
+    {"lambda_grid": []}, {"lambda_grid": [0, 1]}, {"lambdas": [1]}, {"lambdas": [0, 1]},
+    {"cv_folds": 1}, {"cv_seed": -1}, {"outlier_k": 0}, {"near_flat_threshold": -0.1},
+])
+def test_s2_config_values_are_checked(bad):
+    with pytest.raises(ConfigError):
+        EngineConfig.from_dict(bad)
+
+
+def test_seed_is_resolved_from_the_event_and_recorded():
+    inp = make_input([("A", "J1", 4), ("B", "J1", 3)], event_id="some-event")
+    result = pipeline.run(inp, "raw_mean")
+    assert isinstance(result.config["cv_seed"], int)
+    assert result.config["cv_seed"] == pipeline.resolve_config(inp).cv_seed
+    other = pipeline.run(make_input([("A", "J1", 4), ("B", "J1", 3)], event_id="other-event"), "raw_mean")
+    assert other.config["cv_seed"] != result.config["cv_seed"]
+    assert pipeline.run(inp, "raw_mean", {"cv_seed": 5}).config["cv_seed"] == 5
 
 
 @pytest.mark.parametrize("rows, message", [
@@ -248,7 +288,7 @@ def test_same_input_and_config_give_byte_identical_json():
     second = pipeline.compare(load_organizer_file(FIXTURES)[0]).to_json()
     assert first == second
     parsed = json.loads(first)
-    assert list(parsed) == ["primary", "baseline", "methods", "results", "rows"]
+    assert list(parsed) == ["primary", "baseline", "methods", "results", "rows", "movers"]
 
 
 def test_cli_prints_a_ranked_table_with_tie_groups(tmp_path):
@@ -257,7 +297,7 @@ def test_cli_prints_a_ranked_table_with_tie_groups(tmp_path):
     assert cli_main([str(FIXTURES), "--method", "zscore", "--compare", "raw_mean", "--json", str(target)], out) == 0
     text = out.getvalue()
     assert "method zscore v1 | baseline raw_mean" in text
-    assert "tie group" in text and "coverage:" in text
+    assert "tie group" in text and "coverage:" in text and "reviews: 126 in the input, 119 used" in text
     assert json.loads(target.read_text(encoding="utf-8"))["primary"] == "zscore"
     again = tmp_path / "again.json"
     cli_main([str(FIXTURES), "--method", "zscore", "--compare", "raw_mean", "--json", str(again)], io.StringIO())

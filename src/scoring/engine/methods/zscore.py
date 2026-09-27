@@ -4,13 +4,16 @@ For each review: z = (y - judge mean) / max(judge SD, floor), then averaged per 
 is the *population* SD (divide by n), so a judge with a single review, or one who gave every
 project the same score, has SD 0 and falls to the floor -- their reviews all get z = 0. The
 floor (config `z_floor`, default 0.5) keeps a near-flat judge's tiny differences from being
-blown up into huge z values. Judges that hit the floor are listed in the diagnostics.
+blown up into huge z values. Judges whose SD is below the floor (by more than 1e-9) are listed in
+the diagnostics.
 """
 
 import numpy as np
 
 from .base import MethodOutput
 from .registry import register
+
+FLOOR_EPS = 1e-9
 
 
 @register
@@ -31,7 +34,9 @@ class ZScore:
         total = np.bincount(data.pi, weights=z, minlength=data.P)
         with np.errstate(invalid="ignore", divide="ignore"):
             scores = np.where(n > 0, total / np.maximum(n, 1), np.nan)
-        floored = [data.judges[j] for j in range(data.J) if nj[j] > 0 and np.sqrt(var_j[j]) < floor]
+        # "At the floor" with a 1e-9 allowance: an SD that is exactly 0.5 on paper (scores 13/3
+        # and 10/3) can come out as 0.4999999999999998, and is not floored.
+        floored = [data.judges[j] for j in range(data.J) if nj[j] > 0 and np.sqrt(var_j[j]) < floor - FLOOR_EPS]
         return MethodOutput(
             scores=scores,
             params={"z_floor": floor},
