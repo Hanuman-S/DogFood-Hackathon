@@ -78,3 +78,18 @@ def test_with_a_third_judge_the_gap_can_be_filled_and_moves_work(two_judge_event
     client.post(f"/organizer/events/{event.slug}/assignments/{ben_p1.pk}/move", {"judge": cara.pk})
     assert Assignment.objects.filter(judge=cara, project=projects[1], status=AssignmentStatus.ASSIGNED).exists()
     assert "reassigned" in page(client, event)
+
+
+def test_the_board_refreshes_from_a_partial_with_the_pages_gates(two_judge_event, client_for, make_user):
+    event, judges, _ = two_judge_event
+    client = client_for(event.organizer)
+    assert "data-refresh-url" in page(client, event)
+    partial = client.get(f"/organizer/events/{event.slug}/assignments?partial=1")
+    html = partial.content.decode()
+    assert partial.status_code == 200 and "<html" not in html
+    assert "0 of 2 reviews in" in html and "where it stands" in html
+    assert 'name="target"' not in html  # the run form is not refreshed under the organizer's hands
+    assert client_for(make_user(role=Role.ORGANIZER)).get(
+        f"/organizer/events/{event.slug}/assignments?partial=1").status_code == 404
+    assert client_for(judges[0].user).get(
+        f"/organizer/events/{event.slug}/assignments?partial=1").status_code == 403

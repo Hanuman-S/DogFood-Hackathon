@@ -134,6 +134,7 @@ def progress(request, slug):
     return render(request, "organizer/progress.html", context)
 
 
+@never_cache
 @require_POST
 @portal_required("organizer")
 def nudge(request, slug, membership_id):

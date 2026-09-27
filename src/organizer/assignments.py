@@ -46,7 +46,7 @@ def review_state(score):
     return "submitted" if score.submitted_at else "draft"
 
 
-def _page(request, event, form=None, status=200):
+def _page(request, event, form=None, status=200, partial=False):
     target = services.review_target(event)
     board = Board(event)
     scores = {
@@ -99,7 +99,8 @@ def _page(request, event, form=None, status=200):
         else:
             next_step = "no_judge"
         declined.append((a, next_step))
-    return render(request, "organizer/assignments.html", {
+    template = "organizer/_assignment_board.html" if partial else "organizer/assignments.html"
+    return render(request, template, {
         "event": event,
         "form": form or AssignmentRunForm(initial={"target": target}),
         "target": target,
@@ -123,7 +124,7 @@ def _page(request, event, form=None, status=200):
 def assignments(request, slug):
     event = get_managed_event(request.user, slug)
     if request.method != "POST":
-        return _page(request, event)
+        return _page(request, event, partial=request.GET.get("partial") == "1")
     form = AssignmentRunForm(request.POST)
     if not form.is_valid():
         return _page(request, event, form, status=400)

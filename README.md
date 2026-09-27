@@ -70,6 +70,12 @@ The demo seed also creates two events:
 
 Reset everything with `docker compose down -v`.
 
+**After changing code, rebuild:** `docker compose up --build`. The image copies `src/` and
+collects static files at build time (no source mount, `DEBUG` off), so without `--build` the
+portal keeps serving the old templates, CSS and JavaScript. Pages themselves are never cached:
+the busy ones (organizer progress and assignments, the judge console) refresh every 30 seconds
+and when you come back to the tab, and Back/Forward fetches a page again.
+
 ### Without Docker, for development
 
 ```bash

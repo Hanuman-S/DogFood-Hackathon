@@ -1,0 +1,107 @@
+{% load portal %}{# Where assignment stands: counts, declines, one row per project. Also served alone
+   (?partial=1) to refresh the assignment page; its row forms are left alone while in use. #}
+<div class="stack">
+  <section class="frame" id="status">
+    <header class="frame__bar"><h2 class="frame__title">where it stands</h2><span class="frame__meta">target {{ target }} review{{ target|pluralize }} per project</span></header>
+    <div class="frame__body stack">
+      <div class="stats">
+        <div class="stat"><span class="stat__value">{{ reviews_in }}<span class="faint">/{{ reviews_wanted }}</span></span><span class="stat__label">reviews in</span></div>
+        <div class="stat{% if short_count %} stat--warn{% endif %}"><span class="stat__value">{{ short_count }}</span><span class="stat__label">projects needing a judge</span></div>
+        <div class="stat"><span class="stat__value">{{ judges|length }}</span><span class="stat__label">judges</span></div>
+        <div class="stat{% if islands > 1 %} stat--warn{% endif %}"><span class="stat__value">{{ islands|default:1 }}</span><span class="stat__label">judge group{{ islands|pluralize }}</span></div>
+      </div>
+      {% if warnings or stuck_count %}
+      <ul class="msgs">
+        {% if stuck_count %}<li class="msg msg--warning">{{ stuck_count }} project{{ stuck_count|pluralize }} need{{ stuck_count|pluralize:"s," }} a judge but nobody is left who may take {{ stuck_count|pluralize:"it,them" }}. <a href="{% url 'organizer:event' event.slug %}#judges">add or invite a judge</a>, then press assign.</li>{% endif %}
+        {% for w in warnings %}<li class="msg msg--warning">{{ w }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if declined %}
+  <section class="frame" id="declined">
+    <header class="frame__bar"><h2 class="frame__title">declined</h2><span class="frame__meta">{% if open_declines %}{{ open_declines }} waiting &middot; {% endif %}only organizers see the reasons</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>project</th><th>declined by</th><th>reason</th><th>next</th></tr></thead>
+        <tbody>
+        {% for a, step in declined %}
+          <tr>
+            <td><a href="#project-{{ a.project_id }}">{{ a.project.name }}</a><br><span class="faint">{{ a.status_changed_at|utc }}</span></td>
+            <td>{{ a.judge.user.name }}</td>
+            <td class="dim">{{ a.decline_reason }}</td>
+            <td>
+              {% if step == "covered" %}<span class="badge">reassigned</span>
+              {% elif step == "assign" %}<span class="badge badge--warn">needs a judge</span> <span class="faint">press assign</span>
+              {% else %}<span class="badge badge--warn">no judge left</span> <a href="{% url 'organizer:event' event.slug %}#judges">add or invite one</a>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="frame" id="projects">
+    <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">{{ rows|length }} &middot; the ones needing a judge first</span></header>
+    <div class="assign-list">
+    {% for r in rows %}
+      <article class="assign-row" id="project-{{ r.project.pk }}">
+        <div class="assign-row__head">
+          <div><span class="bright">{{ r.project.name }}</span> <span class="faint">{{ r.project.track.name|default:"no track" }}</span></div>
+          <div class="assign-row__count">{{ r.submitted }} of {{ target }} review{{ target|pluralize }} in</div>
+          <div class="assign-row__state">
+            {% if r.state == "done" %}<span class="badge badge--on">done</span>
+            {% elif r.state == "assigned" %}<span class="badge">fully assigned</span>
+            {% elif r.state == "fillable" %}<span class="badge badge--warn">needs {{ r.needed }} more</span>
+            {% else %}<span class="badge badge--warn">needs {{ r.needed }} more &middot; no judge left</span>{% endif %}
+          </div>
+        </div>
+        <div class="chips">
+          {% for a in r.assignments %}<span class="chip{% if a.review == 'submitted' %} chip--on{% endif %}">{{ a.judge.user.name }} <span class="faint">&middot; {{ a.review }}</span></span>{% empty %}<span class="faint">no judge yet</span>{% endfor %}
+        </div>
+        {% if not window.is_closed %}
+        <details class="manage">
+          <summary>manage</summary>
+          <div class="stack">
+            {% for a in r.assignments %}
+              <div class="manage__line">
+                <span>{{ a.judge.user.name }} <span class="faint">&middot; {{ a.review }}</span></span>
+                {% if a.review == "not started" %}
+                  {% if r.candidates %}
+                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_move' event.slug a.pk %}">
+                    {% csrf_token %}
+                    <label class="visually-hidden" for="move-{{ a.pk }}">move to</label>
+                    <select id="move-{{ a.pk }}" name="judge" class="select--small">{% for c in r.candidates %}<option value="{{ c.judge.pk }}">{{ c.judge.user.name }} &middot; {{ c.load }} assigned</option>{% endfor %}</select>
+                    <button class="btn btn--small btn--ghost" type="submit">move</button>
+                  </form>
+                  {% endif %}
+                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
+                {% else %}
+                  <span class="faint">started: stays with this judge</span>
+                {% endif %}
+              </div>
+            {% endfor %}
+            {% if r.candidates %}
+            <form class="inline-form manage__line" method="post" action="{% url 'organizer:assignment_add' event.slug %}">
+              {% csrf_token %}
+              <input type="hidden" name="project" value="{{ r.project.pk }}">
+              <label for="add-{{ r.project.pk }}" class="faint">add</label>
+              <select id="add-{{ r.project.pk }}" name="judge" class="select--small">{% for c in r.candidates %}<option value="{{ c.judge.pk }}">{{ c.judge.user.name }} &middot; {{ c.load }} assigned</option>{% endfor %}</select>
+              <button class="btn btn--small" type="submit">add judge</button>
+            </form>
+            {% else %}
+            <p class="faint">no other judge can take this project: everyone who covers {{ r.project.track.name|default:"it" }} is already on it or declined it. <a href="{% url 'organizer:event' event.slug %}#judges">add or invite a judge</a> to move or add reviews.</p>
+            {% endif %}
+          </div>
+        </details>
+        {% endif %}
+      </article>
+    {% empty %}
+      <p class="faint assign-row">no submitted projects yet.</p>
+    {% endfor %}
+    </div>
+  </section>
+</div>

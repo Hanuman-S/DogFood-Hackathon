@@ -235,6 +235,36 @@ def test_judge_console_and_review_page(world, clock, client_for, make_team):
     assert client.get(f"/judge/events/{event.slug}/projects/{other.pk}/").status_code == 404
 
 
+def test_the_console_refreshes_its_queue_from_a_partial(world, clock, client_for, make_event, make_user):
+    event, judge = world["event"], world["judge"]
+    clock(during(event))
+    client = client_for(judge)
+    console = client.get(f"/judge/events/{event.slug}/")
+    assert b"data-refresh-url" in console.content and b"?partial=1" in console.content
+    partial = client.get(f"/judge/events/{event.slug}/?partial=1")
+    assert partial.status_code == 200
+    assert b"<html" not in partial.content and b"Project 0" in partial.content
+    # The same gates as the page: an event you do not judge is a 404, a participant is refused.
+    assert client.get(f"/judge/events/{make_event().slug}/?partial=1").status_code == 404
+    assert client_for(make_user()).get(f"/judge/events/{event.slug}/?partial=1").status_code == 403
+
+
+def test_a_refused_review_comes_back_as_typed(world, clock, client_for):
+    """Submitting with a criterion missing is refused; the page shows what the judge entered,
+    not the last saved copy (here: nothing), so nothing typed is lost."""
+    event, judge, project = world["event"], world["judge"], world["projects"][0]
+    clock(during(event))
+    response = client_for(judge).post(
+        f"/judge/events/{event.slug}/projects/{project.pk}/",
+        {"action": "submit", "criterion_functionality": "4", "comment": "half written"},
+    )
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert not Score.objects.filter(judge=world["membership"], project=project).exists()
+    assert 'name="criterion_functionality" value="4" checked' in html
+    assert "half written" in html
+
+
 def test_pages_404_for_an_event_you_do_not_judge(world, make_event, make_user, client_for):
     other = make_event()
     client = client_for(world["judge"])

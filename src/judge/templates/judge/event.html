@@ -55,60 +55,10 @@
       </div>
     </section>
 
-    <!-- Right Column: My progress -->
-    <section class="frame">
-      <header class="frame__bar">
-        <h2 class="frame__title">My progress</h2>
-        <span class="frame__meta">{{ progress.submitted }}/{{ progress.total_projects }} submitted</span>
-      </header>
-      <div class="frame__body">
-        <!-- Terminal Progress Bar: shades_classic -->
-        <div class="progress-bar-wrap">
-          <pre class="progress-bar-text">{{ progress.terminal_bar }}</pre>
-          <p class="field__help">{{ progress.submitted }} submitted · {{ progress.drafts }} draft(s) · {{ progress.total_projects }} in your queue</p>
-        </div>
-
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th scope="col">Entry Name</th>
-                <th scope="col">Status</th>
-                <th scope="col" class="num">Rating</th>
-                <th scope="col"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in progress.projects %}
-              <tr>
-                <td>
-                  <a class="bright" href="{% url 'judge:project_score' event.slug row.project.pk %}">{{ row.project.name }}</a>
-                  {% if row.project.track %}
-                  <span class="faint">· {{ row.project.track.name }}</span>
-                  {% endif %}
-                </td>
-                <td>
-                  <span class="badge{% if row.status == 'submitted' %} badge--on{% elif row.status == 'draft' %} badge--warn{% endif %}">
-                    {{ row.status }}
-                  </span>
-                </td>
-                <td class="num bright">{{ row.rating }}</td>
-                <td class="num">
-                  <a class="btn btn--small btn--ghost" href="{% url 'judge:project_score' event.slug row.project.pk %}">
-                    {% if row.score %}open{% else %}score{% endif %}
-                  </a>
-                </td>
-              </tr>
-              {% empty %}
-              <tr>
-                <td colspan="4" class="faint">no projects are assigned to you yet.</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    <!-- Right Column: My progress (refreshes itself: new assignments show up without a reload) -->
+    <div data-refresh-url="{% url 'judge:event' event.slug %}?partial=1" data-refresh-every="30" aria-live="polite">
+      {% include "judge/_queue.html" %}
+    </div>
   </div>
 </div>
 {% endblock %}

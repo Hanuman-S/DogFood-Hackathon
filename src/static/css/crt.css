@@ -791,3 +791,6 @@ details.frame > summary.frame__bar::-webkit-details-marker, details.manage > sum
   .assign-row__head { grid-template-columns: 1fr; }
   .assign-row__state { text-align: left; }
 }
+
+/* Shown by app.js when a countdown reaches zero while a form has unsaved input (no reload then). */
+.countdown-notice { color: var(--err); white-space: nowrap; }

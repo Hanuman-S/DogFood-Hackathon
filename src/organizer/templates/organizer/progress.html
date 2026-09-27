@@ -6,9 +6,7 @@
   <section class="frame">
     <header class="frame__bar">
       <h1 class="frame__title">judging progress</h1>
-      <span class="frame__meta">{{ event.name }} &middot;
-        {% if window.is_open %}<span class="badge badge--on">judging open</span> <span class="faint">until {{ event.judging_ends_at|utc }}</span>{% elif window.not_started %}<span class="badge">starts {{ event.judging_starts_at|utc }}</span>{% else %}<span class="badge">judging ended</span>{% endif %}
-      </span>
+      <span class="frame__meta">{{ event.name }}</span>
     </header>
     <div class="frame__body">
       <p class="faint">refreshes itself every 30 seconds<span data-refresh-status></span>. reviews count only once submitted. reassign gives a judge's unstarted reviews to other judges; started ones stay theirs.</p>

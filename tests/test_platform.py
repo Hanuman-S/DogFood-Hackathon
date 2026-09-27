@@ -84,6 +84,13 @@ def test_security_headers():
     assert response["X-Content-Type-Options"] == "nosniff"
 
 
+@pytest.mark.parametrize("path", ["/", "/events/", "/projects"])
+def test_public_pages_are_never_cached(path):
+    """Counts change while a page is open; Back must fetch it again, not replay an old copy."""
+    cache_control = Client().get(path)["Cache-Control"]
+    assert "no-cache" in cache_control and "no-store" in cache_control
+
+
 def test_database_rejects_an_unknown_role(make_event, make_user):
     from django.db import IntegrityError, transaction
 

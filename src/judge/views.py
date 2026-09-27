@@ -122,11 +122,14 @@ def event_detail(request, slug):
     event, membership = _judged_event(request, slug)
     progress = scoring.judge_progress(membership)
     next_row = next((r for r in progress["projects"] if r["status"] != "submitted"), None)
-    return render(request, "judge/event.html", {
+    context = {
         "event": event, "membership": membership, "progress": progress,
         "next_project_id": next_row["project"].pk if next_row else None,
         "window": judging_window(event),
-    })
+    }
+    if request.GET.get("partial") == "1":  # the queue alone, for the console's live refresh
+        return render(request, "judge/_queue.html", context)
+    return render(request, "judge/event.html", context)
 
 
 @never_cache
@@ -144,6 +147,7 @@ def project_score(request, slug, project_id):
     following = queue[positions[project_id] + 1].project if positions[project_id] + 1 < len(queue) else None
     criteria = scoring.with_shares(Criterion.objects.filter(event=event).order_by("order", "key"))
 
+    posted = None  # a refused review is shown again as the judge typed it, not as last saved
     if request.method == "POST":
         try:
             if request.POST.get("action") == "decline":
@@ -160,9 +164,13 @@ def project_score(request, slug, project_id):
             return redirect("judge:event", slug=event.slug)
         except (JudgingNotOpen, scoring.ReviewError, scoring.AssignmentError) as refusal:
             messages.error(request, str(refusal))
+            if request.POST.get("action") != "decline":
+                posted = {c.pk: request.POST.get(f"criterion_{c.key}", "") for c in criteria}
 
     score = membership.scores.filter(project=project).prefetch_related("items").first()
     given = {i.criterion_id: i.value for i in score.items.all()} if score else {}
+    if posted is not None:
+        given = {pk: int(v) for pk, v in posted.items() if v.strip().isdigit()}
     criteria_data = [
         {
             "criterion": c,
@@ -174,6 +182,6 @@ def project_score(request, slug, project_id):
     ]
     return render(request, "judge/project_score.html", {
         "event": event, "membership": membership, "project": project, "criteria_data": criteria_data,
-        "score": score, "submitted": bool(score and score.submitted_at), "comment": score.comment if score else "",
+        "score": score, "submitted": bool(score and score.submitted_at), "comment": request.POST.get("comment", "") if posted is not None else (score.comment if score else ""),
         "answers": project.shown_answers(), "next_project": following, "window": judging_window(event),
     })
