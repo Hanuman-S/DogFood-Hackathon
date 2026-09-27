@@ -1,9 +1,9 @@
 """Scoring tables.
 
-**Scope warning.** These models exist and are populated by the fixture importer, and nothing
-else touches them yet (T2 is not built). There is no judging UI, no assignment, no normalization and no
-export. Nothing in T1 ever reads a score: the gallery and the project pages do not show scores
-to anyone, including organizers. `JUDGING.md` states this plainly.
+**Scope warning.** Criterion / Score / ScoreItem are populated by the fixture importer. The
+scoring engine (`scoring/engine/`, through `scoring/services.py`) reads them to compute result
+snapshots; nothing writes a score outside the importer yet, and no page shows a score or a
+result to anyone. There is no judging UI, no assignment and no export. `JUDGING.md` says so.
 
 They are defined now rather than in T2 because the fixture ships 126 reviews and discarding
 them on import would mean re-importing later against a schema designed without them in view.
@@ -18,6 +18,7 @@ The shape below is driven by what the fixture actually contains:
 
 from __future__ import annotations
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -161,3 +162,131 @@ class ScoreItem(models.Model):
                 )
         if self.score_id and self.criterion_id and self.score.judge.event_id != self.criterion.event_id:
             raise ValidationError({"criterion": "The criterion belongs to a different event."})
+
+
+# --- results ------------------------------------------------------------------------------------
+
+
+class EventScoringConfig(models.Model):
+    """An event's engine configuration: overrides on top of `scoring.engine.config.EngineConfig`'s
+    defaults (primary method, comparison methods, filters...). No row means the defaults.
+
+    Written only through `scoring.services.set_engine_config`, which refuses once judging has
+    closed: a final result always uses this configuration, so it must stop moving by then.
+    """
+
+    event = models.OneToOneField("events.Event", on_delete=models.CASCADE, related_name="scoring_config")
+    overrides = models.JSONField(default=dict, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"scoring config for {self.event_id}"
+
+
+class SnapshotKind(models.TextChoices):
+    PREVIEW = "preview", "Preview"
+    FINAL = "final", "Final"
+
+
+class SnapshotImmutable(Exception):
+    pass
+
+
+class ResultSnapshot(models.Model):
+    """One computed ranking of an event, exactly as it was computed. **Immutable.**
+
+    Created only by `scoring.services.compute_snapshot`; there is no update path anywhere.
+    `save()` refuses to update an existing row, and a Postgres trigger rejects every UPDATE
+    (scoring/migrations/0003), so a stored result cannot be edited even by raw SQL. DELETE is
+    allowed, so a snapshot goes with its event.
+
+    * preview: computable at any time by the event's organizers; never publishable.
+    * final: only once judging has closed, always with the event's own configuration and weights.
+      Several finals are allowed; each records the one before it.
+
+    `engine_config` is the resolved configuration (the seed actually used, the lambdas chosen per
+    component); `rubric` is the criteria and weights the result was computed with; `input_hash`
+    is the sha256 of the exact engine input. `created_by` is PROTECT, not SET_NULL: SET_NULL
+    would be an UPDATE, which the trigger refuses. The email is kept too, as the audit log does.
+    """
+
+    event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="result_snapshots")
+    kind = models.CharField(max_length=10, choices=SnapshotKind.choices)
+    created_at = models.DateTimeField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    created_by_email = models.CharField(max_length=254)
+    method = models.CharField(max_length=40)
+    method_version = models.CharField(max_length=20)
+    engine_config = models.JSONField()
+    rubric = models.JSONField()
+    input_hash = models.CharField(max_length=64)
+    result = models.JSONField()
+    comparison = models.JSONField()
+    diagnostics = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["event", "kind", "created_at"], name="snapshot_event_kind_idx")]
+        constraints = [
+            models.CheckConstraint(condition=Q(kind__in=SnapshotKind.values), name="snapshot_kind_valid"),
+        ]
+
+    def __str__(self):
+        return f"{self.kind} snapshot {self.pk} of {self.event_id}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise SnapshotImmutable("A result snapshot is immutable; compute a new one instead.")
+        super().save(*args, **kwargs)
+
+
+class Publication(models.Model):
+    """Which final snapshot is the event's published result. **Append-only.**
+
+    Only the model and its guarantees exist; there is no publishing service or page yet.
+    Enforced in Postgres by a trigger (scoring/migrations/0003): a publication may only point
+    at a *final* snapshot of the *same* event, and once written the only change allowed is
+    setting `unpublished_at` / `unpublished_by` once. A partial unique constraint allows one
+    active (not unpublished) publication per event. `clean()` checks the same on SQLite.
+
+    `snapshot` is RESTRICT: a published snapshot cannot be deleted on its own, but the whole
+    event can still be deleted (the publication goes with it). User FKs are PROTECT, emails kept.
+    """
+
+    event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="publications")
+    snapshot = models.ForeignKey(ResultSnapshot, on_delete=models.RESTRICT, related_name="publications")
+    published_at = models.DateTimeField()
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    published_by_email = models.CharField(max_length=254)
+    unpublished_at = models.DateTimeField(null=True, blank=True)
+    unpublished_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    unpublished_by_email = models.CharField(max_length=254, blank=True)
+
+    class Meta:
+        ordering = ["-published_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event"], condition=Q(unpublished_at__isnull=True),
+                name="publication_one_active_per_event",
+            ),
+            models.CheckConstraint(
+                condition=Q(unpublished_at__isnull=True, unpublished_by__isnull=True)
+                | Q(unpublished_at__isnull=False, unpublished_by__isnull=False),
+                name="publication_unpublished_fields_together",
+            ),
+        ]
+
+    def __str__(self):
+        return f"publication of snapshot {self.snapshot_id}"
+
+    def clean(self):
+        if self.snapshot_id:
+            if self.snapshot.kind != SnapshotKind.FINAL:
+                raise ValidationError({"snapshot": "Only a final snapshot can be published."})
+            if self.snapshot.event_id != self.event_id:
+                raise ValidationError({"snapshot": "The snapshot belongs to a different event."})

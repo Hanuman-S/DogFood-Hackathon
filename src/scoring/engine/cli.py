@@ -42,7 +42,7 @@ def main(argv=None, out=None) -> int:
             print("error: give a file, or --list", file=out)
             return 2
         config = EngineConfig.from_dict(read_config(args.config)) if args.config else EngineConfig()
-        inp, log = load_organizer_file(args.file, weights=_parse_weights(args.weights))
+        inp, log = load_organizer_file(args.file, weights=parse_weights(args.weights))
         method = args.method or config.primary
         others = [m.strip() for m in args.compare.split(",") if m.strip()] if args.compare else list(config.compare)
         result = compare(inp, [method, *others], baseline=args.baseline, config=config)
@@ -74,7 +74,7 @@ def print_comparison(result, out):
     rows = primary.by_project()
     print(f"method {primary.method} v{primary.method_version} | baseline {base}", file=out)
     header = f"{'rank':>5} {'tie':>4}  {'project':<14} {'track':<10} {'n':>2} {'score':>16}"
-    header += "".join(f" {m[:10]:>10}" for m in others) + f" {'chg':>4}  flags"
+    header += "".join(f" {rank_column(m):>10}" for m in others) + f" {'chg':>4}  flags"
     if several:
         header = "comp " + header
     print(header, file=out)
@@ -126,6 +126,14 @@ def print_comparison(result, out):
         for m in result.movers:
             print(f"#   {m['project_id']:<10} raw {m['raw_rank']:>3} -> {m['rank']:>3} ({m['change']:+d}); "
                   f"{m['explanation']}", file=out)
+
+
+RANK_COLUMNS = {"raw_mean": "raw_rank", "zscore": "z_rank"}
+
+
+def rank_column(method):
+    """The other methods' columns show ranks, not scores, and are named so."""
+    return RANK_COLUMNS.get(method, f"{method}_rank")[:10]
 
 
 def _bool(value):
@@ -180,7 +188,7 @@ def _read_json(path):
         raise EngineError(f"Cannot read config {path}: {error}") from error
 
 
-def _parse_weights(text):
+def parse_weights(text):
     if not text:
         return None
     weights = {}

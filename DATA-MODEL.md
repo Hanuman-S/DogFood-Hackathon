@@ -113,13 +113,23 @@ event" be a plain unique constraint instead of a trigger.
 | `projects_tag`, `projects_project_tags` | free-form tags, up to 50 per project | tag name unique |
 | `projects_answer` | a project's answer to one custom question | `one_answer_per_question` |
 
-### scoring: present, filled by the import, not read by anything yet
+### scoring: filled by the import, read only by the scoring engine
 
 | Table | Holds | Enforced by the database |
 |---|---|---|
 | `scoring_criterion` | one rubric line per event: key, label, **decimal `weight`**, min, max, order | `criterion_unique_key_per_event`, `criterion_min_below_max` |
 | `scoring_score` | one judge's review of one project: judge **membership**, project, comment | `score_unique_judge_project` |
 | `scoring_scoreitem` | the value for one criterion within one review | `scoreitem_unique_per_criterion` |
+| `scoring_eventscoringconfig` | one event's engine configuration overrides (JSON); written only by `set_engine_config`, which refuses once judging has closed | one per event |
+| `scoring_resultsnapshot` | one computed ranking, kept exactly as computed: kind (`preview` / `final`), method and version, the resolved engine config (seed and λ used), the rubric, the sha256 of the engine input, the result and comparison JSON, who computed it (user **PROTECT** + email) | `snapshot_kind_valid`; **(pg)** trigger `dogfood_snapshot_immutable` refuses every UPDATE |
+| `scoring_publication` | which final snapshot is published (model only; no service yet): snapshot (**RESTRICT**), published/unpublished at and by (user **PROTECT** + email) | `publication_one_active_per_event` (partial unique), `publication_unpublished_fields_together`; **(pg)** trigger `dogfood_publication_guard`: only a final snapshot of the same event, and append-only (only unpublishing, once) |
+
+**Actor emails in results cannot be erased.** A snapshot or publication row stores the email of
+the account that computed or published it, and the row is immutable (or append-only) at the
+database level. The user foreign keys are PROTECT, not SET_NULL, because SET_NULL is an UPDATE the
+triggers refuse. So an account named in a result cannot be deleted, and its email cannot later be
+removed from those rows. This is a deliberate audit trade-off: a result that could be rewritten,
+or lose the record of who produced it, would prove nothing. The full T2 write-up comes in S4.
 
 A score points at the judge's `EventMembership`, not the `User`. "This judge, in this event" is then
 one column that cannot disagree with itself, and revoking someone's judge role takes their reviews

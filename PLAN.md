@@ -169,5 +169,107 @@ score entry, no results pages, no publishing service or UI, no CSV export, no se
   - default: 40 ranked, 126 in and 119 used, λ = (4, 4) from CV with the event-derived seed
     1111942736, `lambda_at_grid_boundary=true`, one tie group of 40, exclusions listed
   - `--config duplicate_policy=merge`: 120 used, and prj_07 has 6 reviews
-## S3: adapter, persistence, gate (not started)
+## S3: adapter, persistence, gate (done)
+
+**Built:**
+- `scoring/services.py`:
+  - `build_input(event, weights=None)`:
+    - the event's submitted projects, and its reviews in `Score.pk` order
+    - the rubric from `Criterion`
+    - `event_id` = slug, from which the CV seed is derived
+    - the importer's folded duplicate: jdg_18's review, which the importer moved onto `prj_07`,
+      is given back to `dup:prj_41` and declared a duplicate of prj_07, so the engine's policy
+      decides
+    - reviews of projects that are not submitted go into `EngineInput.excluded` as "project not
+      submitted"
+  - `judging_closed(event, now)`: `now >= judging_ends_at`, the only such comparison.
+  - `compute_snapshot(event, kind, actor, method, config, weights)`:
+    1. permission (403)
+    2. overrides on a final (400 `final_uses_event_config`; method, config or weights)
+    3. the window (409 `judging_open`, on `db_now()`)
+    4. a refusal if called inside another transaction
+    5. one `transaction.atomic()` whose first statement is `SET TRANSACTION ISOLATION LEVEL
+       REPEATABLE READ`. Inside it: the event config, `build_input`, the engine, the previous
+       final by `(created_at, id)`, and the insert.
+
+    Refusals are audited outside the transaction.
+  - `set_engine_config`: permission, then locked at close (409 `scoring_config_locked`), then
+    validation (400 `invalid_config`), then save and audit.
+  - `input_hash`: sha256 of the canonical engine input.
+- `scoring/errors.py`: each refusal carries its HTTP status and code.
+- Models, in migration `scoring/0002`:
+  - `EventScoringConfig`
+  - `ResultSnapshot`: immutable, no `is_published`, `created_by` PROTECT plus its email, and
+    stores the resolved config, rubric, hash, result, comparison and diagnostics.
+  - `Publication`: snapshot RESTRICT, user FKs PROTECT plus emails, one active per event,
+    unpublished fields set together.
+- `scoring/0003`: Postgres triggers. `dogfood_snapshot_immutable` refuses any UPDATE;
+  `dogfood_publication_guard` allows only a final of the same event, and is append-only.
+- `core/0002`: four audit actions. Read-only admins for snapshots and publications.
+- `manage.py score_event`:
+  - flags: `--method`, `--compare`, `--config`, `--weights`, `--save preview|final --as EMAIL`
+  - without `--save` it writes nothing
+  - with `--save` it goes through `compute_snapshot`
+- `manage.py score_methods`.
+- **S2 follow-ups:**
+  - The CLI's rank columns are now named `raw_rank` and `z_rank`.
+  - The `syn_medium` strict xfail is replaced by a platform-independent test. It passes if the
+    metrics match exactly, or if they deviate within stated bounds (Spearman and Kendall ≤ 1e-3,
+    MARE ≤ 0.04, the rest exact), the lab's near-tie sets are exactly the two listed pairs, and
+    the CSV value is reachable by reordering only those pairs. In the container it takes the
+    deviation branch: +0.000168, +0.000404, −0.02.
+
+**How the numbers were read:**
+- `ATOMIC_REQUESTS` is not set anywhere, so Django's default `False` applies (CLAUDE.md and R17
+  record the rule for views).
+- The fixture adapter: 123 reviews in the database, and `build_input` passes all 123 (one marked
+  as the duplicate's).
+  - Under `exclude`, the duplicate policy leaves 122 and the fit uses 119.
+  - Under `merge`, it leaves 123 and the fit uses 120.
+- The database input is ordered by creation, and the importer creates projects oldest submission
+  first. The file is ordered by its list. So under R10, equal scores (e.g. prj_09 and prj_17 under
+  M2) can hold their ranks in the opposite order in the two sources. The "database equals file"
+  test therefore requires equal scores, tie groups, λ and leans, and equal ranks across distinct
+  scores. Within a set of equal scores it requires only the same set of ranks.
+
+**Tests** (`tests/test_scoring_services.py`, 34 tests; every `compute_snapshot` test uses
+`transaction=True`):
+- **The gate:** final refused (409) in every phase through `judging_ends_at − 1s`; allowed at and
+  after the boundary; preview allowed in all phases.
+- **Roles:** a participant and a judge get 403 for both kinds in all phases, with an audit row
+  each; the organizer of another event gets 403; an admin is allowed.
+- **The config lock:**
+  - a final with a method, config or weights override is refused, and so is `score_event --save
+    final` with `--method`, `--compare`, `--config` or `--weights`
+  - preview accepts overrides in every phase
+  - `set_engine_config` succeeds before close, is refused at and after the close, validates its
+    input and checks permission
+  - a final uses the event's config
+- **Immutability:** `save()` raises; `update()` is refused by the database trigger; the event
+  cascade works; deleting a user who created a snapshot raises `ProtectedError`.
+- **Publication:**
+  - preview refused; another event's final refused
+  - one active publication per event; append-only (only unpublishing, once)
+  - `RestrictedError` when a published snapshot is deleted alone; deleting the event succeeds
+  - `ProtectedError` when the publisher is deleted
+- **The adapter:** 123 / 122 / 119 and 123 / 123 / 120; weights from `Criterion` (plus the
+  preview override); a withdrawn project's reviews are listed; the database result equals the
+  file result; the hash is stable and changes when a score changes.
+- **The transaction:** `SHOW transaction_isolation` inside the block reads `repeatable read`; a
+  call inside another transaction raises `SnapshotInsideTransaction`.
+- **Several finals:** the first has no previous final and `false`; the second is `false`; after
+  a score change the third is `true`. All three share one `created_at`, so the id breaks the tie.
+- **Stored config:** the resolved seed equals `seed_for(slug)`, float λ per component, the
+  rubric, the email.
+- **Commands:** `score_methods` lists the registry; `score_event` without `--save` writes
+  nothing; `--save final --as` works; `--save` without `--as` is refused.
+
+**Docs:**
+- DATA-MODEL.md: the three tables, and a note that actor emails in immutable result rows cannot be
+  erased, as a deliberate audit trade-off.
+- CLAUDE.md: the scoring-results rules (the transaction rule, `non_atomic_requests`, the test
+  marker).
+- The plan: R17, R18 and R21 amendments, and `docs/t2-scoring-plan.md` refreshed.
+
+**Verification:** see the S3 summary.
 ## S4: docs (not started)

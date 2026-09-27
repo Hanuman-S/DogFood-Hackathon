@@ -219,13 +219,27 @@ Consequences for this plan:
     The test that checks the level uses `transaction=True` and reads `SHOW transaction_isolation`
     inside the block.
   - Refusal audits stay outside the transaction.
+  - *(Amended at S3 approval.)* `ATOMIC_REQUESTS` is not set in this project, so Django's
+    default `False` applies.
+    - Any future view that calls `compute_snapshot` must be `@transaction.non_atomic_requests`.
+    - Tests that call it use `@pytest.mark.django_db(transaction=True)`.
+    - The "raises inside another transaction" check is never weakened to suit tests.
+    - `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` is the first statement in the atomic
+      block. Permission, override and window checks run before the block opens.
+    - The isolation test reads `SHOW transaction_isolation` from inside the block.
+    - Recorded in CLAUDE.md.
 - **R18. Several finals per event are allowed** *(amended before S3).*
+  - *(Amended at S3 approval.)* "Previous final" means the most recent final for the same event,
+    ordered by `(created_at, id)`.
   - Each final stores, in `ResultSnapshot.diagnostics`:
     - `previous_final`: `{id, created_at, input_hash}`, or null for the first final
     - `scores_changed_since_last_final`: `input_hash` differs from the previous final's; `false`
       for the first final
   - Tests cover both cases: two finals on unchanged data give false, and a changed `ScoreItem`
     in between gives true.
+- **R21. Actor emails** *(amended at S3 approval).* DATA-MODEL.md says that the actor emails in
+  immutable snapshot and publication rows cannot be erased later, and that this is a deliberate
+  audit trade-off.
 - **Worked example.** Asserts the computed SD(Δ) for P1 vs P3, which is 0.584. The PDF prints
   0.59; that typo appears only as a comment.
 - **numpy.** Pin 2.5.3 if a cp312 wheel exists, since the image is Python 3.12. If it doesn't,

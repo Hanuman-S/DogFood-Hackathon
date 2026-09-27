@@ -48,6 +48,15 @@ build step. `docker compose up --build` is the product; it must stay one command
   byte-identical JSON. `tests/test_engine_purity.py` enforces it. A new scoring method is one
   file in `scoring/engine/methods/` with `@register`; the contract test covers it automatically.
   Never import from `../scoring-lab` (reference only; copy code in).
+- **Scoring results** go through `scoring/services.py`. `judging_closed(event, now)` is the only
+  place that compares against `judging_ends_at`. `compute_snapshot` opens its own transaction
+  whose first statement is `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` (permission,
+  override and window checks run before it opens), and it **raises if called inside another
+  transaction**. `ATOMIC_REQUESTS` is off (unset) in this project; any view that calls
+  `compute_snapshot` must be `@transaction.non_atomic_requests`. Tests that call it use
+  `@pytest.mark.django_db(transaction=True)`; never weaken that check to suit a test.
+  `ResultSnapshot` is immutable and `Publication` append-only (Postgres triggers, in
+  `scoring/migrations/0003`).
 - **Honest claims.** `.dogfood.toml` claims only what `acceptance/run.py` verifies. The T2 routes
   must 404 until T2 is real (`tests/test_acceptance_contract.py`). `acceptance/` is the
   organizers' and is read-only.

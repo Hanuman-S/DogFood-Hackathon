@@ -61,6 +61,11 @@ class AuditAction(models.TextChoices):
     DEADLINE_BYPASSED = "deadline_bypassed", "Wrote past the deadline (organizer bypass)"
     # imports
     FIXTURES_IMPORTED = "fixtures_imported", "Imported the fixture dataset"
+    # scoring
+    SNAPSHOT_CREATED = "snapshot_created", "Computed a results snapshot"
+    SNAPSHOT_REFUSED = "snapshot_refused", "Refused to compute a results snapshot"
+    SCORING_CONFIG_CHANGED = "scoring_config_changed", "Changed an event's scoring configuration"
+    SCORING_CONFIG_REFUSED = "scoring_config_refused", "Refused a change to an event's scoring configuration"
 
 
 class AuditLog(models.Model):

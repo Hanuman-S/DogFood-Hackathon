@@ -20,6 +20,7 @@ Every comparison collects all mismatches and fails once, with a readable diff.
 """
 
 import csv
+import itertools
 import json
 
 import numpy as np
@@ -424,19 +425,16 @@ def m2_accuracy(name, lab_bits_for_equal_pairs=False):
     return truth_metrics(scores, truth_for(name, lab["projects"]), lab["tracks"]), lab_eval_rows(name)["M2"]
 
 
-SYN_MEDIUM_NEAR_TIES = (
-    "Known deviation, reported to the user and not patched: syn_medium has two pairs of M2 scores "
-    "equal to within 1e-9 in the lab's own output (prj_001/prj_008, prj_026/prj_052). Their order "
-    "is last-bit float noise; ours differs from the lab's, and Spearman, Kendall and MARE, computed "
-    "exactly as the lab did (no tie handling), move with it. "
-    "test_syn_medium_m2_deviation_is_only_the_near_tie_pairs pins that this is the only cause."
-)
+# syn_medium: M2 scores equal to within 1e-9 in the lab's own output. Their order is last-bit
+# float noise and differs by platform; the lab's M2 accuracy metrics (no tie handling) move with it.
+SYN_MEDIUM_NEAR_TIE_PAIRS = ({"prj_001", "prj_008"}, {"prj_026", "prj_052"})
+# The most those two pairs can move each metric on 100 projects (MARE: 2 pairs x 2 projects x 1
+# rank / 100 = 0.04; Spearman and Kendall well under 1e-3 for two adjacent swaps). Any other
+# metric must match exactly.
+SYN_MEDIUM_BOUND = {"spearman": 1e-3, "kendall": 1e-3, "mare": 0.04, "top1": 0.0, "top5": 0.0, "track_winner": 0.0}
 
 
-@pytest.mark.parametrize("name", [
-    "syn_small", "syn_large",
-    pytest.param("syn_medium", marks=pytest.mark.xfail(strict=True, reason=SYN_MEDIUM_NEAR_TIES)),
-])
+@pytest.mark.parametrize("name", ["syn_small", "syn_large"])
 def test_m2_accuracy_matches_synthetic_events_eval_csv(name):
     """M2 against the lab's printed synthetic_events_eval.csv, with the lab's own metric function."""
     got, row = m2_accuracy(name)
@@ -444,6 +442,41 @@ def test_m2_accuracy_matches_synthetic_events_eval_csv(name):
     for key in METRICS:
         diff.close(f"M2 {key}", got[key], num(row[key]), TOL_6DP)
     diff.check()
+
+
+def test_syn_medium_m2_accuracy_matches_or_deviates_only_through_the_near_tie_pairs():
+    """Platform-independent. Either every metric matches the CSV, or: the lab's near-tie sets are
+    exactly the two listed pairs; each metric is within its stated bound; and the CSV value is one
+    this platform's scores produce when only the listed pairs are reordered (so nothing else can
+    be the cause)."""
+    got, row = m2_accuracy("syn_medium")
+    want = {key: num(row[key]) for key in METRICS}
+    if all(abs(got[key] - want[key]) <= TOL_6DP for key in METRICS):
+        return
+    lab = lab_json("syn_medium")
+    lab_scores = lab["methods"]["M2"]["score"]
+    near_ties = [set(m) for m in lab_equal_sets(lab["projects"], lab_scores) if len(m) > 1]
+    assert sorted(map(sorted, near_ties)) == sorted(map(sorted, SYN_MEDIUM_NEAR_TIE_PAIRS))
+    diff = Diff("syn_medium: M2 deviation bound")
+    for key in METRICS:
+        if abs(got[key] - want[key]) > SYN_MEDIUM_BOUND[key] + TOL_6DP:
+            diff.lines.append(f"M2 {key}: ours {got[key]:.9g}, lab {want[key]:.9g}, beyond the bound {SYN_MEDIUM_BOUND[key]}")
+    diff.check()
+
+    inp, _ = load_organizer_file(GOLDEN / "syn_medium.json")
+    ours = pipeline.run(inp, "m2", CONFIG).by_project()
+    truth = truth_for("syn_medium", lab["projects"])
+    reachable = []
+    for flips in itertools.product((False, True), repeat=len(SYN_MEDIUM_NEAR_TIE_PAIRS)):
+        scores = {p: ours[p].score for p in lab["projects"]}
+        for flip, pair in zip(flips, SYN_MEDIUM_NEAR_TIE_PAIRS):
+            first, second = sorted(pair)
+            mid = (scores[first] + scores[second]) / 2
+            high, low = (second, first) if flip else (first, second)
+            scores[high], scores[low] = mid + 1e-12, mid
+        reachable.append(truth_metrics([scores[p] for p in lab["projects"]], truth, lab["tracks"]))
+    assert any(all(abs(r[key] - want[key]) <= TOL_6DP for key in METRICS) for r in reachable), (
+        "the CSV's M2 metrics are not reachable by reordering only the listed near-tie pairs")
 
 
 def test_syn_medium_m2_deviation_is_only_the_near_tie_pairs():
