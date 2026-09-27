@@ -7,7 +7,7 @@ from django.db import IntegrityError, transaction
 from django.test import Client
 from django.utils import timezone
 
-from accounts.roles import Role
+from accounts.roles import ADMIN, Role
 from core.models import AuditAction, AuditLog
 from events.models import CustomQuestion, Event, Phase, Prize, Track
 from projects.models import Answer, Project
@@ -39,7 +39,7 @@ def test_organizer_creates_an_unpublished_event_they_manage(make_user, client_fo
     assert response.status_code == 302 and response["Location"] == "/organizer/events/spring-hack-2027/"
     event = Event.objects.get(slug="spring-hack-2027")
     assert not event.is_published
-    assert list(event.organizers.all()) == [organizer]
+    assert list(event.members_with(Role.ORGANIZER)) == [organizer]
     assert event.submissions_close_at.isoformat() == "2027-03-03T09:00:00+00:00"  # typed as UTC
     assert AuditLog.objects.filter(action=AuditAction.EVENT_CREATED, subject=event.slug).exists()
 
@@ -81,7 +81,7 @@ def test_slug_must_be_unique(make_event, make_user, client_for):
 def test_only_organizers_and_admins_create_events(make_user, client_for, role):
     client = client_for(make_user(role=role))
     assert client.post("/organizer/events/new", event_form()).status_code == 403
-    assert not Event.objects.exists()
+    assert not Event.objects.filter(slug="spring-hack-2027").exists()
 
 
 def test_other_organizers_cannot_see_or_edit_an_event(make_event, make_user, client_for):
@@ -95,7 +95,7 @@ def test_other_organizers_cannot_see_or_edit_an_event(make_event, make_user, cli
 
 def test_admins_manage_every_event(make_event, make_user, client_for):
     event = make_event()
-    admin = client_for(make_user(role=Role.ADMIN))
+    admin = client_for(make_user(role=ADMIN))
     assert admin.get(f"/organizer/events/{event.slug}/").status_code == 200
 
 
@@ -226,30 +226,41 @@ def test_parts_of_another_event_cannot_be_touched(make_event, client_for):
 
 def test_add_and_remove_a_co_organizer(make_event, make_user, client_for):
     event = make_event()
-    co = make_user(role=Role.ORGANIZER)
+    co = make_user()  # any account: organizer is a role in *this* event
     client = client_for(event.organizer)
     client.post(f"/organizer/events/{event.slug}/organizers", {"email": co.email.upper()})
-    assert co in event.organizers.all()
+    assert co in event.members_with(Role.ORGANIZER)
     assert client_for(co).get(f"/organizer/events/{event.slug}/").status_code == 200
-    link = event.organizer_links.get(user=co)
+    link = event.memberships.get(user=co, role=Role.ORGANIZER)
     client.post(f"/organizer/events/{event.slug}/organizers/{link.pk}/remove")
-    assert co not in event.organizers.all()
+    assert co not in event.members_with(Role.ORGANIZER)
 
 
-@pytest.mark.parametrize("role", [Role.PARTICIPANT, Role.JUDGE])
-def test_only_organizer_accounts_can_co_organize(make_event, make_user, client_for, role):
+def test_a_competitor_cannot_co_organize_their_own_event(make_event, make_team, client_for):
     event = make_event()
-    other = make_user(role=role)
-    response = client_for(event.organizer).post(f"/organizer/events/{event.slug}/organizers", {"email": other.email})
+    competitor = make_team(event).captain
+    response = client_for(event.organizer).post(
+        f"/organizer/events/{event.slug}/organizers", {"email": competitor.email}
+    )
     assert response.status_code == 400
-    assert other not in event.organizers.all()
+    assert b"conflict of interest" in response.content
+    assert competitor not in event.members_with(Role.ORGANIZER)
+
+
+def test_platform_admins_are_not_added_as_organizers(make_event, make_user, client_for):
+    event = make_event()
+    admin = make_user(role=ADMIN)
+    response = client_for(event.organizer).post(
+        f"/organizer/events/{event.slug}/organizers", {"email": admin.email}
+    )
+    assert response.status_code == 400
 
 
 def test_the_last_organizer_cannot_be_removed(make_event, client_for):
     event = make_event()
-    link = event.organizer_links.get()
+    link = event.memberships.get(role=Role.ORGANIZER)
     client_for(event.organizer).post(f"/organizer/events/{event.slug}/organizers/{link.pk}/remove")
-    assert event.organizer_links.count() == 1
+    assert event.memberships.filter(role=Role.ORGANIZER).count() == 1
 
 
 def test_the_database_refuses_min_above_max(make_event):

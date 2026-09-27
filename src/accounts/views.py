@@ -15,7 +15,7 @@ from accounts import services
 from accounts.forms import LoginForm, PasswordChangeForm, SignupForm, TokenForm
 from accounts.guards import login_required
 from accounts.models import ApiToken, UserSession
-from accounts.roles import HOME_PORTAL_URL
+from accounts.roles import PORTAL_URL, home_portal as home_portal_name
 from core.views import forbidden
 
 LOGIN_ERRORS = {
@@ -25,7 +25,7 @@ LOGIN_ERRORS = {
 
 
 def home_portal(user):
-    return reverse(HOME_PORTAL_URL[user.role])
+    return reverse(PORTAL_URL[home_portal_name(user)])
 
 
 def _safe_next(request):

@@ -3,7 +3,6 @@ from django.contrib.auth import password_validation
 from django.contrib.auth.forms import PasswordChangeForm as DjangoPasswordChangeForm
 
 from accounts.models import User, normalize_email
-from accounts.roles import Role
 
 
 class LoginForm(forms.Form):
@@ -77,12 +76,19 @@ class SignupForm(_NewPasswordMixin, forms.Form):
 
 
 class AccountCreateForm(SignupForm):
-    """Used by an admin to create an account with any role."""
+    """Used by an admin to create an account for someone else.
+
+    Only the two platform-wide powers are set here. Judge and organizer are roles *in an event*
+    and are granted from that event's control page.
+    """
 
     duplicate_email_message = "An account with this email already exists."
-    role = forms.ChoiceField(choices=Role.choices, initial=Role.JUDGE)
+    can_create_events = forms.BooleanField(
+        required=False, label="may create events (becomes their organizer)"
+    )
+    is_platform_admin = forms.BooleanField(required=False, label="platform admin")
 
-    field_order = ["name", "email", "role", "password1", "password2"]
+    field_order = ["name", "email", "password1", "password2", "can_create_events", "is_platform_admin"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -1,5 +1,8 @@
 """Seed one demo account per role, with fixed API tokens, and print the credentials.
 
+Roles are per event, so "per role" means: a platform admin, an account that may create events
+and organizes the demo events, two accounts that judge them, and one that competes in them.
+
     python manage.py seed_demo
 
 Runs on every container boot when DEMO_MODE=1, so it is create-only: an account or token that
@@ -17,14 +20,33 @@ from accounts.roles import Role
 DEMO_EVENT_SLUG = "dogfood-live-demo"
 CLOSED_EVENT_SLUG = "dogfood-archive-2026"  # closed: .dogfood.toml's submit route points here
 
-# key in settings.DEMO_TOKENS -> (email, name, role)
+# key in settings.DEMO_TOKENS -> (email, name, label, platform flags)
 DEMO_ACCOUNTS = {
-    "admin": ("admin@dogfood.local", "Demo Admin", Role.ADMIN),
-    "organizer": ("organizer@dogfood.local", "Demo Organizer", Role.ORGANIZER),
-    "judge_a": ("judge.a@dogfood.local", "Demo Judge A", Role.JUDGE),
-    "judge_b": ("judge.b@dogfood.local", "Demo Judge B", Role.JUDGE),
-    "participant": ("participant@dogfood.local", "Demo Participant", Role.PARTICIPANT),
+    "admin": ("admin@dogfood.local", "Demo Admin", "admin",
+              {"is_platform_admin": True, "can_create_events": True}),
+    "organizer": ("organizer@dogfood.local", "Demo Organizer", "organizer", {"can_create_events": True}),
+    "judge_a": ("judge.a@dogfood.local", "Demo Judge A", "judge", {}),
+    "judge_b": ("judge.b@dogfood.local", "Demo Judge B", "judge", {}),
+    "participant": ("participant@dogfood.local", "Demo Participant", "participant", {}),
 }
+
+
+def _staff(event, organizer):
+    """The demo organizer runs `event`; both demo judges judge it."""
+    from events.models import EventMembership
+
+    EventMembership.objects.create(event=event, user=organizer, role=Role.ORGANIZER, added_by=organizer)
+    for key in ("judge_a", "judge_b"):
+        judge = User.objects.get(email=DEMO_ACCOUNTS[key][0])
+        EventMembership.objects.create(event=event, user=judge, role=Role.JUDGE, added_by=organizer)
+
+
+def _compete(event, team, user):
+    from events.models import EventMembership
+    from teams.models import TeamMember
+
+    TeamMember.objects.create(team=team, user=user)
+    EventMembership.objects.create(event=event, user=user, role=Role.PARTICIPANT)
 
 
 class Command(BaseCommand):
@@ -35,12 +57,10 @@ class Command(BaseCommand):
             raise CommandError("Refusing to seed demo accounts: DEMO_MODE is not 1.")
 
         rows = []
-        for key, (email, name, role) in DEMO_ACCOUNTS.items():
+        for key, (email, name, role, flags) in DEMO_ACCOUNTS.items():
             user = User.objects.filter(email=email).first()
             if user is None:
-                user = User.objects.create_user(
-                    email, settings.DEMO_PASSWORD, name=name, role=role
-                )
+                user = User.objects.create_user(email, settings.DEMO_PASSWORD, name=name, **flags)
                 state = "created"
             else:
                 state = "exists"
@@ -66,9 +86,9 @@ class Command(BaseCommand):
         from django.db import transaction
         from django.utils import timezone
 
-        from events.models import CustomQuestion, Event, EventOrganizer, Prize, QuestionKind, Track
+        from events.models import CustomQuestion, Event, Prize, QuestionKind, Track
         from projects.models import Project
-        from teams.models import Team, TeamMember
+        from teams.models import Team
 
         if Event.objects.filter(slug=DEMO_EVENT_SLUG).exists():
             return "exists"
@@ -95,7 +115,7 @@ class Command(BaseCommand):
                 is_published=True,
                 created_by=organizer,
             )
-            EventOrganizer.objects.create(event=event, user=organizer, added_by=organizer)
+            _staff(event, organizer)
             tools = Track.objects.create(event=event, name="Developer tools", order=1,
                                          description="Things that make building things faster.")
             Track.objects.create(event=event, name="Security", order=2,
@@ -113,7 +133,7 @@ class Command(BaseCommand):
                 event=event, prompt="Is this your first hackathon?", kind=QuestionKind.CHECKBOX, order=2,
             )
             team = Team.objects.create(event=event, name="Demo Team", captain=participant)
-            TeamMember.objects.create(team=team, user=participant)
+            _compete(event, team, participant)
             Project.objects.create(
                 team=team, name="Quiet Hours", tagline="Mutes your notifications when you are in flow.",
                 track=tools, last_edited_by=participant,
@@ -133,9 +153,9 @@ class Command(BaseCommand):
         from django.utils import timezone
 
         from core.deadlines import deadline_bypass
-        from events.models import Event, EventOrganizer, Track
+        from events.models import Event, Track
         from projects.models import Project, Status
-        from teams.models import Team, TeamMember
+        from teams.models import Team
 
         if Event.objects.filter(slug=CLOSED_EVENT_SLUG).exists():
             return "exists"
@@ -155,10 +175,10 @@ class Command(BaseCommand):
                 is_published=True,
                 created_by=organizer,
             )
-            EventOrganizer.objects.create(event=event, user=organizer, added_by=organizer)
+            _staff(event, organizer)
             track = Track.objects.create(event=event, name="Open category", order=1)
             team = Team.objects.create(event=event, name="Night Owls", captain=participant)
-            TeamMember.objects.create(team=team, user=participant)
+            _compete(event, team, participant)
             Project.objects.create(
                 team=team, name="Sleep Debt", tagline="Tells you how many hackathons you can afford.",
                 description="## What it does\n\nCounts the hours.", repo_url="https://example.org/sleep-debt",

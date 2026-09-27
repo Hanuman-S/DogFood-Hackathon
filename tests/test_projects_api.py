@@ -42,11 +42,30 @@ def test_participant_starts_a_project_over_the_api(make_event, make_user):
 
 
 @pytest.mark.parametrize("role", [Role.JUDGE, Role.ORGANIZER])
-def test_staff_cannot_start_projects(make_event, make_user, role):
+def test_staff_of_the_event_cannot_start_projects_in_it(make_event, make_user, role):
+    from events.models import EventMembership
+
     event = make_event()
-    response = post(f"/api/events/{event.slug}/projects", {"name": "No"}, bearer(make_user(role=role)))
+    staff = make_user()
+    EventMembership.objects.create(user=staff, event=event, role=role)
+    response = post(f"/api/events/{event.slug}/projects", {"name": "No"}, bearer(staff))
     assert response.status_code == 409
     assert not Project.objects.exists()
+
+
+def test_platform_admins_cannot_start_projects(make_event, make_user):
+    from accounts.roles import ADMIN
+
+    event = make_event()
+    response = post(f"/api/events/{event.slug}/projects", {"name": "No"}, bearer(make_user(role=ADMIN)))
+    assert response.status_code == 409
+    assert not Project.objects.exists()
+
+
+def test_a_judge_elsewhere_may_start_a_project_here(make_event, make_user):
+    event = make_event()
+    response = post(f"/api/events/{event.slug}/projects", {"name": "Yes"}, bearer(make_user(role=Role.JUDGE)))
+    assert response.status_code == 201
 
 
 def test_patch_is_partial_and_validated(make_event, make_team):

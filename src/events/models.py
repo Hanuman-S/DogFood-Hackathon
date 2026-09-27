@@ -1,5 +1,11 @@
 """Events and what an organizer configures on them: tracks, prizes, custom questions, and who
-co-organizes.
+holds which role in them.
+
+**Roles are per event** (`EventMembership`). A global "is a judge" column would be wrong: the
+same person judges one hackathon and competes in the next, and an organizer's powers stop at the
+edge of their own event. The conflict-of-interest rule -- nobody is both a competitor and staff
+in one event -- is enforced by an exclusion constraint on the membership table (see
+events/migrations/0002_membership_conflict_of_interest.py), not only by the service layer.
 
 All times are stored and shown in UTC. The event's *phase* (upcoming / open / judging /
 finished) is never stored; it is computed from the dates, so it cannot drift out of sync with
@@ -8,8 +14,10 @@ them. The only stored state is `is_published`, which an organizer sets deliberat
 
 from django.conf import settings
 from django.db import models
-from django.db.models import F, Q
+from django.db.models import Case, F, Q, Value, When
 from django.utils import timezone
+
+from accounts.roles import COMPETITOR_ROLES, Role
 
 
 class Phase(models.TextChoices):
@@ -25,15 +33,17 @@ class EventQuerySet(models.QuerySet):
 
     def managed_by(self, user):
         """Events `user` may configure: every event for an admin, their own for an organizer."""
-        from accounts.roles import Role
-
         if not user.is_authenticated:
             return self.none()
-        if user.role == Role.ADMIN:
+        if user.is_platform_admin:
             return self.all()
-        if user.role == Role.ORGANIZER:
-            return self.filter(organizer_links__user=user).distinct()
-        return self.none()
+        return self.with_role(user, Role.ORGANIZER)
+
+    def with_role(self, user, role):
+        """Events in which `user` holds `role`."""
+        if not user.is_authenticated:
+            return self.none()
+        return self.filter(memberships__user=user, memberships__role=role).distinct()
 
 
 class Event(models.Model):
@@ -56,10 +66,6 @@ class Event(models.Model):
     max_team_size = models.PositiveSmallIntegerField(default=4)
     is_published = models.BooleanField(default=False)
 
-    organizers = models.ManyToManyField(
-        settings.AUTH_USER_MODEL, through="EventOrganizer", through_fields=("event", "user"),
-        related_name="organized_events",
-    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -138,22 +144,74 @@ class Event(models.Model):
         return self.questions.filter(is_hidden=False)
 
 
-class EventOrganizer(models.Model):
-    """Who may configure an event. The creator is added automatically."""
+    def members_with(self, role):
+        """The users holding `role` in this event."""
+        from accounts.models import User
 
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="organizer_links")
+        return User.objects.filter(event_memberships__event=self, event_memberships__role=role)
+
+
+SIDE_COMPETITOR = "competitor"
+SIDE_STAFF = "staff"
+
+
+class EventMembership(models.Model):
+    """A user's role in one event. One person may hold several roles, within limits.
+
+    Allowed: judge + organizer (a small hackathon's organizer often judges too).
+    Forbidden: participant + judge, or participant + organizer -- the conflict-of-interest rule.
+
+    A participant membership exists exactly while the person is on a team in the event: forming
+    or joining a team registers you, leaving it unregisters you (teams/services.py).
+    """
+
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organizer_links"
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_memberships"
+    )
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="memberships")
+    role = models.CharField(max_length=20, choices=Role.choices)
+    # Which side of the conflict-of-interest line this role sits on. A stored generated column
+    # (computed by the database, not by application code) so that the exclusion constraint can
+    # compare sides without trusting anything Python wrote.
+    side = models.GeneratedField(
+        expression=Case(
+            When(role__in=[r.value for r in COMPETITOR_ROLES], then=Value(SIDE_COMPETITOR)),
+            default=Value(SIDE_STAFF),
+        ),
+        output_field=models.CharField(max_length=16),
+        db_persist=True,
     )
     added_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     added_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        ordering = ["added_at"]
+        ordering = ["event", "role", "added_at"]
         constraints = [
-            models.UniqueConstraint(fields=["event", "user"], name="event_organizer_unique"),
+            models.UniqueConstraint(
+                fields=["user", "event", "role"], name="membership_unique_user_event_role"
+            ),
+            models.CheckConstraint(
+                condition=Q(role__in=Role.values), name="membership_role_valid"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} as {self.role} in {self.event.slug}"
+
+
+class JudgeTrack(models.Model):
+    """Which tracks a judge covers. Imported from the fixture now; T2 builds assignments on it."""
+
+    membership = models.ForeignKey(
+        EventMembership, on_delete=models.CASCADE, related_name="judge_tracks"
+    )
+    track = models.ForeignKey("Track", on_delete=models.CASCADE, related_name="judge_tracks")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["membership", "track"], name="judge_track_unique"),
         ]
 
 

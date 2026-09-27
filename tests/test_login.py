@@ -8,7 +8,7 @@ from django.test import Client, override_settings
 from django.utils import timezone
 
 from accounts.models import User, UserSession
-from accounts.roles import Role
+from accounts.roles import ADMIN, Role
 from conftest import PASSWORD
 from core.models import AuditAction, AuditLog
 
@@ -28,7 +28,7 @@ def post_login(client, email, password=PASSWORD, **extra):
         (Role.PARTICIPANT, "/participant/"),
         (Role.JUDGE, "/judge/"),
         (Role.ORGANIZER, "/organizer/"),
-        (Role.ADMIN, "/admin/"),
+        (ADMIN, "/admin/"),
     ],
 )
 def test_login_lands_on_the_role_portal(make_user, role, portal):
@@ -224,14 +224,17 @@ def test_signup_creates_a_logged_in_participant():
     response = signup(client)
     assert response.status_code == 302 and response["Location"] == "/participant/"
     user = User.objects.get(email="new@example.org")
-    assert user.role == Role.PARTICIPANT
+    # A plain account: it becomes a participant of an event by forming or joining a team.
+    assert not user.is_platform_admin and not user.can_create_events
+    assert not user.event_memberships.exists()
     assert client.session["_auth_user_id"] == str(user.pk)
     assert AuditLog.objects.filter(action=AuditAction.SIGNUP, actor=user).exists()
 
 
-def test_signup_cannot_choose_a_role():
-    signup(Client(), role="admin")
-    assert User.objects.get(email="new@example.org").role == Role.PARTICIPANT
+def test_signup_cannot_grant_itself_powers():
+    signup(Client(), role="admin", is_platform_admin="on", can_create_events="on")
+    user = User.objects.get(email="new@example.org")
+    assert not user.is_platform_admin and not user.can_create_events
 
 
 def test_signup_rejects_a_case_twin_of_an_existing_email(make_user):

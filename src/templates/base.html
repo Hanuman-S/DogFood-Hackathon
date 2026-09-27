@@ -17,7 +17,9 @@
       <a href="{% url 'public:gallery' %}"{% if here == 'public:gallery' or here == 'public:project' %} aria-current="page"{% endif %}>gallery</a>
       <a href="{% url 'public:event_list' %}"{% if here == 'public:event_list' or here == 'public:event_detail' %} aria-current="page"{% endif %}>events</a>
       {% if user.is_authenticated %}
-        <a href="{{ portal_url }}"{% if request.path|slice:":8" == portal_url|slice:":8" %} aria-current="page"{% endif %}>{{ role }} portal</a>
+        {% for name, url in portals %}
+        <a href="{{ url }}"{% if request.path|slice:":8" == url|slice:":8" %} aria-current="page"{% endif %}>{{ name }}</a>
+        {% endfor %}
         <a href="{% url 'accounts:account' %}"{% if here == 'accounts:account' %} aria-current="page"{% endif %}>account</a>
         <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button type="submit">logout</button></form>
       {% else %}

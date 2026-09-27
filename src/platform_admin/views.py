@@ -11,18 +11,27 @@ from accounts.guards import portal_required
 from accounts.models import User
 from accounts.roles import Role
 from core.models import AuditLog
+from events.models import EventMembership
 
 
 @never_cache
 @portal_required("admin")
 def home(request, form=None, status=200):
-    counts = dict(User.objects.values_list("role").annotate(n=Count("id")))
+    by_role = dict(
+        EventMembership.objects.values_list("role").annotate(n=Count("user", distinct=True))
+    )
+    counts = [
+        ("accounts", User.objects.count()),
+        ("platform admins", User.objects.filter(is_platform_admin=True).count()),
+        ("may create events", User.objects.filter(can_create_events=True).count()),
+    ] + [(f"{label.lower()}s (in any event)", by_role.get(value, 0)) for value, label in Role.choices]
     return render(
         request,
         "platform_admin/home.html",
         {
-            "role_counts": [(label, counts.get(value, 0)) for value, label in Role.choices],
-            "users": User.objects.order_by("role", "email")[:50],
+            "role_counts": counts,
+            "users": User.objects.order_by("-is_platform_admin", "-can_create_events", "email")
+            .prefetch_related("event_memberships__event")[:50],
             "audit": AuditLog.objects.select_related("actor")[:25],
             "form": form or AccountCreateForm(),
         },
@@ -41,8 +50,12 @@ def account_create(request):
         request,
         name=form.cleaned_data["name"],
         email=form.cleaned_data["email"],
-        role=form.cleaned_data["role"],
         password=form.cleaned_data["password1"],
+        can_create_events=form.cleaned_data["can_create_events"],
+        is_platform_admin=form.cleaned_data["is_platform_admin"],
     )
-    messages.success(request, f"{user.get_role_display().lower()} account created for {user.email}.")
+    messages.success(
+        request,
+        f"account created for {user.email}. make them a judge or organizer from an event's control page.",
+    )
     return redirect("platform_admin:home")

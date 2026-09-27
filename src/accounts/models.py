@@ -2,7 +2,8 @@
 
 Three tables, three jobs:
 
-* `User`        -- identity and role. Email is the login name.
+* `User`        -- identity, plus the two platform-wide flags. Email is the login name.
+                   Roles are per event and live in `events.EventMembership`.
 * `ApiToken`    -- long-lived Bearer tokens for scripts and the acceptance checker. Only a
                    SHA-256 digest is stored; the raw token is shown once, at creation.
 * `UserSession` -- one row per logged-in browser, pointing at Django's own session row, so a
@@ -17,7 +18,6 @@ from django.db import models
 from django.db.models.functions import Lower
 from django.utils import timezone
 
-from accounts.roles import Role
 
 
 def normalize_email(email):
@@ -31,23 +31,36 @@ class UserManager(BaseUserManager):
     def get_by_natural_key(self, email):
         return self.get(email=normalize_email(email))
 
-    def create_user(self, email, password=None, *, name="", role=Role.PARTICIPANT):
+    def create_user(
+        self, email, password=None, *, name="", is_platform_admin=False, can_create_events=False
+    ):
         if not email:
             raise ValueError("An email address is required.")
-        user = self.model(email=normalize_email(email), name=name.strip(), role=role)
+        user = self.model(
+            email=normalize_email(email), name=name.strip(),
+            is_platform_admin=is_platform_admin, can_create_events=can_create_events,
+        )
         user.set_password(password)  # None -> unusable password
         user.save(using=self._db)
         return user
 
     def create_superuser(self, email, password=None, name="Admin", **_):
-        """Used by `manage.py createsuperuser`: an admin is the top role."""
-        return self.create_user(email, password, name=name, role=Role.ADMIN)
+        """Used by `manage.py createsuperuser`: a platform admin."""
+        return self.create_user(
+            email, password, name=name, is_platform_admin=True, can_create_events=True
+        )
 
 
 class User(AbstractBaseUser):
     email = models.EmailField(max_length=254, unique=True)
     name = models.CharField(max_length=120)
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.PARTICIPANT)
+    # The only platform-wide powers. Everything else is a role in one event (EventMembership).
+    is_platform_admin = models.BooleanField(
+        default=False, help_text="Runs the platform: every event, every account, the audit log."
+    )
+    can_create_events = models.BooleanField(
+        default=False, help_text="May start new events, and becomes the organizer of each."
+    )
     is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
 
@@ -62,9 +75,6 @@ class User(AbstractBaseUser):
             # Defence in depth: the app lower-cases emails, the database refuses case twins
             # even if some future code path forgets to.
             models.UniqueConstraint(Lower("email"), name="user_email_ci_unique"),
-            models.CheckConstraint(
-                condition=models.Q(role__in=Role.values), name="user_role_valid"
-            ),
         ]
 
     def __str__(self):
@@ -74,13 +84,13 @@ class User(AbstractBaseUser):
         self.email = normalize_email(self.email)
         super().save(*args, **kwargs)
 
-    # --- what Django's admin site needs, derived from the role -----------------------------
-    # There is no separate staff flag or permission table to drift out of sync with the role:
-    # admins may use the database admin, nobody else may.
+    # --- what Django's admin site needs, derived from the admin flag --------------------------
+    # There is no separate staff flag or permission table to drift out of sync with it:
+    # platform admins may use the database admin, nobody else may.
 
     @property
     def is_staff(self):
-        return self.is_active and self.role == Role.ADMIN
+        return self.is_active and self.is_platform_admin
 
     @property
     def is_superuser(self):

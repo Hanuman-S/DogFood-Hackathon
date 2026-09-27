@@ -99,8 +99,8 @@ def uninstall(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("projects", "0001_initial"),
-        ("teams", "0002_teamextension"),
-        ("events", "0003_event_original_submissions_close_at"),
+        ("teams", "0001_initial"),
+        ("events", "0001_initial"),
     ]
 
     operations = [migrations.RunPython(install, uninstall)]

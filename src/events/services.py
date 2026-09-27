@@ -1,17 +1,17 @@
-"""Every write to an event, its tracks, prizes, questions and organizers.
+"""Every write to an event, its tracks, prizes, questions, and who holds which role in it.
 
-Permission rule: an event is managed by the organizers linked to it (the creator is linked
-automatically) and by any admin. `can_manage` is the only definition of that rule.
+Permission rule: an event is managed by its organizers (the creator becomes one automatically)
+and by any platform admin. `can_manage` is the only definition of that rule.
 """
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import Http404
 
 from accounts.models import User
-from accounts.roles import Role
+from accounts.roles import Role, forget_cached_roles, is_organizer_of, roles_in
 from core import audit
 from core.models import AuditAction
-from events.models import Event, EventOrganizer
+from events.models import Event, EventMembership, JudgeTrack
 
 
 class EventRuleError(Exception):
@@ -19,11 +19,7 @@ class EventRuleError(Exception):
 
 
 def can_manage(user, event):
-    if not user.is_authenticated:
-        return False
-    if user.role == Role.ADMIN:
-        return True
-    return user.role == Role.ORGANIZER and event.organizer_links.filter(user=user).exists()
+    return is_organizer_of(user, event)
 
 
 def get_managed_event(user, slug):
@@ -48,7 +44,10 @@ def create_event(request, form):
         event = form.save(commit=False)
         event.created_by = request.user
         event.save()
-        EventOrganizer.objects.create(event=event, user=request.user, added_by=request.user)
+        EventMembership.objects.create(
+            event=event, user=request.user, role=Role.ORGANIZER, added_by=request.user
+        )
+    forget_cached_roles(request.user)
     audit.record(AuditAction.EVENT_CREATED, request=request, subject=event.slug)
     return event
 
@@ -127,33 +126,79 @@ def question_kind_locked(question):
     return question.pk is not None and question.answers.exists()
 
 
-# --- co-organizers ----------------------------------------------------------------------
+# --- staff: co-organizers and judges ---------------------------------------------------------
 
 
-def add_organizer(request, event, email):
+def _staff_candidate(event, email, role):
+    """The account to make `role` in `event`, or a sentence saying why not."""
     user = User.objects.filter(email=email.strip().lower()).first()
     if user is None:
         raise EventRuleError(
-            "No account has that email. An admin can create an organizer account first."
+            "No account has that email. They can sign up, or an admin can create the account."
         )
-    if user.role not in (Role.ORGANIZER, Role.ADMIN):
-        raise EventRuleError(f"{user.email} is a {user.role}, not an organizer.")
-    if user.role == Role.ADMIN:
-        raise EventRuleError("Admins can already manage every event.")
-    _, created = EventOrganizer.objects.get_or_create(
-        event=event, user=user, defaults={"added_by": request.user}
-    )
-    if not created:
-        raise EventRuleError(f"{user.email} already organizes this event.")
+    if user.is_platform_admin:
+        raise EventRuleError("Platform admins can already manage every event.")
+    held = roles_in(user, event)
+    if role in held:
+        raise EventRuleError(f"{user.email} is already a {role} in this event.")
+    if Role.PARTICIPANT in held:
+        raise EventRuleError(
+            f"{user.email} is competing in this event, so they cannot also be a {role} in it "
+            "(conflict of interest)."
+        )
+    return user
+
+
+def _grant(request, event, user, role):
+    try:
+        with transaction.atomic():
+            membership = EventMembership.objects.create(
+                event=event, user=user, role=role, added_by=request.user
+            )
+    except IntegrityError as error:
+        # The exclusion constraint (or a double-click) beat the check above.
+        raise EventRuleError(
+            f"{user.email} cannot be a {role} in this event (conflict of interest)."
+        ) from error
+    forget_cached_roles(user)
+    return membership
+
+
+def add_organizer(request, event, email):
+    user = _staff_candidate(event, email, Role.ORGANIZER)
+    _grant(request, event, user, Role.ORGANIZER)
     audit.record(AuditAction.ORGANIZER_ADDED, request=request, subject=event.slug, email=user.email)
 
 
-def remove_organizer(request, event, link):
-    if event.organizer_links.count() <= 1:
+def remove_organizer(request, event, membership):
+    if event.memberships.filter(role=Role.ORGANIZER).count() <= 1:
         raise EventRuleError("An event needs at least one organizer.")
-    email = link.user.email
-    link.delete()
+    email = membership.user.email
+    membership.delete()
     audit.record(AuditAction.ORGANIZER_REMOVED, request=request, subject=event.slug, email=email)
+
+
+def add_judge(request, event, email, tracks=()):
+    """Make an account a judge of this event, optionally for some of its tracks."""
+    user = _staff_candidate(event, email, Role.JUDGE)
+    with transaction.atomic():
+        membership = _grant(request, event, user, Role.JUDGE)
+        for track in tracks:
+            if track.event_id != event.pk:
+                raise EventRuleError("That track is not in this event.")
+            JudgeTrack.objects.create(membership=membership, track=track)
+    audit.record(
+        AuditAction.JUDGE_ADDED, request=request, subject=event.slug, email=user.email,
+        tracks=[t.name for t in tracks],
+    )
+    return membership
+
+
+def remove_judge(request, event, membership):
+    """Take the judge role away. Their imported scores go with it (Score -> membership)."""
+    email = membership.user.email
+    membership.delete()
+    audit.record(AuditAction.JUDGE_REMOVED, request=request, subject=event.slug, email=email)
 
 
 # --- deadlines and extensions ---------------------------------------------------------------

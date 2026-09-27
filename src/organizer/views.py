@@ -1,7 +1,8 @@
 """The organizer portal: create events and configure them.
 
-Every view is gated twice: `portal_required("organizer")` lets in organizers and admins, then
-`get_managed_event` narrows that to organizers *of this event* (404 for anyone else).
+Every view is gated twice: `portal_required("organizer")` lets in anyone who organizes some
+event (or may create one), then `get_managed_event` narrows that to the organizers *of this
+event* and platform admins (404 for anyone else, so slugs cannot be probed).
 """
 
 from django.contrib import messages
@@ -10,13 +11,14 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
-from accounts.guards import portal_required
+from accounts.guards import portal_required, refuse
 from events import services
 from core import deadlines
 from imports.models import FixtureRef
 from projects.gallery import possible_duplicates
+from accounts.roles import Role
 from events.forms import (
-    AddOrganizerForm, EventForm, ExtendDeadlineForm, PrizeForm, QuestionForm, TeamExtensionForm, TrackForm,
+    AddJudgeForm, AddOrganizerForm, EventForm, ExtendDeadlineForm, PrizeForm, QuestionForm, TeamExtensionForm, TrackForm,
 )
 from events.models import CustomQuestion, Event, Prize, Track
 from projects.models import Project, Status
@@ -46,6 +48,9 @@ def home(request):
 @never_cache
 @portal_required("organizer")
 def event_create(request):
+    # Organizing one event (as a co-organizer) does not mean you may start new ones.
+    if not (request.user.is_platform_admin or request.user.can_create_events):
+        return refuse(request, "event_create", "this account may not create events; ask a platform admin.")
     form = EventForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         event = services.create_event(request, form)
@@ -65,6 +70,7 @@ def _control(request, event, status=200, **forms):
         "prize_form": forms.get("prize_form") or PrizeForm(event=event),
         "question_form": forms.get("question_form") or QuestionForm(event=event),
         "organizer_form": forms.get("organizer_form") or AddOrganizerForm(),
+        "judge_form": forms.get("judge_form") or AddJudgeForm(event=event),
         "extend_form": forms.get("extend_form") or ExtendDeadlineForm(),
         "extension_form": forms.get("extension_form") or TeamExtensionForm(event=event),
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),
@@ -76,7 +82,9 @@ def _control(request, event, status=200, **forms):
         "tracks": event.tracks.annotate(n=Count("projects")),
         "prizes": event.prizes.select_related("track"),
         "questions": event.questions.annotate(n=Count("answers")),
-        "organizer_links": event.organizer_links.select_related("user"),
+        "organizer_links": event.memberships.filter(role=Role.ORGANIZER).select_related("user"),
+        "judges": event.memberships.filter(role=Role.JUDGE).select_related("user")
+        .prefetch_related("judge_tracks__track"),
         "teams": Team.objects.filter(event=event).annotate(n=Count("members")).select_related("project"),
         "projects": Project.objects.filter(event=event).select_related("team", "track"),
     }
@@ -198,7 +206,7 @@ def organizer_add(request, slug):
 @portal_required("organizer")
 def organizer_remove(request, slug, link_id):
     event = services.get_managed_event(request.user, slug)
-    link = get_object_or_404(event.organizer_links, pk=link_id)
+    link = get_object_or_404(event.memberships, pk=link_id, role=Role.ORGANIZER)
     try:
         services.remove_organizer(request, event, link)
         messages.success(request, "co-organizer removed.")
@@ -207,6 +215,35 @@ def organizer_remove(request, slug, link_id):
     if link.user_id == request.user.pk and not services.can_manage(request.user, event):
         return redirect("organizer:home")
     return redirect(f"/organizer/events/{event.slug}/#organizers")
+
+
+# --- judges -----------------------------------------------------------------------------------
+
+
+@require_POST
+@portal_required("organizer")
+def judge_add(request, slug):
+    event = services.get_managed_event(request.user, slug)
+    form = AddJudgeForm(request.POST, event=event)
+    if not form.is_valid():
+        return _control(request, event, status=400, judge_form=form)
+    try:
+        services.add_judge(request, event, form.cleaned_data["email"], form.cleaned_data["tracks"])
+        messages.success(request, "judge added.")
+    except services.EventRuleError as error:
+        form.add_error("email", str(error))
+        return _control(request, event, status=400, judge_form=form)
+    return redirect(f"/organizer/events/{event.slug}/#judges")
+
+
+@require_POST
+@portal_required("organizer")
+def judge_remove(request, slug, membership_id):
+    event = services.get_managed_event(request.user, slug)
+    membership = get_object_or_404(event.memberships, pk=membership_id, role=Role.JUDGE)
+    services.remove_judge(request, event, membership)
+    messages.success(request, "judge removed.")
+    return redirect(f"/organizer/events/{event.slug}/#judges")
 
 
 # --- deadline ---------------------------------------------------------------------------------

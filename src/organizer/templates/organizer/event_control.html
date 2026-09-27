@@ -254,6 +254,43 @@
   </div>
 
 
+  {# --- judges ------------------------------------------------------------ #}
+  <section class="frame" id="judges">
+    <header class="frame__bar"><h2 class="frame__title">judges</h2><span class="frame__meta">{{ judges|length }} &middot; a judge here cannot compete here</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>judge</th><th>tracks</th><th class="num"></th></tr></thead>
+        <tbody>
+        {% for j in judges %}
+          <tr>
+            <td>{{ j.user.name }}<br><span class="faint">{{ j.user.email }}</span></td>
+            <td class="dim">{% for jt in j.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="faint">every track</span>{% endfor %}</td>
+            <td class="num">
+              <form class="inline-form" method="post" action="{% url 'organizer:judge_remove' event.slug j.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+            </td>
+          </tr>
+        {% empty %}<tr><td colspan="3" class="faint">no judges yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="frame__body">
+      <form class="form" method="post" action="{% url 'organizer:judge_add' event.slug %}" novalidate>
+        {% csrf_token %}
+        {% include "_form_errors.html" with form=judge_form %}
+        {% include "_field.html" with field=judge_form.email cmd="judge add --email" %}
+        {% if judge_form.tracks.field.queryset %}
+        <div class="field{% if judge_form.tracks.errors %} field--invalid{% endif %}" role="group" aria-labelledby="judge-tracks-label">
+          <p class="field__label" id="judge-tracks-label"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">--tracks</span></p>
+          {% for option in judge_form.tracks %}<label class="check" for="{{ option.id_for_label }}">{{ option.tag }} {{ option.choice_label }}</label>{% endfor %}
+          <p class="field__help">{{ judge_form.tracks.help_text }}</p>
+          {% for error in judge_form.tracks.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
+        </div>
+        {% endif %}
+        <div class="actions"><button class="btn" type="submit">add judge</button></div>
+      </form>
+    </div>
+  </section>
+
   {% if duplicates or import_duplicates %}
   <section class="frame" id="duplicates">
     <header class="frame__bar"><h2 class="frame__title">possible duplicates</h2><span class="frame__meta">review by hand</span></header>

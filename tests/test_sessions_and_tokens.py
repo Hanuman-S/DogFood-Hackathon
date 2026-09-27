@@ -4,7 +4,7 @@ import pytest
 from django.test import Client
 
 from accounts.models import ApiToken, UserSession, digest_token
-from accounts.roles import Role
+from accounts.roles import ADMIN, Role
 from conftest import PASSWORD
 from core.models import AuditAction, AuditLog
 
@@ -122,8 +122,10 @@ def test_bearer_token_authenticates_api_calls(make_user):
     response = Client().get("/api/me", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert response.status_code == 200
     assert response.json() == {
-        "id": user.pk, "email": user.email, "name": user.name, "role": "judge",
-        "portal": "/judge/", "auth": "bearer",
+        "id": user.pk, "email": user.email, "name": user.name,
+        "is_platform_admin": False, "can_create_events": False,
+        "memberships": [{"event": "test-judging-pool", "role": "judge"}],
+        "portals": ["/judge/", "/participant/"], "portal": "/judge/", "auth": "bearer",
     }
     assert ApiToken.objects.get(user=user).last_used_at is not None
 
@@ -181,7 +183,8 @@ def test_bearer_requests_skip_csrf_but_sessions_do_not(make_user):
 
 
 def test_bearer_ignores_a_session_cookie_for_someone_else(login_client, make_user):
-    client = login_client(Role.ADMIN)
+    client = login_client(ADMIN)
     _, raw = ApiToken.issue(make_user(role=Role.PARTICIPANT), "t")
     response = client.get("/api/me", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert response.json()["role"] == "participant"
+    body = response.json()
+    assert body["is_platform_admin"] is False and body["portal"] == "/participant/"

@@ -53,10 +53,14 @@ def test_team_names_are_unique_per_event_in_any_case(make_event, make_team, make
 
 
 @pytest.mark.parametrize("role", [Role.JUDGE, Role.ORGANIZER])
-def test_staff_cannot_be_on_teams(make_event, make_team, make_user, client_for, role):
+def test_staff_of_the_event_cannot_be_on_its_teams(make_event, make_team, make_user, client_for, role):
+    from events.models import EventMembership
+
     event = make_event()
     team = make_team(event)
-    staff = client_for(make_user(role=role))
+    person = make_user()
+    EventMembership.objects.create(user=person, event=event, role=role)
+    staff = client_for(person)
     assert staff.post(f"/join/{team.invite_token}").status_code == 302
     assert not TeamMember.objects.filter(user=staff.user).exists()
     assert AuditLog.objects.filter(action=AuditAction.TEAM_JOIN_REFUSED).exists()

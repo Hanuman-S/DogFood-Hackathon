@@ -3,7 +3,7 @@
 {% block portal_title %}admin root{% endblock %}
 {% block portal_body %}
 <table class="kv">
-  {% for label, n in role_counts %}<tr><th scope="row">{{ label }}s</th><td>{{ n }}</td></tr>{% endfor %}
+  {% for label, n in role_counts %}<tr><th scope="row">{{ label }}</th><td>{{ n }}</td></tr>{% endfor %}
 </table>
 <hr class="rule">
 <p class="dim">raw tables: <a href="{% url 'database_admin:index' %}">/admin/db/</a> <span class="faint">(the audit log there is read-only, even for you)</span></p>
@@ -12,16 +12,17 @@
 {% block portal_extra %}
 <div class="grid-2">
   <section class="frame">
-    <header class="frame__bar"><h2 class="frame__title">create account</h2><span class="frame__meta">any role</span></header>
+    <header class="frame__bar"><h2 class="frame__title">create account</h2><span class="frame__meta">event roles are granted per event</span></header>
     <div class="frame__body">
       {% include "_form_errors.html" %}
       <form class="form" method="post" action="{% url 'platform_admin:account_create' %}" novalidate>
         {% csrf_token %}
         {% include "_field.html" with field=form.name cmd="useradd --name" %}
         {% include "_field.html" with field=form.email cmd="useradd --email" %}
-        {% include "_field.html" with field=form.role cmd="useradd --role" %}
         {% include "_field.html" with field=form.password1 cmd="passwd" %}
         {% include "_field.html" with field=form.password2 cmd="passwd --confirm" %}
+        {% include "_field.html" with field=form.can_create_events cmd="--can-create-events" %}
+        {% include "_field.html" with field=form.is_platform_admin cmd="--platform-admin" %}
         <div class="actions"><button class="btn" type="submit">create</button></div>
       </form>
     </div>
@@ -31,8 +32,8 @@
     <header class="frame__bar"><h2 class="frame__title">accounts</h2><span class="frame__meta">first 50</span></header>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th>email</th><th>role</th></tr></thead>
-        <tbody>{% for u in users %}<tr><td>{{ u.email }}</td><td class="dim">{{ u.role }}</td></tr>{% endfor %}</tbody>
+        <thead><tr><th>email</th><th>powers and roles</th></tr></thead>
+        <tbody>{% for u in users %}<tr><td>{{ u.email }}</td><td class="dim">{% if u.is_platform_admin %}<span class="badge badge--on">admin</span> {% elif u.can_create_events %}<span class="badge">creates events</span> {% endif %}{% for m in u.event_memberships.all %}{{ m.role }}@{{ m.event.slug }}{% if not forloop.last %}, {% endif %}{% empty %}{% if not u.is_platform_admin %}<span class="faint">no event roles</span>{% endif %}{% endfor %}</td></tr>{% endfor %}</tbody>
       </table>
     </div>
   </section>

@@ -12,7 +12,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from accounts.roles import Role
+from accounts.roles import can_compete_in
 from core import audit
 from core.deadlines import check_submission_window
 from core.models import AuditAction
@@ -80,8 +80,9 @@ def start_project(request, event, name):
     check_submission_window(
         request, event, team_services.team_of(user, event), action="start a project", needs_open=True
     )
-    if user.role != Role.PARTICIPANT:
-        raise ProjectRuleError(f"Only participants submit projects; this account is a {user.role}.")
+    problem = can_compete_in(user, event)
+    if problem:
+        raise ProjectRuleError(problem)
     if not event.is_published:
         raise ProjectRuleError("This event is not open to participants yet.")
     name = (name or "").strip()[:120]

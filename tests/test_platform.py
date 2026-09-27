@@ -10,7 +10,8 @@ from django.core.management.base import CommandError
 from django.test import Client, override_settings
 
 from accounts.models import ApiToken, User
-from accounts.roles import Role
+from events.models import EventMembership
+from accounts.roles import ADMIN, Role
 
 pytestmark = pytest.mark.django_db
 
@@ -29,8 +30,11 @@ DEMO_TOKENS = {
 def test_seed_demo_creates_one_account_per_role_and_working_tokens():
     out = StringIO()
     call_command("seed_demo", stdout=out)
-    assert set(User.objects.values_list("role", flat=True)) == set(Role.values)
-    assert User.objects.filter(role=Role.JUDGE).count() == 2
+    assert User.objects.get(email="admin@dogfood.local").is_platform_admin
+    assert User.objects.get(email="organizer@dogfood.local").can_create_events
+    # Every event role is held somewhere, per event, by the demo accounts.
+    assert set(EventMembership.objects.values_list("role", flat=True)) == set(Role.values)
+    assert EventMembership.objects.filter(role=Role.JUDGE).values("user").distinct().count() == 2
     for key, raw in DEMO_TOKENS.items():
         response = Client().get("/api/me", HTTP_AUTHORIZATION=f"Bearer {raw}")
         assert response.status_code == 200, key
@@ -59,10 +63,11 @@ def test_seed_demo_refuses_outside_demo_mode():
 
 def test_create_account_command():
     call_command(
-        "create_account", email="Boss@Example.org", name="Boss", role="admin",
+        "create_account", email="Boss@Example.org", name="Boss", admin=True,
         password="a-long-enough-pass", stdout=StringIO(),
     )
-    assert User.objects.get(email="boss@example.org").role == Role.ADMIN
+    boss = User.objects.get(email="boss@example.org")
+    assert boss.is_platform_admin and boss.can_create_events
 
 
 def test_healthz():
@@ -77,11 +82,12 @@ def test_security_headers():
     assert response["X-Content-Type-Options"] == "nosniff"
 
 
-def test_database_rejects_an_unknown_role():
+def test_database_rejects_an_unknown_role(make_event, make_user):
     from django.db import IntegrityError, transaction
 
+    event, user = make_event(), make_user()
     with pytest.raises(IntegrityError), transaction.atomic():
-        User.objects.create_user("x@example.org", "a-long-enough-pass", name="X", role="superhero")
+        EventMembership.objects.create(user=user, event=event, role="superhero")
 
 
 def test_templates_and_static_reference_no_external_host():

@@ -2,10 +2,11 @@
 
 from django.db import IntegrityError, transaction
 
-from accounts.roles import Role
+from accounts.roles import Role, can_compete_in, forget_cached_roles
 from core import audit
 from core.deadlines import check_submission_window
 from core.models import AuditAction
+from events.models import EventMembership
 from teams.models import Team, TeamMember, new_invite_token
 
 
@@ -25,11 +26,26 @@ def is_member(user, team):
     return user.is_authenticated and team.members.filter(user=user).exists()
 
 
-def _require_participant(user):
-    # The one place the "only participants compete" rule lives. With one role per account this
-    # makes a conflict of interest impossible: staff can never be on a team.
-    if user.role != Role.PARTICIPANT:
-        raise TeamRuleError(f"Only participants can be on a team; this account is a {user.role}.")
+def _require_can_compete(user, event):
+    # The service-layer half of the conflict-of-interest rule: nobody who is staff in this event
+    # (judge or organizer), and no platform admin, may be on one of its teams. The exclusion
+    # constraint on events_eventmembership is the database half.
+    problem = can_compete_in(user, event)
+    if problem:
+        raise TeamRuleError(problem)
+
+
+def _register(user, event):
+    """Joining or creating a team is what registers a participant in an event (design T5)."""
+    EventMembership.objects.get_or_create(user=user, event=event, role=Role.PARTICIPANT)
+    forget_cached_roles(user)
+
+
+def _unregister(user, event):
+    """Off every team in the event -> no longer a participant in it."""
+    if not TeamMember.objects.filter(event=event, user=user).exists():
+        EventMembership.objects.filter(user=user, event=event, role=Role.PARTICIPANT).delete()
+        forget_cached_roles(user)
 
 
 def _require_published(event):
@@ -50,7 +66,7 @@ def _unique_name(event, wanted):
 def create_team(request, event, name, *, solo=False):
     user = request.user
     check_submission_window(request, event, None, action="create a team")
-    _require_participant(user)
+    _require_can_compete(user, event)
     _require_published(event)
     if team_of(user, event):
         raise TeamRuleError("You are already on a team in this event.")
@@ -65,7 +81,8 @@ def create_team(request, event, name, *, solo=False):
                 event=event, name=_unique_name(event, name) if solo else name, captain=user
             )
             TeamMember.objects.create(team=team, user=user)
-    except IntegrityError as error:  # a double-click raced us past the checks above
+            _register(user, event)
+    except IntegrityError as error:  # a double-click, or the exclusion constraint
         raise TeamRuleError("You are already on a team in this event.") from error
     audit.record(AuditAction.TEAM_CREATED, request=request, subject=team.name, event=event.slug, solo=solo)
     return team
@@ -79,8 +96,9 @@ def solo_team(request, event):
 def join_problem(user, team):
     """Why `user` cannot join `team` right now, as a sentence -- or "" if they can."""
     event = team.event
-    if user.role != Role.PARTICIPANT:
-        return f"Only participants can join teams; this account is a {user.role}."
+    problem = can_compete_in(user, event)
+    if problem:
+        return problem
     if not event.is_published:
         return "This event is not open to participants yet."
     current = team_of(user, event)
@@ -108,6 +126,7 @@ def join_team(request, token):
             if problem:
                 raise TeamRuleError(problem)
             TeamMember.objects.create(team=team, user=user)
+            _register(user, team.event)
     except TeamRuleError as error:
         audit.record(AuditAction.TEAM_JOIN_REFUSED, request=request, subject=team.name, reason=str(error))
         raise
@@ -172,7 +191,9 @@ def remove_member(request, team, member):
     if member.user_id == team.captain_id:
         raise TeamRuleError("The captain cannot remove themselves. Hand over captaincy, then leave.")
     email = member.user.email
-    member.delete()
+    with transaction.atomic():
+        member.delete()
+        _unregister(member.user, team.event)
     audit.record(AuditAction.TEAM_MEMBER_REMOVED, request=request, subject=team.name, email=email)
 
 
@@ -197,11 +218,14 @@ def leave_team(request, team):
                 "You are the last member and the project is submitted. Withdraw it to draft first "
                 "if you really want to delete the team."
             )
-        name = team.name
+        name, event = team.name, team.event
         with transaction.atomic():
             team.delete()  # cascades to the membership and any draft project
+            _unregister(user, event)
         audit.record(AuditAction.TEAM_DISBANDED, request=request, subject=name)
         return None
-    membership.delete()
+    with transaction.atomic():
+        membership.delete()
+        _unregister(user, team.event)
     audit.record(AuditAction.TEAM_LEFT, request=request, subject=team.name)
     return team

@@ -17,6 +17,7 @@ class FixtureRef(models.Model):
         USER = "user"
         TEAM = "team"
         PROJECT = "project"
+        SCORE = "score"
 
     source = models.CharField(max_length=60, default="dogfood-fixtures")
     kind = models.CharField(max_length=10, choices=Kind.choices)

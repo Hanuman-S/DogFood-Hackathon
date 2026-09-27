@@ -2,16 +2,56 @@ import pytest
 from django.test import Client
 
 from accounts.models import User
-from accounts.roles import Role
+from accounts.roles import ADMIN, Role
 
 PASSWORD = "correct-horse-battery"
 
 
+def _staff_pool_event():
+    """An unpublished event that exists only to give test judges a judge role somewhere.
+
+    Roles are per event, so "a judge account" means "an account that judges some event".
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from events.models import Event
+
+    now = timezone.now()
+    event, _ = Event.objects.get_or_create(
+        slug="test-judging-pool",
+        defaults=dict(
+            name="Judging pool", starts_at=now - timedelta(days=1),
+            submissions_open_at=now - timedelta(days=1), submissions_close_at=now + timedelta(days=2),
+            judging_ends_at=now + timedelta(days=5),
+        ),
+    )
+    return event
+
+
 @pytest.fixture
 def make_user(db):
+    """An account shaped like the given role.
+
+    participant -> a plain account (it becomes a participant by joining a team)
+    judge       -> a judge of a throwaway "judging pool" event
+    organizer   -> may create events (the organizer of an event is added by make_event)
+    admin       -> a platform admin
+    """
+
     def make(role=Role.PARTICIPANT, email=None, password=PASSWORD, name="Test User"):
+        from events.models import EventMembership
+
         email = email or f"{role}-{User.objects.count() + 1}@example.org"
-        return User.objects.create_user(email, password, name=name, role=role)
+        user = User.objects.create_user(
+            email, password, name=name,
+            is_platform_admin=role == ADMIN,
+            can_create_events=role in (ADMIN, Role.ORGANIZER),
+        )
+        if role == Role.JUDGE:
+            EventMembership.objects.create(user=user, event=_staff_pool_event(), role=Role.JUDGE)
+        return user
 
     return make
 
@@ -42,7 +82,7 @@ from django.utils import timezone  # noqa: E402
 @pytest.fixture
 def make_event(make_user):
     """A published event whose submission window is open, with one organizer."""
-    from events.models import Event, EventOrganizer
+    from events.models import Event, EventMembership
 
     def make(slug=None, organizer=None, published=True, max_team_size=4, **dates):
         now = timezone.now()
@@ -58,7 +98,7 @@ def make_event(make_user):
             is_published=published,
             created_by=organizer,
         )
-        EventOrganizer.objects.create(event=event, user=organizer, added_by=organizer)
+        EventMembership.objects.create(event=event, user=organizer, role=Role.ORGANIZER, added_by=organizer)
         event.organizer = organizer
         return event
 
@@ -67,14 +107,15 @@ def make_event(make_user):
 
 @pytest.fixture
 def make_team(make_user):
+    from events.models import EventMembership
     from teams.models import Team, TeamMember
 
     def make(event, captain=None, members=(), name=None):
         captain = captain or make_user()
         team = Team.objects.create(event=event, name=name or f"Team {Team.objects.count() + 1}", captain=captain)
-        TeamMember.objects.create(team=team, user=captain)
-        for member in members:
-            TeamMember.objects.create(team=team, user=member)
+        for person in (captain, *members):
+            TeamMember.objects.create(team=team, user=person)
+            EventMembership.objects.get_or_create(user=person, event=event, role=Role.PARTICIPANT)
         return team
 
     return make

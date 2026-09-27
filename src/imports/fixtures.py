@@ -12,8 +12,13 @@ what it did. Rules:
       duplicate of it (both external ids resolve to the same project, so scores for either land
       in one place when judging arrives);
     - a person who is both a judge and a team member -> kept as a judge, left off the team, and
-      reported as a conflict of interest (our schema cannot let staff compete);
-    - a person on two teams in one event -> kept on the first, reported.
+      reported as a conflict of interest (nobody may be staff and compete in one event);
+    - a person on two teams in one event -> kept on the first, reported;
+    - a judge who reviewed both a submission and its duplicate -> the review of the submission
+      that was kept is imported, the other is reported (one review per judge per project).
+* **Roles are per event.** Judges become `EventMembership(judge)` rows with their tracks
+  (`JudgeTrack`); team members become `EventMembership(participant)` rows. Scores hang off the
+  judge's membership, so "this judge, in this event" is one column.
 * **Past the deadline, on purpose.** The fixture event closed long ago, so its rows are written
   inside `deadline_bypass()` -- the same audited door organizer tools use.
 
@@ -31,13 +36,14 @@ from django.db import transaction
 from django.utils.text import slugify
 
 from accounts.models import User, normalize_email
-from accounts.roles import Role
+from accounts.roles import Role, can_compete_in
 from core import audit
 from core.deadlines import deadline_bypass
 from core.models import AuditAction
-from events.models import Event, EventOrganizer, Track
+from events.models import Event, EventMembership, JudgeTrack, Track
 from imports.models import FixtureRef
 from projects.models import Project, Status
+from scoring.models import Criterion, Score, ScoreItem
 from teams.models import Team, TeamMember
 
 SOURCE = "dogfood-fixtures"
@@ -59,7 +65,7 @@ class Report:
         getattr(self, bucket)[kind] = getattr(self, bucket).get(kind, 0) + 1
 
     def lines(self):
-        kinds = ["event", "track", "user", "team", "project"]
+        kinds = ["event", "track", "user", "judge", "team", "project", "criterion", "score"]
         out = ["kind      created  already there"]
         for kind in kinds:
             out.append(f"{kind:<9} {self.created.get(kind, 0):>7}  {self.existing.get(kind, 0):>13}")
@@ -111,9 +117,10 @@ class Importer:
             with transaction.atomic():
                 event = self.import_event()
                 tracks = self.import_tracks(event)
-                self.import_judges()
+                judges = self.import_judges(event, tracks)
                 teams = self.import_teams(event)
                 self.import_projects(event, tracks, teams)
+                self.import_scores(event, judges)
         audit.record(
             AuditAction.FIXTURES_IMPORTED, subject=SOURCE,
             created=self.report.created, duplicates=len(self.report.duplicates),
@@ -153,11 +160,18 @@ class Importer:
             max_team_size=min(20, max(sizes)),
             is_published=True,
         )
-        # In demo mode, let the demo organizer manage it; otherwise only admins can, until an
-        # admin adds an organizer.
-        organizer = User.objects.filter(email="organizer@dogfood.local", role=Role.ORGANIZER).first()
-        if settings.DEMO_MODE and organizer:
-            EventOrganizer.objects.create(event=event, user=organizer, added_by=None)
+        # In demo mode, the demo organizer manages it and the two demo judges judge it (so the
+        # judge_a / judge_b headers in .dogfood.toml name real judges of the fixture event).
+        # Otherwise only admins can manage it until an admin makes someone its organizer.
+        if settings.DEMO_MODE:
+            for email, role in [
+                ("organizer@dogfood.local", Role.ORGANIZER),
+                ("judge.a@dogfood.local", Role.JUDGE),
+                ("judge.b@dogfood.local", Role.JUDGE),
+            ]:
+                user = User.objects.filter(email=email).first()
+                if user:
+                    EventMembership.objects.create(event=event, user=user, role=role)
         self.remember("event", raw["id"], event)
         self.report.count("created", "event")
         return event
@@ -176,20 +190,35 @@ class Importer:
             self.report.count("created", "track")
         return tracks
 
-    def user(self, email, name, role):
+    def user(self, email, name):
         email = normalize_email(email)
         user = User.objects.filter(email=email).first()
         if user:
             self.report.count("existing", "user")
             return user
-        user = User.objects.create_user(email, self.password, name=name, role=role)
+        user = User.objects.create_user(email, self.password, name=name)
         self.remember("user", email, user)
         self.report.count("created", "user")
         return user
 
-    def import_judges(self):
+    def import_judges(self, event, tracks):
+        """Each judge becomes a judge *of this event*, covering their listed tracks.
+
+        Returns {fixture judge id: EventMembership}, rebuilt on every run so scores can find them.
+        """
+        judges = {}
         for raw in self.data["judges"]:
-            self.user(raw["email"], raw.get("name") or raw["email"].split("@")[0], Role.JUDGE)
+            person = self.user(raw["email"], raw.get("name") or raw["email"].split("@")[0])
+            membership, created = EventMembership.objects.get_or_create(
+                user=person, event=event, role=Role.JUDGE
+            )
+            if created:
+                for track_id in raw.get("tracks") or []:
+                    if track_id in tracks:
+                        JudgeTrack.objects.create(membership=membership, track=tracks[track_id])
+            self.report.count("created" if created else "existing", "judge")
+            judges[raw["id"]] = membership
+        return judges
 
     def import_teams(self, event):
         teams = {}
@@ -201,10 +230,10 @@ class Importer:
                 continue
             members = []
             for email in raw.get("members") or []:
-                person = self.user(email, email.split("@")[0], Role.PARTICIPANT)
-                if person.role != Role.PARTICIPANT:
+                person = self.user(email, email.split("@")[0])
+                if can_compete_in(person, event):
                     self.report.conflicts.append(
-                        f"{person.email} is a {person.role} and a member of team {raw['id']}: "
+                        f"{person.email} is staff in this event and a member of team {raw['id']}: "
                         "kept as staff, left off the team (conflict of interest)"
                     )
                     continue
@@ -224,6 +253,7 @@ class Importer:
             team = Team.objects.create(event=event, name=name, captain=members[0])
             for person in members:
                 TeamMember.objects.create(team=team, user=person)
+                EventMembership.objects.get_or_create(user=person, event=event, role=Role.PARTICIPANT)
             self.remember("team", raw["id"], team)
             teams[raw["id"]] = team
             self.report.count("created", "team")
@@ -263,6 +293,60 @@ class Importer:
             )
             self.remember("project", raw["id"], project)
             self.report.count("created", "project")
+
+
+    def import_scores(self, event, judges):
+        """Criteria from the score keys (weight 1: the file gives none), then one Score per review.
+
+        Nothing reads these yet -- they are here so T2 starts from the organizers' real data.
+        """
+        rows = self.data.get("scores") or []
+        keys = []
+        for raw in rows:
+            for key in raw.get("criteria") or {}:
+                if key not in keys:
+                    keys.append(key)
+        criteria = {}
+        for order, key in enumerate(keys, start=1):
+            criterion, created = Criterion.objects.get_or_create(
+                event=event, key=key,
+                defaults={"label": key.replace("_", " ").capitalize(), "weight": 1, "order": order},
+            )
+            self.report.count("created" if created else "existing", "criterion")
+            criteria[key] = criterion
+
+        # Reviews of kept submissions first, so a judge's review of the original always wins
+        # over their review of its duplicate, whatever order the file lists them in.
+        duplicate_ids = set(
+            FixtureRef.objects.filter(source=SOURCE, kind="project").exclude(duplicate_of="")
+            .values_list("external_id", flat=True)
+        )
+        for raw in sorted(rows, key=lambda r: r.get("project") in duplicate_ids):
+            membership = judges.get(raw.get("judge"))
+            ref = self.ref("project", raw.get("project"))
+            if membership is None or ref is None:
+                self.report.conflicts.append(
+                    f"review by {raw.get('judge')} of {raw.get('project')}: unknown judge or project, skipped"
+                )
+                continue
+            external_id = f"{raw['judge']}:{raw['project']}"
+            if self.ref("score", external_id):
+                self.report.count("existing", "score")
+                continue
+            project = Project.objects.get(pk=ref.object_id)
+            if Score.objects.filter(judge=membership, project=project).exists():
+                self.report.duplicates.append(
+                    f"review by {raw['judge']} of {raw['project']} (a duplicate of {ref.duplicate_of}): "
+                    f"that judge already reviewed {ref.duplicate_of}, whose review is kept"
+                )
+                continue
+            score = Score.objects.create(judge=membership, project=project, comment=raw.get("comment") or "")
+            for key, value in (raw.get("criteria") or {}).items():
+                item = ScoreItem(score=score, criterion=criteria[key], value=value)
+                item.full_clean()
+                item.save()
+            self.remember("score", external_id, score)
+            self.report.count("created", "score")
 
 
 def import_file(path=None):

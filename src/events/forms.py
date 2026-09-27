@@ -186,7 +186,19 @@ class QuestionForm(forms.ModelForm):
 
 
 class AddOrganizerForm(forms.Form):
-    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing organizer account"}))
+    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing account"}))
+
+
+class AddJudgeForm(forms.Form):
+    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing account"}))
+    tracks = forms.ModelMultipleChoiceField(
+        queryset=None, required=False, widget=forms.CheckboxSelectMultiple,
+        help_text="leave all unticked to judge every track",
+    )
+
+    def __init__(self, *args, event, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["tracks"].queryset = event.visible_tracks()
 
 
 class ExtendDeadlineForm(forms.Form):

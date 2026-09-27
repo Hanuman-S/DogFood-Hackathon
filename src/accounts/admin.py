@@ -9,11 +9,11 @@ from platform_admin.site import database_admin
 
 @admin.register(User, site=database_admin)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ["email", "name", "role", "is_active", "date_joined", "last_login"]
-    list_filter = ["role", "is_active"]
+    list_display = ["email", "name", "is_platform_admin", "can_create_events", "is_active", "date_joined", "last_login"]
+    list_filter = ["is_platform_admin", "can_create_events", "is_active"]
     search_fields = ["email", "name"]
     ordering = ["email"]
-    fields = ["email", "name", "role", "is_active", "date_joined", "last_login"]
+    fields = ["email", "name", "is_platform_admin", "can_create_events", "is_active", "date_joined", "last_login"]
     readonly_fields = ["date_joined", "last_login"]
 
     def has_add_permission(self, request):

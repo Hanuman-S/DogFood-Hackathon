@@ -1,4 +1,15 @@
 {% extends "_portal.html" %}
 {% block title %}judge portal{% endblock %}
 {% block portal_title %}judge console{% endblock %}
-{% block portal_body %}{% include "_modules.html" %}{% endblock %}
+{% block portal_body %}
+<table class="kv">
+  {% for m in judging %}
+  <tr>
+    <th scope="row">{{ m.event.name }}</th>
+    <td>{% for jt in m.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="dim">every track</span>{% endfor %} <span class="faint">&middot; {{ m.event.get_phase_display|lower }}</span></td>
+  </tr>
+  {% endfor %}
+</table>
+<hr class="rule">
+{% include "_modules.html" %}
+{% endblock %}

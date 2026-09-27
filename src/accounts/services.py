@@ -12,7 +12,6 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import ApiToken, User, UserSession, normalize_email
-from accounts.roles import Role
 from accounts.throttle import is_throttled
 from core import audit
 from core.models import AuditAction
@@ -62,17 +61,23 @@ def logout_user(request):
 
 def register_participant(request, *, name, email, password):
     """Public sign-up. Always creates a participant: nobody can sign themselves up as staff."""
-    user = User.objects.create_user(email, password, name=name, role=Role.PARTICIPANT)
+    user = User.objects.create_user(email, password, name=name)
     audit.record(AuditAction.SIGNUP, request=request, actor=user, subject=user.email)
     login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     return user
 
 
-def create_account(request, *, name, email, role, password):
-    """An admin creating an account for someone else (an organizer or judge, typically)."""
-    user = User.objects.create_user(email, password, name=name, role=role)
+def create_account(request, *, name, email, password, can_create_events=False, is_platform_admin=False):
+    """An admin creating an account for someone else (an organizer or judge, typically).
+
+    Judge and organizer roles are then granted per event, from the event's control page."""
+    user = User.objects.create_user(
+        email, password, name=name,
+        can_create_events=can_create_events or is_platform_admin, is_platform_admin=is_platform_admin,
+    )
     audit.record(
-        AuditAction.ACCOUNT_CREATED, request=request, subject=user.email, role=role
+        AuditAction.ACCOUNT_CREATED, request=request, subject=user.email,
+        can_create_events=user.can_create_events, is_platform_admin=user.is_platform_admin,
     )
     return user
 

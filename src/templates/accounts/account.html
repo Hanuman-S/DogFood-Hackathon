@@ -15,7 +15,8 @@
         <table class="kv">
           <tr><th scope="row">name</th><td>{{ user.name }}</td></tr>
           <tr><th scope="row">email</th><td>{{ user.email }}</td></tr>
-          <tr><th scope="row">role</th><td>{{ user.role }}</td></tr>
+          <tr><th scope="row">powers</th><td>{% if user.is_platform_admin %}platform admin{% elif user.can_create_events %}may create events{% else %}<span class="faint">none platform-wide</span>{% endif %}</td></tr>
+          <tr><th scope="row">event roles</th><td>{% for m in user.event_memberships.all %}{{ m.role }} <span class="faint">in</span> {{ m.event.name }}{% if not forloop.last %}<br>{% endif %}{% empty %}<span class="faint">none yet -- joining a team makes you a participant</span>{% endfor %}</td></tr>
           <tr><th scope="row">joined</th><td>{{ user.date_joined|date:"Y-m-d" }}</td></tr>
           <tr><th scope="row">last login</th><td>{{ user.last_login|date:"Y-m-d H:i"|default:"--" }} UTC</td></tr>
           <tr><th scope="row">sessions</th><td>{{ sessions|length }} active</td></tr>

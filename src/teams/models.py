@@ -7,13 +7,14 @@ Rules, and where each one is enforced:
 | one team per participant per event             | DB unique constraint on (event, user)         |
 | one captain per team, and they are a member    | captain FK + services (captain set on join)   |
 | team size <= event.max_team_size               | services, under a row lock on the team        |
-| only *participants* can be on a team           | services (role check)                         |
+| nobody who is staff *in this event* competes   | services (`can_compete_in`) + DB exclusion    |
+|                                                | constraint on events_eventmembership          |
 | team name unique within an event (any case)    | DB unique constraint on (event, lower(name))  |
 
-The participant-only rule follows from the one-role-per-account model: judges, organizers and
-admins can never compete, so conflict of interest is impossible by construction. If roles ever
-become per-event (see ARCHITECTURE.md), this rule moves to "not staff *in this event*" and is
-the one place in teams/services.py to change.
+Roles are per event, so a judge of one hackathon may compete in another. Being on a team is what
+makes you a participant of its event: the services create the participant `EventMembership` on
+create/join and remove it when you leave, and that membership is what the conflict-of-interest
+constraint compares against any judge or organizer membership in the same event.
 """
 
 import secrets
