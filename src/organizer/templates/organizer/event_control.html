@@ -37,6 +37,7 @@
           <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
         </div>
         {% endif %}
+        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'api_export_zip' %}?event={{ event.slug }}">export all (.zip)</a><a class="faint" href="#export">or one sheet</a></p>
         <table class="kv">
           <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
           <tr><th scope="row">projects</th><td>{{ projects|length }}</td></tr>
@@ -392,5 +393,31 @@
     </div>
   </section>
   {% endif %}
+
+  {# --- export ------------------------------------------------------------ #}
+  <section class="frame" id="export">
+    <header class="frame__bar"><h2 class="frame__title">export</h2><span class="frame__meta">csv, unlocked stage by stage</span></header>
+    <div class="frame__body stack">
+      <div class="actions">
+        <a class="btn" href="{% url 'api_export_zip' %}?event={{ event.slug }}">download all open sheets (.zip)</a>
+        <span class="faint">one csv per sheet whose stage has started, all read at the same instant, plus a readme. each stage's sheets unlock when it starts. only submitted reviews are included, never drafts.</span>
+      </div>
+    </div>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>stage</th><th>sheet</th><th>what it holds</th><th class="num"><span class="visually-hidden">download</span></th></tr></thead>
+        <tbody>
+        {% for s, is_open, opens in export_sheets %}
+          <tr>
+            <td class="dim">{{ s.stage }}</td>
+            <td{% if not is_open %} class="faint"{% endif %}>{{ s.name }}</td>
+            <td class="dim">{{ s.about }}</td>
+            <td class="num">{% if is_open %}<a class="btn btn--small btn--ghost" href="{% url 'api_export_csv' %}?event={{ event.slug }}&amp;sheet={{ s.name }}">csv</a>{% else %}<span class="faint">opens {{ opens|utc }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 from django.test import Client
-from django.urls import Resolver404, resolve
+from django.urls import resolve
 from django.utils import timezone
 
 from accounts.models import ApiToken
@@ -34,7 +34,6 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / ".dogfood.toml"
 
 T1_ROUTES = ("gallery", "submit")
 T2_ROUTES = ("judge_scores", "peer_scores", "csv_export")
-UNIMPLEMENTED_ROUTES = ("csv_export",)
 
 
 @pytest.fixture(scope="module")
@@ -93,11 +92,15 @@ def test_the_judge_scores_routes_resolve_with_no_redirect(config):
     assert resolve(path.split("?")[0]).func is judge_api.judge_scores
 
 
-@pytest.mark.parametrize("key", UNIMPLEMENTED_ROUTES)
-def test_the_unimplemented_routes_are_honestly_unimplemented(config, key):
-    """They must 404 until implemented."""
-    with pytest.raises(Resolver404):
-        resolve(config["routes"][key].split("?")[0])
+@pytest.mark.django_db
+def test_organizer_exports_csv_acceptance_contract(config, make_event):
+    """T2 check 4: GET routes.csv_export as the organizer -> 200 and a first line with a comma.
+    A judge or participant is refused (organizers only)."""
+    event = make_event()
+    _, raw = ApiToken.issue(event.organizer, "organizer")
+    response = Client().get(config["routes"]["csv_export"], HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert response.status_code == 200
+    assert "," in response.content.decode("utf-8").splitlines()[0]
 
 
 @pytest.mark.django_db

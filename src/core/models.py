@@ -93,6 +93,7 @@ class AuditAction(models.TextChoices):
     SNAPSHOT_REFUSED = "snapshot_refused", "Refused to compute a results snapshot"
     SCORING_CONFIG_CHANGED = "scoring_config_changed", "Changed an event's scoring configuration"
     SCORING_CONFIG_REFUSED = "scoring_config_refused", "Refused a change to an event's scoring configuration"
+    EXPORT_DOWNLOADED = "export_downloaded", "Downloaded a CSV export"
 
 
 class AuditLog(models.Model):

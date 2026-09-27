@@ -133,7 +133,7 @@ def update_project(request, project, form):
     if old_thumbnail and candidate.thumbnail.name != old_thumbnail:
         candidate.thumbnail.storage.delete(old_thumbnail)  # replaced or removed: no orphan file
     audit.record(
-        AuditAction.PROJECT_UPDATED, request=request, subject=candidate.name,
+        AuditAction.PROJECT_UPDATED, request=request, subject=candidate.name, event=candidate.event.slug,
         fields=[f for f in form.changed_data if not f.startswith("q_")] + (
             ["answers"] if any(f.startswith("q_") for f in form.changed_data) else []
         ),
@@ -156,7 +156,7 @@ def submit_project(request, project):
     project.submitted_at = timezone.now()
     project.last_edited_by = request.user
     project.save(update_fields=["status", "submitted_at", "last_edited_by", "updated_at"])
-    audit.record(AuditAction.PROJECT_SUBMITTED, request=request, subject=project.name)
+    audit.record(AuditAction.PROJECT_SUBMITTED, request=request, subject=project.name, event=project.event.slug)
     return project
 
 
@@ -170,7 +170,7 @@ def unsubmit_project(request, project):
     project.submitted_at = None
     project.last_edited_by = request.user
     project.save(update_fields=["status", "submitted_at", "last_edited_by", "updated_at"])
-    audit.record(AuditAction.PROJECT_UNSUBMITTED, request=request, subject=project.name)
+    audit.record(AuditAction.PROJECT_UNSUBMITTED, request=request, subject=project.name, event=project.event.slug)
     return project
 
 
@@ -188,7 +188,7 @@ def add_image(request, project, image_file, caption=""):
         image.image.save(image_file.name, image_file, save=False)
         image.save()
         Project.objects.filter(pk=project.pk).update(updated_at=timezone.now(), last_edited_by=request.user)
-    audit.record(AuditAction.PROJECT_IMAGE_ADDED, request=request, subject=project.name)
+    audit.record(AuditAction.PROJECT_IMAGE_ADDED, request=request, subject=project.name, event=project.event.slug)
     return image
 
 
@@ -199,4 +199,4 @@ def remove_image(request, project, image):
     image.image.delete(save=False)
     image.delete()
     Project.objects.filter(pk=project.pk).update(updated_at=timezone.now(), last_edited_by=request.user)
-    audit.record(AuditAction.PROJECT_IMAGE_REMOVED, request=request, subject=project.name)
+    audit.record(AuditAction.PROJECT_IMAGE_REMOVED, request=request, subject=project.name, event=project.event.slug)

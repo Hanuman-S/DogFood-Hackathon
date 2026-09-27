@@ -128,7 +128,7 @@ def join_team(request, token):
             TeamMember.objects.create(team=team, user=user)
             _register(user, team.event)
     except TeamRuleError as error:
-        audit.record(AuditAction.TEAM_JOIN_REFUSED, request=request, subject=team.name, reason=str(error))
+        audit.record(AuditAction.TEAM_JOIN_REFUSED, request=request, subject=team.name, event=team.event.slug, reason=str(error))
         raise
     except IntegrityError as error:
         raise TeamRuleError("You are already on a team in this event.") from error
@@ -152,7 +152,7 @@ def rename_team(request, team, name):
     old = team.name
     team.name = name[:80]
     team.save(update_fields=["name"])
-    audit.record(AuditAction.TEAM_RENAMED, request=request, subject=team.name, old=old)
+    audit.record(AuditAction.TEAM_RENAMED, request=request, subject=team.name, event=team.event.slug, old=old)
 
 
 def reset_invite_link(request, team):
@@ -160,7 +160,7 @@ def reset_invite_link(request, team):
     _require_captain(request.user, team)
     team.invite_token = new_invite_token()
     team.save(update_fields=["invite_token"])
-    audit.record(AuditAction.TEAM_LINK_RESET, request=request, subject=team.name)
+    audit.record(AuditAction.TEAM_LINK_RESET, request=request, subject=team.name, event=team.event.slug)
 
 
 def transfer_captain(request, team, member):
@@ -170,7 +170,7 @@ def transfer_captain(request, team, member):
         raise TeamRuleError("That person is not on this team.")
     team.captain = member.user
     team.save(update_fields=["captain"])
-    audit.record(AuditAction.TEAM_CAPTAIN_CHANGED, request=request, subject=team.name, to=member.user.email)
+    audit.record(AuditAction.TEAM_CAPTAIN_CHANGED, request=request, subject=team.name, event=team.event.slug, to=member.user.email)
 
 
 def _require_size_kept(team):
@@ -194,7 +194,7 @@ def remove_member(request, team, member):
     with transaction.atomic():
         member.delete()
         _unregister(member.user, team.event)
-    audit.record(AuditAction.TEAM_MEMBER_REMOVED, request=request, subject=team.name, email=email)
+    audit.record(AuditAction.TEAM_MEMBER_REMOVED, request=request, subject=team.name, event=team.event.slug, email=email)
 
 
 def leave_team(request, team):
@@ -222,10 +222,10 @@ def leave_team(request, team):
         with transaction.atomic():
             team.delete()  # cascades to the membership and any draft project
             _unregister(user, event)
-        audit.record(AuditAction.TEAM_DISBANDED, request=request, subject=name)
+        audit.record(AuditAction.TEAM_DISBANDED, request=request, subject=name, event=event.slug)
         return None
     with transaction.atomic():
         membership.delete()
         _unregister(user, team.event)
-    audit.record(AuditAction.TEAM_LEFT, request=request, subject=team.name)
+    audit.record(AuditAction.TEAM_LEFT, request=request, subject=team.name, event=team.event.slug)
     return team

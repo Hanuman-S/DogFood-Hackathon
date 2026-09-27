@@ -22,7 +22,7 @@ gallery      = "/projects"
 # Built. "Dogfood Archive 2026" is seeded closed, so this POST is refused by the deadline check
 # with 409 {"error": "submissions_closed", ...} -- not by a 404 or a permission error.
 submit       = "/api/events/dogfood-archive-2026/projects"
-# Not built yet (T2).
+# Built (T2), though the file still claims T1 only.
 judge_scores = "/api/judge/scores"
 peer_scores  = "/api/judge/scores?judge=judge_a"
 csv_export   = "/api/export.csv"

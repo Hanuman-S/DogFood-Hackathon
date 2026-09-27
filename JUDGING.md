@@ -4,16 +4,16 @@
 judge invites, the judging window, assignment, the progress dashboard), the judge side (a queue
 of assigned projects, draft / submit / reopen, declaring a conflict, and `/api/judge/scores`,
 which returns only the caller's own reviews), and the scoring engine (`scoring/engine/`, with
-preview and final result snapshots; see PLAN.md and docs/t2-scoring-plan.md). Not built: CSV
-export, published results pages. Nothing shows a score's values to anyone but the judge who wrote
-it; the dashboard counts reviews, never their contents. *(A full rewrite of this file is due in
+preview and final result snapshots; see PLAN.md and docs/t2-scoring-plan.md), and the CSV export
+(below). Not built: published results pages. A score's values are shown only to the judge who
+wrote it and, through the export, to the event's organizers and platform admins (the brief's role
+matrix); the dashboard counts reviews, never their contents. Drafts are never exported. *(A full rewrite of this file is due in
 the final docs pass.)*
 
-Three of the four T2 acceptance checks now pass for real (judge sees own scores, judge cannot see
-peer scores, participant blocked); CSV export still fails: see
-[`acceptance-report.txt`](acceptance-report.txt). `.dogfood.toml` still claims `["T1"]` only,
-because T2 is not complete. `tests/test_acceptance_contract.py` asserts that the CSV route still
-404s, so adding it forces a deliberate update of the claim.
+All four T2 acceptance checks pass when the checker is run against a local stack (judge sees own
+scores, judge cannot see peer scores, participant blocked, CSV export). The committed
+[`acceptance-report.txt`](acceptance-report.txt) predates the export and has not been regenerated,
+and `.dogfood.toml` still claims `["T1"]` only: changing the claim is a deliberate team decision.
 
 ## What exists
 
@@ -181,6 +181,25 @@ are never deleted; their status changes.
 - The tables **refresh themselves** every 30 seconds (`app.js` fetches `?partial=1` and swaps
   them in, pausing while the tab is hidden); without JavaScript the page is simply static.
 
+## CSV export (built)
+
+The export (`src/organizer/export.py`) grows with the event: each sheet belongs to a stage and
+unlocks when that stage starts, by the database clock. Setup (event, tracks, prizes, questions,
+rubric, judges, judge invites) and the audit trail are there from creation; teams, members and
+projects from submissions open; assignments from submissions close; reviews from judging start;
+results from judging end (until then rank, score and judge lean are empty everywhere). A sheet of
+a stage that has not started is refused with 409 `stage_not_open` and its opening time, and left
+out of the ZIP (whose README says when it opens).
+`GET /api/export.zip?event=<slug>` gives one CSV per open sheet (event, tracks, prizes, questions,
+rubric, judges, judge invites, teams, members, projects, assignments, assignment rounds,
+reviews, results, audit) plus a README, all read in one REPEATABLE READ snapshot;
+`GET /api/export.csv?event=<slug>&sheet=<name>` gives one sheet; `GET /api/export.csv` alone
+(the checker's route) gives the projects of every event the caller manages. Organizers of the
+event and platform admins only (401 / 403 / 404 otherwise, refusals audited); every download is
+audited. Only submitted reviews are exported. Results are the latest final snapshot, or if none
+has been computed yet, one computed for the export (labelled, not saved). Text cells that start like
+a formula are escaped.
+
 ## For the judge side
 
 What the organizer side provides, to build score entry on:
@@ -201,11 +220,10 @@ What the organizer side provides, to build score entry on:
 - **Published results.** The engine computes preview and final snapshots (`manage.py
   score_event`), and the `Publication` model exists, but there is no publishing service or
   results page yet.
-- **CSV export.** No export endpoint yet.
 
 ## The routes T2 will implement
 
-Listed in `.dogfood.toml` so the checker probes them honestly. The two judge routes answer today; the CSV export still 404s:
+Listed in `.dogfood.toml` so the checker probes them honestly. All three answer:
 
 ```toml
 judge_scores = "/api/judge/scores"
@@ -231,4 +249,4 @@ In this order, because each step makes the next one testable:
    Enforce it in the query (scope by membership), not in the template.
 6. **Normalization**, documented here, run against the fixture's uniform-scoring judge and unfinished
    batches.
-7. **CSV export**, last, once there is something true to export.
+7. **CSV export**, last, once there is something true to export. (Built.)

@@ -189,8 +189,8 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 ## What it does not do yet
 
 - Judging (T2): the organizer's side works (rubric, judge invites, judging window, assignment,
-  progress dashboard); no score entry, normalization, results or CSV export yet. The data model
-  and the imported reviews are ready for it. See [JUDGING.md](JUDGING.md).
+  progress dashboard) and the CSV export work; see [JUDGING.md](JUDGING.md) for the rest of T2
+  and what is still missing.
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.

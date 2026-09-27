@@ -229,4 +229,9 @@ from each event's control page in the organizer portal.
 - **Everything:** it is a plain Postgres database, so
   `docker compose exec db pg_dump -U dogfood dogfood > dogfood.sql` takes all of it, and
   `manage.py dumpdata` gives a portable JSON dump.
-- **Not built yet:** CSV export of scores (a T2 requirement).
+- **CSV, stage by stage:** each sheet unlocks when its stage starts. Organizers download
+  `GET /api/export.zip?event=<slug>` (one CSV per open sheet: event, tracks, prizes, questions, rubric, judges, judge invites, teams, members,
+  projects, assignments, assignment rounds, submitted reviews, results, audit, plus a README), or
+  one sheet with `GET /api/export.csv?event=<slug>&sheet=<name>`; the same links are on each
+  event's page. Secrets (team invite tokens, judge invite digests) and draft reviews are never
+  exported. See [JUDGING.md](JUDGING.md#csv-export-built) for the rules.

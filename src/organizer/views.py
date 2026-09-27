@@ -26,6 +26,7 @@ from projects.models import Project, Status
 from core.judging import judging_window
 from scoring.services import rubric_locked, with_shares
 from teams.models import Team, TeamExtension
+from organizer.export import sheet_states
 
 PARTS = {
     "track": (Track, TrackForm, "tracks"),
@@ -80,6 +81,7 @@ def _control(request, event, status=200, **forms):
         "extension_form": forms.get("extension_form") or TeamExtensionForm(event=event),
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),
         "window": deadlines.window(event),
+        "export_sheets": sheet_states(event, deadlines.db_now()),
         "duplicates": possible_duplicates(event),
         "import_duplicates": FixtureRef.objects.filter(
             kind=FixtureRef.Kind.PROJECT, object_id__in=event.projects.values("pk")
