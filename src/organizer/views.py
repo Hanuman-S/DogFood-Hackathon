@@ -5,6 +5,8 @@ event (or may create one), then `get_managed_event` narrows that to the organize
 event* and platform admins (404 for anyone else, so slugs cannot be probed).
 """
 
+from datetime import timedelta
+
 from django.contrib import messages
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
@@ -76,8 +78,12 @@ def _control(request, event, status=200, **forms):
         "question_form": forms.get("question_form") or QuestionForm(event=event),
         "organizer_form": forms.get("organizer_form") or AddOrganizerForm(),
         "judge_form": forms.get("judge_form") or AddJudgeForm(event=event),
-        "extend_form": forms.get("extend_form") or ExtendDeadlineForm(),
-        "judging_form": forms.get("judging_form") or ExtendJudgingForm(),
+        # Pre-filled one day past the current date, time included: the date and time are separate
+        # inputs, and picking only a date used to be refused ("pick a time as well").
+        "extend_form": forms.get("extend_form") or ExtendDeadlineForm(
+            initial={"new_close": event.submissions_close_at + timedelta(days=1)}),
+        "judging_form": forms.get("judging_form") or ExtendJudgingForm(
+            initial={"new_end": event.judging_ends_at + timedelta(days=1)}),
         "judging_window": judging_window(event),
         "extension_form": forms.get("extension_form") or TeamExtensionForm(event=event),
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),
@@ -96,8 +102,13 @@ def _control(request, event, status=200, **forms):
         "publish_blockers": services.publish_blockers(event),
         "judge_invites": [
             (invite, services.judge_invite_state(invite))
-            for invite in event.judge_invites.select_related("created_by", "accepted_by")
+            for invite in event.judge_invites.filter(role=Role.JUDGE).select_related("created_by", "accepted_by")
             .prefetch_related("tracks")[:20]
+        ],
+        "organizer_invites": [
+            (invite, services.judge_invite_state(invite))
+            for invite in event.judge_invites.filter(role=Role.ORGANIZER)
+            .select_related("created_by", "accepted_by")[:20]
         ],
         "judges": event.memberships.filter(role=Role.JUDGE).select_related("user")
         .prefetch_related("judge_tracks__track"),
@@ -241,10 +252,10 @@ def judge_invite_revoke(request, slug, invite_id):
     invite = get_object_or_404(JudgeInvite, pk=invite_id, event=event)
     try:
         services.revoke_judge_invite(request, event, invite)
-        messages.success(request, f"invite for {invite.email} revoked: the link no longer works.")
+        messages.success(request, f"invite for {invite.email or 'an open link'} revoked: the link no longer works.")
     except services.EventRuleError as error:
         messages.error(request, str(error))
-    return redirect(f"/organizer/events/{event.slug}/#judges")
+    return redirect(f"/organizer/events/{event.slug}/#{'judges' if invite.role == Role.JUDGE else 'organizers'}")
 
 
 # --- co-organizers ----------------------------------------------------------------------
@@ -255,6 +266,9 @@ def judge_invite_revoke(request, slug, invite_id):
 def organizer_add(request, slug):
     event = services.get_managed_event(request.user, slug)
     form = AddOrganizerForm(request.POST)
+    if form.is_valid() and not form.cleaned_data["email"]:
+        form.add_error("email", "add needs the email of an existing account. to invite someone "
+                                "without it, use invite by link.")
     if not form.is_valid():
         return _control(request, event, status=400, organizer_form=form)
     try:
@@ -264,6 +278,25 @@ def organizer_add(request, slug):
         form.add_error("email", str(error))
         return _control(request, event, status=400, organizer_form=form)
     return redirect(f"/organizer/events/{event.slug}/#organizers")
+
+
+@require_POST
+@portal_required("organizer")
+def organizer_invite_create(request, slug):
+    """A one-time co-organizer link, shown once (rendered, not redirected: see judge_invite_create)."""
+    event = services.get_managed_event(request.user, slug)
+    form = AddOrganizerForm(request.POST)
+    if not form.is_valid():
+        return _control(request, event, status=400, organizer_form=form)
+    try:
+        invite, raw = services.create_organizer_invite(request, event, form.cleaned_data["email"])
+    except services.EventRuleError as error:
+        form.add_error("email", str(error))
+        return _control(request, event, status=400, organizer_form=form)
+    link = request.build_absolute_uri(reverse("organizer_invite", args=[raw]))
+    return render(request, "organizer/judge_invite_created.html", {
+        "event": event, "invite": invite, "link": link,
+    })
 
 
 @require_POST

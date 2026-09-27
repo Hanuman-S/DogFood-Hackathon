@@ -1,0 +1,25 @@
+DOGFOOD T3 probes (community voting) -- scripts/t3_check.py
+portal: http://localhost:8080
+T3 is not claimed in .dogfood.toml: the organizers' checker has no T3 checks.
+
+T3  tally hidden during voting (visitor) ................................... PASS
+T3  tally hidden during voting (participant) ............................... PASS
+T3  tally hidden during voting (judge_a) ................................... PASS
+T3  tally visible to the event's organizer ................................. PASS
+T3  late vote refused: 409 voting_closed ................................... PASS
+T3  over budget refused: 400 over_budget ................................... PASS
+T3  own project refused: 403 own_project ................................... PASS
+T3  judge refused: 403 staff_cannot_vote ................................... PASS
+T3  burst of vote writes: 429 rate_limited ................................. PASS
+T3  publish refused while voting is open: 409 voting_open .................. PASS
+T3  final computed on the fixture event (freezes its closed vote's tally) .. PASS
+T3  final published ........................................................ PASS
+T3  results page as visitor, public_full: 200, full ranking ................ PASS
+T3  results page as a judge, public_full: 200 .............................. PASS
+T3  results page as visitor, public_winners: 200, winners only ............. PASS
+T3  results page as a judge, public_winners: 200 ........................... PASS
+T3  results page as visitor, private: 404 .................................. PASS
+T3  results page as a judge, private: 404 .................................. PASS
+T3  unpublished again: 404 for visitors .................................... PASS
+
+19/19 T3 probes pass

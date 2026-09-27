@@ -1,4 +1,5 @@
 from django import forms
+from django.db import models
 from django.utils.text import slugify
 
 from events.models import CustomQuestion, Event, Prize, QuestionKind, Track
@@ -177,7 +178,28 @@ class EventForm(forms.ModelForm):
         return cleaned
 
 
-class TrackForm(forms.ModelForm):
+class _OrderedPartForm(forms.ModelForm):
+    """A track or question: `order` is optional. The add forms on the event page do not show it,
+    so a new part goes last; the edit page shows it for reordering. (It used to be required and
+    unrendered, so every add from the event page failed on a field nobody could see.)"""
+
+    def _setup_order(self, event):
+        self.event = event
+        if "order" in self.fields:
+            self.fields["order"].required = False
+            self.fields["order"].help_text = "position in the list; leave empty to put it last"
+
+    def clean_order(self):
+        order = self.cleaned_data.get("order")
+        if order is not None:
+            return order
+        if self.instance.pk:
+            return self.instance.order
+        last = self._meta.model.objects.filter(event=self.event).aggregate(m=models.Max("order"))["m"]
+        return 0 if last is None else last + 1
+
+
+class TrackForm(_OrderedPartForm):
     class Meta:
         model = Track
         fields = ["name", "description", "order"]
@@ -189,7 +211,7 @@ class TrackForm(forms.ModelForm):
 
     def __init__(self, *args, event=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.event = event
+        self._setup_order(event)
 
     def clean_name(self):
         name = self.cleaned_data["name"].strip()
@@ -212,11 +234,24 @@ class PrizeForm(forms.ModelForm):
 
     def __init__(self, *args, event=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.event = event
         self.fields["track"].queryset = Track.objects.filter(event=event)
         self.fields["track"].empty_label = "overall (no track)"
 
+    def clean(self):
+        """One prize per place: a track (or the overall ranking) has one #1, one #2, ..."""
+        cleaned = super().clean()
+        rank, track = cleaned.get("rank"), cleaned.get("track")
+        if rank is not None:
+            clash = Prize.objects.filter(event=self.event, rank=rank, track=track).exclude(pk=self.instance.pk)
+            if clash.exists():
+                where = f"the {track.name} track" if track else "the overall ranking"
+                self.add_error("rank", f"{where} already has a #{rank} prize ({clash.first().title}). "
+                                       "pick another place, or edit that prize.")
+        return cleaned
 
-class QuestionForm(forms.ModelForm):
+
+class QuestionForm(_OrderedPartForm):
     class Meta:
         model = CustomQuestion
         fields = ["prompt", "help_text", "kind", "choices", "required", "order"]
@@ -229,6 +264,7 @@ class QuestionForm(forms.ModelForm):
 
     def __init__(self, *args, event=None, kind_locked=False, **kwargs):
         super().__init__(*args, **kwargs)
+        self._setup_order(event)
         if kind_locked:
             self.fields["kind"].disabled = True
             self.fields["kind"].help_text = "locked: this question already has answers"
@@ -243,7 +279,13 @@ class QuestionForm(forms.ModelForm):
 
 
 class AddOrganizerForm(forms.Form):
-    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing account"}))
+    """One form, two buttons, like adding a judge: "add" needs the email of an existing account;
+    "invite by link" takes an email (only that person can use the link) or none (an open link)."""
+
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={"placeholder": "e.g. ada@example.org (optional for a link)"}),
+    )
 
 
 class AddJudgeForm(forms.Form):

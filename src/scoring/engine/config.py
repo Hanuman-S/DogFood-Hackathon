@@ -18,6 +18,7 @@ from .errors import ConfigError
 
 TUPLE_KEYS = ("compare", "filters", "flaggers", "lambda_grid", "lambdas")
 DUPLICATE_POLICIES = ("exclude", "merge")
+TIE_RULES = ("anchor", "chain")
 
 
 @dataclass(frozen=True)
@@ -31,8 +32,12 @@ class EngineConfig:
     # project's review wins. Our rule -- the lab's sensitivity "merge" averaged the two instead.
     duplicate_policy: str = "exclude"
     flaggers: tuple[str, ...] = ("insufficient_reviews", "near_flat_judges", "outlier_residuals")
-    # Methods with "uncertainty": adjacent projects join one tie group while P(ahead) < this.
+    # Methods with "uncertainty": a project joins the current tie group while P(ahead) < this.
     tie_threshold: float = 0.84
+    # Whose P(ahead) decides: "anchor" = the group's top project (a group is only as wide as one
+    # clear gap); "chain" = the project just above (the lab's rule: small gaps chain, so a
+    # low-signal event becomes one group however far apart its ends are).
+    tie_rule: str = "anchor"
     # Methods without "uncertainty": scores equal after rounding to this many decimals tie.
     equal_decimals: int = 9
     # z-score: per-judge SD floor (population SD), as in the lab and the ridge PDF's section 14.
@@ -74,6 +79,8 @@ class EngineConfig:
         if self.duplicate_policy not in DUPLICATE_POLICIES:
             raise ConfigError(f"duplicate_policy must be one of {', '.join(DUPLICATE_POLICIES)}.")
         _check_number(self.tie_threshold, "tie_threshold", 0.5, 1.0, open_high=True)
+        if self.tie_rule not in TIE_RULES:
+            raise ConfigError(f"tie_rule must be one of {', '.join(TIE_RULES)}.")
         _check_int(self.equal_decimals, "equal_decimals", 0, 15)
         _check_number(self.z_floor, "z_floor", 0.0, None, open_low=True)
         _check_int(self.min_reviews, "min_reviews", 1, 1000)

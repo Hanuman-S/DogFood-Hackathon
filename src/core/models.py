@@ -129,6 +129,11 @@ class AuditAction(models.TextChoices):
     WEIGHTS_REFUSED = "weights_refused", "Refused a change to the judge/community weights"
     WEIGHTS_BYPASSED = "weights_bypassed", "Set weights past the weights lock (bypass)"
     RESULTS_EXPORTED = "results_exported", "Downloaded results.csv"
+    ASSIGNMENTS_RESHUFFLED = "assignments_reshuffled", "Reshuffled every unstarted review"
+    ORGANIZER_INVITED = "organizer_invited", "Created a co-organizer invite link"
+    ORGANIZER_INVITE_ACCEPTED = "organizer_invite_accepted", "Accepted a co-organizer invite"
+    ORGANIZER_INVITE_REVOKED = "organizer_invite_revoked", "Revoked a co-organizer invite"
+    ORGANIZER_INVITE_REFUSED = "organizer_invite_refused", "Refused a co-organizer invite"
 
 
 class AuditLog(models.Model):

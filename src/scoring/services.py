@@ -392,9 +392,19 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
         raise AssignmentError("the review target must be between 1 and 20.")
     if max_load is not None and max_load < 1:
         raise AssignmentError("the load cap must be at least 1, or empty for no cap.")
+    current = review_target(event)
+    judging_started = db_now() >= event.judging_starts_at
+    if judging_started and event.assignment_rounds.exists() and target != current:
+        raise AssignmentError(
+            f"the number of reviews per project is fixed once judging has started (it is {current}). "
+            f"it could be changed until {event.judging_starts_at:%Y-%m-%d %H:%M} UTC."
+        )
     seed = seed if seed is not None else secrets.randbits(62)
     with transaction.atomic():
         Event.objects.select_for_update().get(pk=event.pk)
+        # A lower target before judging: release the reviews above it (nobody can have started one
+        # yet), taking them from the busiest judges first, so the next plan starts from the target.
+        released = 0 if judging_started else _trim_to_target(event, target, seed)
         plan = make_plan(event, target=target, max_load=max_load, seed=seed, exclude_judges=exclude_judges)
         if kind is None:
             kind = RoundKind.TOP_UP if Assignment.objects.filter(project__event=event).exists() else RoundKind.INITIAL
@@ -406,6 +416,7 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
             created_by=request.user if request and request.user.is_authenticated else None,
             summary={
                 "added": len(plan.new),
+                "released": released,
                 "bridges": len(plan.bridges),
                 "short": {str(p): n for p, n in sorted(plan.short.items())},
                 "warnings": warnings,
@@ -425,9 +436,43 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
     audit.record(
         AuditAction.ASSIGNMENTS_GENERATED, request=request, subject=event.slug, round=round_.pk,
         kind=kind, seed=seed, target=target, max_load=max_load, added=len(plan.new),
-        short=sum(plan.short.values()), warnings=len(warnings),
+        released=released, short=sum(plan.short.values()), warnings=len(warnings),
+        **({"target_was": current} if target != current else {}),
     )
     return round_
+
+
+def _trim_to_target(event, target, seed):
+    """Release live, unstarted assignments on projects that have more than `target`, busiest
+    judges first (ties broken by the round's seed). Returns how many were released."""
+    import random
+    from collections import Counter
+
+    started = set(Score.objects.filter(project__event=event).values_list("judge_id", "project_id"))
+    live = list(Assignment.objects.filter(project__event=event, status=AssignmentStatus.ASSIGNED)
+                .values_list("pk", "judge_id", "project_id"))
+    load = Counter(j for _, j, _ in live)
+    by_project = {}
+    for pk, j, p in live:
+        by_project.setdefault(p, []).append((pk, j))
+    rng = random.Random(seed)
+    release = []
+    for p in sorted(by_project):
+        rows = by_project[p]
+        extra = len(rows) - target
+        if extra <= 0:
+            continue
+        free = [(pk, j) for pk, j in rows if (j, p) not in started]
+        rng.shuffle(free)
+        for _ in range(min(extra, len(free))):
+            free.sort(key=lambda row: -load[row[1]])
+            pk, j = free.pop(0)
+            release.append(pk)
+            load[j] -= 1
+    if release:
+        Assignment.objects.filter(pk__in=release).update(
+            status=AssignmentStatus.RELEASED, status_changed_at=timezone.now())
+    return len(release)
 
 
 def _check_can_review(event, judge, project):
@@ -540,6 +585,30 @@ def decline_assignment(request, assignment, reason):
         project=assignment.project_id, reason=assignment.decline_reason,
     )
     return assignment
+
+
+def reshuffle_unstarted(request, event, *, target=None, max_load=None, seed=None):
+    """Draw every unstarted review again, at random: release each assignment nobody has started
+    (no draft, no submitted review) and run a fresh round. Started reviews stay where they are;
+    declines and withdrawals are still respected. Returns (released, round)."""
+    _refuse_if_judging_over(event)
+    started = set(Score.objects.filter(project__event=event).values_list("judge_id", "project_id"))
+    with transaction.atomic():
+        Event.objects.select_for_update().get(pk=event.pk)
+        pending = [a for a in Assignment.objects.filter(project__event=event, status=AssignmentStatus.ASSIGNED)
+                   if (a.judge_id, a.project_id) not in started]
+        now = timezone.now()
+        Assignment.objects.filter(pk__in=[a.pk for a in pending]).update(
+            status=AssignmentStatus.RELEASED, status_changed_at=now)
+        round_ = run_assignment(
+            request, event, target=target or review_target(event), max_load=max_load, seed=seed,
+            kind=RoundKind.RESHUFFLE,
+        )
+    audit.record(
+        AuditAction.ASSIGNMENTS_RESHUFFLED, request=request, subject=event.slug, round=round_.pk,
+        released=len(pending), added=round_.summary.get("added"), seed=round_.seed,
+    )
+    return len(pending), round_
 
 
 def reassign_unstarted(request, event, judge, *, target=None, max_load=None):

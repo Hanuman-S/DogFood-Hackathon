@@ -210,6 +210,10 @@ class AssignmentStatus(models.TextChoices):
     # Taken away by an organizer (moved to another judge, or removed). Kept, not deleted, so
     # the history of who was asked to review what stays readable.
     WITHDRAWN = "withdrawn", "Withdrawn by an organizer"
+    # Released before anyone started it, by a reshuffle or by lowering the review target before
+    # judging: free to be drawn again (unlike a withdrawal, which automatic rounds respect by
+    # never giving that project back to that judge).
+    RELEASED = "released", "Released (reshuffle or lower target)"
 
 
 # A judge-project pair may have at most one row in one of these states at a time.
@@ -226,6 +230,7 @@ class RoundKind(models.TextChoices):
     INITIAL = "initial", "Initial assignment"
     TOP_UP = "top_up", "Top-up to the review target"
     REASSIGN = "reassign", "Reassignment of declined or stalled reviews"
+    RESHUFFLE = "reshuffle", "Reshuffle of every unstarted review"
 
 
 class AssignmentRound(models.Model):

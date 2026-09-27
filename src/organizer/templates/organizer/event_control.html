@@ -166,7 +166,7 @@
               <td class="num">
                 <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
                 <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
-                <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+                {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
               </td>
             </tr>
           {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
@@ -235,7 +235,7 @@
             <td class="num">
               <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'question' q.pk %}">edit</a>
               <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'question' q.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if q.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if q.is_hidden %}show{% else %}hide{% endif %}</button></form>
-              <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+              {% if q.n %}<span class="faint" title="a question with answers can be hidden, not deleted">answered</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -278,12 +278,32 @@
         </table>
       </div>
       <div class="frame__body">
-        <form class="form form--inline" method="post" action="{% url 'organizer:organizer_add' event.slug %}" novalidate>
+        <form class="form" method="post" action="{% url 'organizer:organizer_add' event.slug %}" novalidate>
           {% csrf_token %}
           {% include "_field.html" with field=organizer_form.email cmd="organizer add --email" %}
-          <button class="btn" type="submit">add</button>
+          <div class="actions">
+            <button class="btn" type="submit">add</button>
+            <button class="btn btn--ghost" type="submit" formaction="{% url 'organizer:organizer_invite_create' event.slug %}">invite by link</button>
+          </div>
+          <p class="faint">add: the email of an existing account. invite by link: a one-time link, valid 7 days, that also lets them create an account; leave the email empty for an open link.</p>
         </form>
       </div>
+      {% if organizer_invites %}
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>invite link for</th><th>status</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+          <tbody>
+          {% for inv, state in organizer_invites %}
+            <tr>
+              <td>{% if inv.email %}{{ inv.email }}{% else %}<span class="dim">open link</span>{% if inv.accepted_by %} <span class="faint">&middot; used by {{ inv.accepted_by.email }}</span>{% endif %}{% endif %}<br><span class="faint">by {{ inv.created_by.name|default:"--" }}</span></td>
+              <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
+              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </section>
 
     {# --- teams & projects ------------------------------------------------ #}

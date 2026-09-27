@@ -86,10 +86,16 @@ def assert_contract(inp, result):
         if "uncertainty" in result.capabilities:
             assert all(p.se is not None and p.se >= 0 for p in rows)
             threshold = result.config["tie_threshold"]
+            anchored = result.config["tie_rule"] == "anchor"
             for a, b in zip(rows, rows[1:]):
                 p = a.extras["p_ahead_of_next"]
                 assert 0.0 <= p <= 1.0
-                assert (a.tie_group == b.tie_group) == (p < threshold)
+                # the P that decides: the group's top vs b (anchor), or a vs b (chain)
+                deciding = b.extras["p_top_ahead"] if anchored else p
+                assert 0.0 <= deciding <= 1.0
+                assert (a.tie_group == b.tie_group) == (deciding < threshold)
+            if anchored:
+                assert rows[0].extras["p_top_ahead"] is None
             assert rows[-1].extras["p_ahead_of_next"] is None
         else:
             # methods without uncertainty never report an SE, and tie only on equal scores

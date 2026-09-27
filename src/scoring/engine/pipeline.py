@@ -162,10 +162,11 @@ def _rank_component(k, data, out, impl, cfg):
     scores = np.asarray(out.scores, dtype=float)
     rank = ordinal_rank(scores, cfg.equal_decimals)
     if "uncertainty" in impl.capabilities:
-        groups, p_next = se_tie_groups(scores, np.asarray(out.cov_q), rank, cfg.tie_threshold)
+        groups, p_next, p_top = se_tie_groups(scores, np.asarray(out.cov_q), rank, cfg.tie_threshold, cfg.tie_rule)
         se = np.asarray(out.se, dtype=float)
     else:
         groups, p_next, se = exact_tie_groups(scores, rank, cfg.equal_decimals), [None] * data.P, None
+        p_top = [None] * data.P
     parts = decompose(data, out) if "decomposition" in impl.capabilities else [{}] * data.P
     n_reviews = data.reviews_per_project()
     rows = []
@@ -173,6 +174,8 @@ def _rank_component(k, data, out, impl, cfg):
         extras = dict(parts[i])
         if "uncertainty" in impl.capabilities:
             extras["p_ahead_of_next"] = p_next[i]
+            if cfg.tie_rule == "anchor":
+                extras["p_top_ahead"] = p_top[i]
         rows.append(ProjectResult(
             project_id=project, track_id=data.tracks[i], component=k, score=float(scores[i]),
             se=None if se is None else float(se[i]), rank=int(rank[i]), tie_group=int(groups[i]),

@@ -39,7 +39,8 @@ LAB_METHOD = {"raw": "raw_mean", "z": "zscore", "M2": "m2"}
 INPUTS = {"fixtures": FIXTURES, "syn_small": GOLDEN / "syn_small.json",
           "syn_medium": GOLDEN / "syn_medium.json", "syn_large": GOLDEN / "syn_large.json"}
 SYNTHETIC = ("syn_small", "syn_medium", "syn_large")
-CONFIG = {"cv_seed": LAB_SEED}
+# The lab groups ties by chaining adjacent pairs; parity is checked against that rule.
+CONFIG = {"cv_seed": LAB_SEED, "tie_rule": "chain"}
 
 
 def read_csv(name):

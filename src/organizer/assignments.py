@@ -46,6 +46,23 @@ def review_state(score):
     return "submitted" if score.submitted_at else "draft"
 
 
+def _target_locked(event):
+    """Reviews per project is fixed once judging has started (after a first round exists)."""
+    from core.deadlines import db_now
+
+    return db_now() >= event.judging_starts_at and event.assignment_rounds.exists()
+
+
+def _run_form(event, data=None):
+    form = AssignmentRunForm(data, initial={"target": services.review_target(event)})
+    if _target_locked(event):
+        form.fields["target"].disabled = True
+        form.fields["target"].help_text = "fixed once judging has started"
+    else:
+        form.fields["target"].help_text = "can change until judging starts; lowering it releases the extra reviews"
+    return form
+
+
 def _page(request, event, form=None, status=200, partial=False):
     target = services.review_target(event)
     board = Board(event)
@@ -62,18 +79,22 @@ def _page(request, event, form=None, status=200, partial=False):
     rows = []
     for project in board.projects:
         live = assignments[project.pk]
-        # Judges who may still take this project: they cover its track, are not on it already,
-        # and did not decline it. The same list serves "add" and "move to".
+        # Judges who may still take this project by hand: they cover its track, are not on it
+        # already, and did not decline it. One you withdrew from it is listed (marked), but an
+        # automatic round will not give it back to them -- so "fillable" counts only the others.
         candidates = [
-            {"judge": judges[j], "load": board.load.get(j, 0)} for j in board.eligible(project)
+            {"judge": judges[j], "load": board.load.get(j, 0),
+             "withdrawn": (j, project.pk) in board.withdrawn}
+            for j in board.eligible(project, by_hand=True)
         ]
-        candidates.sort(key=lambda c: (c["load"], c["judge"].user.name.lower()))
+        candidates.sort(key=lambda c: (c["withdrawn"], c["load"], c["judge"].user.name.lower()))
+        automatic = [c for c in candidates if not c["withdrawn"]]
         needed = max(0, target - len(live))
         submitted = sum(1 for a in live if a.review == "submitted")
         if needed == 0:
             state = "done" if submitted >= target else "assigned"
         else:
-            state = "fillable" if candidates else "stuck"
+            state = "fillable" if automatic else "stuck"
         rows.append({
             "project": project,
             "assignments": live,
@@ -94,7 +115,7 @@ def _page(request, event, form=None, status=200, partial=False):
         row = by_project.get(a.project_id)
         if row is None or row["needed"] == 0:
             next_step = "covered"
-        elif row["candidates"]:
+        elif row["state"] == "fillable":
             next_step = "assign"
         else:
             next_step = "no_judge"
@@ -102,7 +123,7 @@ def _page(request, event, form=None, status=200, partial=False):
     template = "organizer/_assignment_board.html" if partial else "organizer/assignments.html"
     return render(request, template, {
         "event": event,
-        "form": form or AssignmentRunForm(initial={"target": target}),
+        "form": form or _run_form(event),
         "target": target,
         "rows": rows,
         "short_count": sum(1 for r in rows if r["needed"]),
@@ -125,22 +146,42 @@ def assignments(request, slug):
     event = get_managed_event(request.user, slug)
     if request.method != "POST":
         return _page(request, event, partial=request.GET.get("partial") == "1")
-    form = AssignmentRunForm(request.POST)
+    form = _run_form(event, request.POST)
     if not form.is_valid():
         return _page(request, event, form, status=400)
+    reshuffle = request.POST.get("action") == "reshuffle"
     try:
-        round_ = services.run_assignment(
-            request, event, target=form.cleaned_data["target"],
-            max_load=form.cleaned_data["max_load"], seed=form.cleaned_data["seed"],
-        )
+        if reshuffle:
+            released, round_ = services.reshuffle_unstarted(
+                request, event, target=form.cleaned_data["target"],
+                max_load=form.cleaned_data["max_load"], seed=form.cleaned_data["seed"],
+            )
+        else:
+            round_ = services.run_assignment(
+                request, event, target=form.cleaned_data["target"],
+                max_load=form.cleaned_data["max_load"], seed=form.cleaned_data["seed"],
+            )
     except services.AssignmentError as error:
         form.add_error(None, str(error))
         return _page(request, event, form, status=409)
     summary = round_.summary
     short = sum(summary.get("short", {}).values())
+    if summary.get("released"):
+        messages.info(request, f"reviews per project lowered to {round_.target_reviews}: "
+                               f"{summary['released']} extra review{'s' if summary['released'] != 1 else ''} released.")
+    if not reshuffle and summary["added"] == 0 and not summary.get("released"):
+        if short:
+            messages.warning(request, f"nothing could be added: {short} review{'s are' if short != 1 else ' is'} "
+                                      "still missing and no other judge may take "
+                                      f"{'them' if short != 1 else 'it'}. add or invite a judge, or add one by hand.")
+        else:
+            messages.info(request, "nothing to add: every project already has its reviewers. to draw the "
+                                   "unstarted ones again at random, use reshuffle.")
+        return redirect("organizer:assignments", slug=event.slug)
     messages.success(
         request,
-        f"round {round_.pk}: {summary['added']} review{'s' if summary['added'] != 1 else ''} assigned"
+        (f"reshuffled: {released} unstarted review{'s' if released != 1 else ''} released and drawn again. " if reshuffle else "")
+        + f"round {round_.pk}: {summary['added']} review{'s' if summary['added'] != 1 else ''} assigned"
         + (f", {summary['bridges']} of them to link separate groups" if summary.get("bridges") else "")
         + (f"; {short} still missing (see warnings)" if short else "; every project reaches the target")
         + f". seed {round_.seed}.",
@@ -182,22 +223,6 @@ def assignment_withdraw(request, slug, assignment_id):
     try:
         services.withdraw_assignment(request, event, assignment)
         messages.success(request, f"{assignment.project.name} taken back from {assignment.judge.user.name}.")
-    except services.AssignmentError as error:
-        messages.error(request, str(error))
-    return _back(event, f"project-{assignment.project_id}")
-
-
-@require_POST
-@portal_required("organizer")
-def assignment_move(request, slug, assignment_id):
-    event = get_managed_event(request.user, slug)
-    assignment = get_object_or_404(
-        Assignment.objects.select_related("judge__user", "project"), pk=assignment_id, project__event=event
-    )
-    try:
-        to_judge = _judge(event, request.POST.get("judge") or 0)
-        services.move_assignment(request, event, assignment, to_judge)
-        messages.success(request, f"{assignment.project.name} moved to {to_judge.user.name}.")
     except services.AssignmentError as error:
         messages.error(request, str(error))
     return _back(event, f"project-{assignment.project_id}")

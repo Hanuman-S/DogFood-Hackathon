@@ -17,7 +17,7 @@ from scoring.engine.cli import main as cli_main
 from scoring.engine.cli import read_config
 from scoring.engine.components import components
 from scoring.engine.config import EngineConfig
-from scoring.engine.errors import EngineError
+from scoring.engine.errors import ConfigError, EngineError
 from scoring.engine.filters import FILTERS
 from scoring.engine.io import load_organizer_file
 from scoring.engine.methods import m2_ridge
@@ -92,9 +92,15 @@ class TestWorkedExample:
         _, sd, _, _ = p_ahead(out.cov_q, out.scores, index["P1"], index["P3"])
         assert sd == pytest.approx(0.584, abs=0.0005)
 
-    def test_one_tie_group(self, result):
-        """Every neighbouring pair has z < 1, so all five form one tie group."""
-        assert {p.tie_group for p in result.projects} == {0}
+    def test_one_tie_group_when_chained(self):
+        """The PDF's rule: every neighbouring pair has z < 1, so all five chain into one group."""
+        chained = pipeline.run(make_input(WORKED, weights=PDF_WEIGHTS), "m2", {**WORKED_CONFIG, "tie_rule": "chain"})
+        assert {p.tie_group for p in chained.projects} == {0}
+
+    def test_two_tie_groups_when_anchored(self, result):
+        """Our default: P1 is clearly ahead of P2 (P >= 0.84), so P2 starts a group; P3 stays with it."""
+        groups = {p.project_id: p.tie_group for p in result.projects}
+        assert groups == {"P1": 0, "P5": 0, "P4": 0, "P2": 1, "P3": 1}
 
 
 class TestTinyIllustration:
@@ -316,24 +322,46 @@ def test_se_tie_groups_split_where_p_ahead_crosses_the_threshold():
     scores = np.array([3.0, 2.0, 1.9, 0.5])
     cov = np.eye(4) * 0.01
     rank = np.array([1, 2, 3, 4])
-    groups, p_next = se_tie_groups(scores, cov, rank, 0.84)
-    assert list(groups) == [0, 1, 1, 2]      # 2.0 vs 1.9: P = 0.76 < 0.84, tied
-    assert p_next[1] == pytest.approx(0.760, abs=0.001) and p_next[3] is None
+    for rule in ("anchor", "chain"):
+        groups, p_next, _ = se_tie_groups(scores, cov, rank, 0.84, rule)
+        assert list(groups) == [0, 1, 1, 2]      # 2.0 vs 1.9: P = 0.76 < 0.84, tied
+        assert p_next[1] == pytest.approx(0.760, abs=0.001) and p_next[3] is None
 
 
-def test_se_tie_chaining_is_transitive():
+def test_chain_rule_is_transitive():
     """1.0 vs 0.8 alone would be separable (P = 0.92), but each adjacent pair is not: one group."""
     scores = np.array([1.0, 0.9, 0.8])
-    groups, _ = se_tie_groups(scores, np.eye(3) * 0.01, np.array([1, 2, 3]), 0.84)
+    groups, _, _ = se_tie_groups(scores, np.eye(3) * 0.01, np.array([1, 2, 3]), 0.84, "chain")
     assert list(groups) == [0, 0, 0]
     assert p_ahead(np.eye(3) * 0.01, scores, 0, 2)[3] > 0.84
 
 
-def test_tie_threshold_comes_from_config():
+def test_anchor_rule_splits_where_the_group_top_is_clearly_ahead():
+    """The same scores: 0.8 is separable from the group's top (1.0), so it starts group 1."""
+    scores = np.array([1.0, 0.9, 0.8])
+    cov = np.eye(3) * 0.01
+    groups, p_next, _ = se_tie_groups(scores, cov, np.array([1, 2, 3]), 0.84, "anchor")
+    assert list(groups) == [0, 0, 1]
+    assert p_next[0] == pytest.approx(p_ahead(cov, scores, 0, 1)[3])   # still the adjacent pair
+
+
+def test_anchor_rule_groups_from_the_new_top():
+    """Once a project starts a group, later ones are compared with it, not the first top."""
+    scores = np.array([1.0, 0.8, 0.75, 0.6, 0.55])
+    groups, _, _ = se_tie_groups(scores, np.eye(5) * 0.01, np.arange(1, 6), 0.84, "anchor")
+    assert list(groups) == [0, 1, 1, 2, 2]
+
+
+def test_tie_rule_and_threshold_come_from_config():
+    _, chained = fixture_run(tie_rule="chain")
+    assert {p.tie_group for p in chained.projects} == {0}     # the fixtures chain into one group of 40
     _, default = fixture_run()
-    assert {p.tie_group for p in default.projects} == {0}     # the fixtures: one tie group of 40
-    _, loose = fixture_run(tie_threshold=0.55)
+    groups = [p.tie_group for p in sorted(default.projects, key=lambda p: p.rank)]
+    assert len(set(groups)) > 1 and groups == sorted(groups)   # anchored: several, contiguous
+    _, loose = fixture_run(tie_rule="chain", tie_threshold=0.55)
     assert len({p.tie_group for p in loose.projects}) > 1
+    with pytest.raises(ConfigError):
+        EngineConfig(tie_rule="nearest")
 
 
 # ================================================================== flaggers and explain
@@ -366,7 +394,7 @@ def test_cli_default_on_the_fixtures():
     code, text = cli()
     assert code == 0
     assert "method m2 v1 | baseline raw_mean" in text
-    assert "# 40 projects ranked in 1 tie group(s)" in text
+    assert "# 40 projects ranked in 3 tie group(s)" in text
     assert "# reviews: 126 in the input, 119 used; ranking: overall" in text
     assert "lambda_q=4 lambda_b=4 (cv, seed" in text and "lambda_at_grid_boundary=true" in text
     assert "# excluded project prj_41" in text and "# excluded judge jdg_07" in text

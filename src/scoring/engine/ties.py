@@ -6,9 +6,12 @@ method. (The lab ranked raw floats, so its order inside such ties was float nois
 rank would overstate what a method knows, so every rank comes with a tie group:
 
 * Methods with the "uncertainty" capability: walking down the ranking, a project joins the
-  group of the one above it while P(the one above is truly ahead) < tie_threshold (0.84 by
-  default, the lab's rule). P(ahead) = Phi(Delta / SD(Delta)), with the covariance of the two
-  scores included.
+  current group while P(the group's top project is truly ahead of it) < tie_threshold (0.84 by
+  default); once the top project is clearly ahead, it starts the next group and becomes its top.
+  This is `tie_rule` "anchor". The lab's rule, "chain", compares each project with the one just
+  above it instead; small gaps then chain, and an event whose neighbours are all close becomes
+  one group even when its first and last projects are far apart. P(ahead) = Phi(Delta /
+  SD(Delta)), with the covariance of the two scores included.
 * Methods without it: only scores that are equal (after rounding to `equal_decimals`, so two
   means that are equal on paper but differ in the last bit still tie) share a group. No
   uncertainty is invented for them.
@@ -60,18 +63,32 @@ def p_ahead(cov: np.ndarray, scores: np.ndarray, a: int, b: int):
     return delta, sd, delta / sd, phi(delta / sd)
 
 
-def se_tie_groups(scores: np.ndarray, cov: np.ndarray, rank: np.ndarray, threshold: float):
-    """(group id per project, P(ahead of the next project down) per project or None for the last)."""
+def se_tie_groups(scores: np.ndarray, cov: np.ndarray, rank: np.ndarray, threshold: float,
+                  rule: str = "anchor"):
+    """(group id per project, P(ahead of the next project down) per project or None for the last,
+    P(the current group's top is ahead of it) per project or None for the first).
+
+    `rule` "anchor" compares each project with its group's top project, "chain" with the project
+    just above (see the module docstring). P(ahead of the next) is the adjacent pair either way;
+    under "chain" the third list is all None. A project starts a new group exactly when its
+    deciding P is >= threshold."""
     order = np.argsort(rank, kind="stable")
     groups = np.empty(len(scores), dtype=int)
     p_next: list[float | None] = [None] * len(scores)
-    group = 0
+    p_top: list[float | None] = [None] * len(scores)
+    group, top = 0, None
     for i, index in enumerate(order):
         if i > 0:
             above = order[i - 1]
             _, _, _, p = p_ahead(cov, scores, above, index)
             p_next[above] = p
+            if rule == "anchor":
+                _, _, _, p = p_ahead(cov, scores, top, index)
+                p_top[index] = p
             if p >= threshold:
                 group += 1
+                top = index
+        else:
+            top = index
         groups[index] = group
-    return groups, p_next
+    return groups, p_next, p_top

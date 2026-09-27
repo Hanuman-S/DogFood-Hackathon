@@ -52,6 +52,12 @@ optionally for chosen tracks). A link is shown once (only its SHA-256 digest is 
 after 7 days, works once, can be revoked, and is refused for anyone competing in the event (the
 database's conflict-of-interest constraint is the backstop). All audited.
 
+**Co-organizers** are invited the same way from the organizers section (the same model,
+`events_judgeinvite`, with `role` "organizer"; links start `oinv_` and land on
+`/invite/organizer/<token>`); accepting makes the holder an organizer of that event, refused for
+anyone competing in it. Audit rows: `organizer_invited`, `organizer_invite_accepted` (plus
+`organizer_added`), `organizer_invite_refused`, `organizer_invite_revoked`.
+
 ## The judging window
 
 Reviews are written only from `judging_starts_at` to `judging_ends_at`, by the database clock,
@@ -69,8 +75,12 @@ half-open. The window is checked **first** in every review write (409 `judging_n
 `scoring.services.run_assignment`; deterministic for a seed and database state).
 
 1. **Hard rules**: a judge reviews only projects in their tracks; no pair twice; a judge who
-   declined a project (conflict) never gets it back; competitors cannot judge.
-2. **Balance**: projects are filled to the review target (default 3) round-robin, fewest eligible
+   declined a project (conflict) never gets it back; an automatic round never gives a project back
+   to a judge an organizer withdrew it from (they can still be added back by hand); competitors
+   cannot judge.
+2. **Balance**: projects are filled to the review target (default 3; changeable until judging
+   starts, fixed after; lowering it before judging releases the extra reviews from the busiest
+   judges first) round-robin, fewest eligible
    judges first; each review goes to the least-loaded eligible judge, never past the optional cap.
 3. **Randomness within the rules**: ties prefer the judge who shares the fewest projects with the
    project's reviewers (so judges meet many colleagues, which normalization needs), then a seeded
@@ -78,9 +88,12 @@ half-open. The window is checked **first** in every review write (409 `judging_n
 4. **Connectivity**: separate judge-project groups are linked with extra reviews where possible,
    and reported with the fix where not.
 
-Running again **tops up** only what is missing. Organizers can add, move or withdraw an unstarted
-assignment and reassign a stalled judge's unstarted reviews. Everything is audited; nothing is
-deleted.
+Running again **tops up** only what is missing. Organizers can add a judge by hand, withdraw an
+unstarted assignment (to move one: withdraw it, then assign), **reshuffle unstarted** (release every
+review nobody has started and draw them again with a new seed; audited as
+`assignments_reshuffled`), and reassign a stalled judge's unstarted reviews. Started reviews always
+stay with their judge. Everything is audited; nothing is deleted (a released or withdrawn
+assignment keeps its row with that status).
 
 ## The judge side
 
@@ -115,8 +128,13 @@ with five. Before the fit, filters drop (and list, with reasons) the duplicate s
 projects with too few reviews, near-flat judges and outlying reviews; a flag never changes a score.
 
 - **Uncertainty and tie groups.** Each score has a standard error. Walking down the ranking, a
-  project joins the tie group of the one above while P(the one above is truly ahead) is below 0.84.
-  Ranks inside a group are not a real order.
+  project joins the current tie group while P(the group's top project is truly ahead of it) is
+  below 0.84; the first project the top is clearly ahead of starts the next group (`tie_rule`
+  "anchor"). Ranks inside a group are not a real order. The lab compared each project with the one
+  just above instead ("chain"): small gaps chain, so the fixture event, whose neighbours are all
+  close, became one group of 40 although its top and bottom are clearly apart. Anchored, it has 3.
+  The lab-parity tests pin "chain"; snapshots already computed keep the groups they were computed
+  with.
 - **Exact ties.** The engine's ordinal rank breaks exactly equal scores by input order (creation
   order). Every page shows **shared** ranks instead: equal after rounding to 9 decimals is a tie
   (competition style: =12, =12, 14).
@@ -247,7 +265,8 @@ flags make clusters visible; they do not prove intent.
 the audit trail from creation; teams and projects from submissions open; assignments from the close;
 reviews from judging start; results from judging end), else 409 `stage_not_open`. Organizers of the
 event and admins only; every download audited; only submitted reviews; the audit sheet shows IP
-hash prefixes, not addresses. The export's results sheet is the M2 comparison of the latest final;
+hash prefixes, not addresses, and a readable "what" column beside the raw detail. The `invites`
+sheet lists judge and co-organizer links (role, state; never the link itself). The export's results sheet is the M2 comparison of the latest final;
 the combined ranking is in `results.csv`. Every CSV the portal writes goes through one writer
 (`core/csvfile.py`) that escapes text starting like a formula.
 

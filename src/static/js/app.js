@@ -23,6 +23,14 @@
   document.addEventListener("input", function (e) { if (e.target.form) dirty = true; });
   document.addEventListener("change", function (e) { if (e.target.form) dirty = true; });
   document.addEventListener("submit", function () { dirty = false; });
+  // A page with a big form (the project editor) asks before leaving with unsaved changes.
+  if (document.querySelector("form[data-guard-unsaved]")) {
+    window.addEventListener("beforeunload", function (e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    });
+  }
 
   // Countdowns: <span data-countdown="<close ISO>" data-now="<server now ISO>">.
   // Time left is computed against the server's clock (offset from the page's render time),
@@ -70,39 +78,155 @@
     countdowns = countdowns.filter(tickCountdown);  // drops ones a refresh replaced
   }, 1000);
 
-  // Rubric editor: show each row's share of the score (weight / sum of the weights of the rows
-  // being kept) in its <span data-weight-share>, as the organizer types. Weights are relative.
-  var weights = document.querySelectorAll("[data-weight]");
-  if (weights.length) {
-    var removal = function (input) {
-      return document.querySelector("[name='" + input.name.replace(/weight$/, "DELETE") + "']");
-    };
-    var shareOf = function (input) {
-      var row = input.closest("tr");
-      return row ? row.querySelector("[data-weight-share]") : null;
-    };
+  // Rubric editor (progressive: without JS it is a plain formset with one blank row).
+  //  - each row's share of the score (weight / sum of the kept rows' weights), as you type;
+  //  - "remove" hides the whole row at once (it is deleted on save), with an undo;
+  //  - "+ add criterion" adds as many blank rows as you like before one save.
+  var rubricRows = document.querySelector("[data-rubric-rows]");
+  if (rubricRows) {
+    var removeBox = function (row) { return row.querySelector("input[type=checkbox][name$='-DELETE']"); };
     var recount = function () {
+      var rows = Array.prototype.slice.call(rubricRows.querySelectorAll("[data-rubric-row]"));
+      var kept = rows.filter(function (row) { var box = removeBox(row); return !(box && box.checked); });
       var total = 0;
-      weights.forEach(function (input) {
-        var remove = removal(input);
-        var value = parseFloat(input.value);
-        if ((!remove || !remove.checked) && value > 0) total += value;
+      kept.forEach(function (row) {
+        var value = parseFloat((row.querySelector("[data-weight]") || {}).value);
+        if (value > 0) total += value;
       });
-      weights.forEach(function (input) {
-        var share = shareOf(input);
+      rows.forEach(function (row) {
+        var share = row.querySelector("[data-weight-share]");
+        var value = parseFloat((row.querySelector("[data-weight]") || {}).value);
         if (!share) return;
-        var remove = removal(input);
-        var value = parseFloat(input.value);
-        share.textContent = (total > 0 && value > 0 && !(remove && remove.checked))
+        share.textContent = (kept.indexOf(row) !== -1 && total > 0 && value > 0)
           ? (Math.round(value / total * 1000) / 10) + "%" : "\u2013";
       });
     };
-    weights.forEach(function (input) {
-      input.addEventListener("input", recount);
-      var remove = removal(input);
-      if (remove) remove.addEventListener("change", recount);
+    var removedBar = document.querySelector("[data-rubric-removed]");
+    var removedText = document.querySelector("[data-rubric-removed-text]");
+    var removed = [];
+    var showRemoved = function () {
+      if (!removedBar) return;
+      removedBar.hidden = removed.length === 0;
+      if (removed.length) {
+        var last = removed[removed.length - 1].querySelector("input[name$='-label']");
+        removedText.textContent = removed.length + " removed" +
+          (last && last.value ? " (last: " + last.value + ")" : "") + ". saved only when you press save rubric.";
+      }
+    };
+    var setRemoved = function (row, isRemoved) {
+      row.hidden = isRemoved;
+      var i = removed.indexOf(row);
+      if (isRemoved && i === -1) removed.push(row);
+      if (!isRemoved && i !== -1) removed.splice(i, 1);
+      showRemoved();
+      recount();
+    };
+    rubricRows.addEventListener("input", recount);
+    rubricRows.addEventListener("change", function (e) {
+      if (e.target.matches("input[type=checkbox][name$='-DELETE']")) {
+        setRemoved(e.target.closest("[data-rubric-row]"), e.target.checked);
+      }
     });
+    var undo = document.querySelector("[data-rubric-undo]");
+    if (undo) undo.addEventListener("click", function () {
+      var row = removed[removed.length - 1];
+      if (!row) return;
+      removeBox(row).checked = false;
+      setRemoved(row, false);
+    });
+    // Rows already marked for removal (a page shown again after an error) stay hidden.
+    rubricRows.querySelectorAll("[data-rubric-row]").forEach(function (row) {
+      var box = removeBox(row);
+      if (box && box.checked) setRemoved(row, true);
+    });
+    var addButton = document.querySelector("[data-rubric-add]");
+    var template = document.getElementById("rubric-new-row");
+    var totalForms = document.querySelector("input[name$='-TOTAL_FORMS']");
+    var maxForms = document.querySelector("input[name$='-MAX_NUM_FORMS']");
+    if (addButton && template && totalForms) {
+      addButton.hidden = false;
+      addButton.addEventListener("click", function () {
+        var index = parseInt(totalForms.value, 10);
+        if (maxForms && index >= parseInt(maxForms.value, 10)) {
+          addButton.disabled = true;
+          addButton.textContent = "at most " + maxForms.value + " criteria";
+          return;
+        }
+        rubricRows.insertAdjacentHTML("beforeend", template.innerHTML.replace(/__prefix__/g, index));
+        totalForms.value = index + 1;
+        var label = rubricRows.lastElementChild && rubricRows.lastElementChild.querySelector("input[name$='-label']");
+        if (label) label.focus();
+        recount();
+      });
+    }
     recount();
+  }
+
+  // Custom question forms: the "choices" box only matters for a single-choice question, so it
+  // is shown only when that kind is picked (a server error on it keeps it visible).
+  document.querySelectorAll("select[name='kind']").forEach(function (kind) {
+    var form = kind.form;
+    var choices = form && form.querySelector("[name='choices']");
+    var field = choices && choices.closest(".field");
+    if (!field) return;
+    var sync = function () {
+      field.hidden = kind.value !== "choice" && !field.classList.contains("field--invalid");
+    };
+    kind.addEventListener("change", function () { field.classList.remove("field--invalid"); sync(); });
+    sync();
+  });
+
+  // Keep your place. A form post reloads the page, which used to land at the top every time.
+  // Before a post, remember where you were; on the page that comes back, return there -- or, if
+  // the post was refused, to the first error. Any message shown at the top is repeated in a
+  // small toast, since you are no longer scrolled up to it. (sessionStorage: this tab only.)
+  var PLACE = "dogfood:place";
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if ((f.getAttribute("method") || "").toLowerCase() !== "post" || f.hasAttribute("data-no-keep-place")) return;
+    try {
+      sessionStorage.setItem(PLACE, JSON.stringify({
+        from: location.pathname, to: new URL(f.action, location.href).pathname,
+        y: window.scrollY, t: Date.now(),
+      }));
+    } catch (err) { /* storage off: the page just starts at the top */ }
+  });
+  var place = null;
+  try {
+    place = JSON.parse(sessionStorage.getItem(PLACE) || "null");
+    sessionStorage.removeItem(PLACE);
+  } catch (err) { place = null; }
+  if (place && Date.now() - place.t < 60000) {
+    var here = location.pathname;
+    var restore = function () {
+      var problem = document.querySelector(".field--invalid, .msg--error");
+      if (problem && (here === place.to || here === place.from)) {
+        problem.scrollIntoView({ block: "center" });
+      } else if (here === place.from && !location.hash) {
+        window.scrollTo(0, place.y);
+      } else if (here === place.from && location.hash) {
+        window.scrollTo(0, place.y);  // the redirect's #section is close; the exact spot is better
+      } else {
+        return;  // a different page: start at its top as usual
+      }
+      var notes = document.querySelectorAll(".msgs .msg");
+      if (notes.length && window.scrollY > 200) {
+        var toast = document.createElement("div");
+        toast.className = "toast";
+        toast.setAttribute("role", "status");
+        notes.forEach(function (n) {
+          var line = document.createElement("p");
+          line.className = n.className;
+          line.textContent = n.textContent;
+          toast.appendChild(line);
+        });
+        document.body.appendChild(toast);
+        setTimeout(function () { toast.classList.add("toast--gone"); }, 4000);
+        setTimeout(function () { toast.remove(); }, 4600);
+      }
+    };
+    if (document.readyState === "complete") restore();
+    else window.addEventListener("load", function () { requestAnimationFrame(restore); });
   }
 
   // Live pages: <div data-refresh-url="...?partial=1" data-refresh-every="30"> replaces its
