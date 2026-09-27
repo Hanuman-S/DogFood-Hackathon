@@ -81,3 +81,55 @@ def test_the_demo_judges_see_their_queue_in_the_portal(client_for):
     judge.save()
     page = client_for(judge).get("/judge/events/dogfood-archive-2026/")
     assert page.status_code == 200 and b"Quiet Map" in page.content
+
+
+# --- the archive's community vote (T3) ------------------------------------------------------------------
+
+def test_archive_vote_is_seeded_open_with_weights_and_a_flagged_cluster():
+    from scoring.services import final_weights
+    from voting import integrity
+    from voting.models import Ballot, VotingConfig
+
+    seed()
+    event = Event.objects.get(slug="dogfood-archive-2026")
+    config = VotingConfig.objects.get(event=event)
+    now = timezone.now()
+    assert config.opens_at <= now < config.closes_at and config.method == "quadratic"
+    assert final_weights(event) == (80, 20)
+    assert AuditLog.objects.filter(action=AuditAction.WEIGHTS_BYPASSED, subject=event.slug).exists()
+    assert Ballot.objects.filter(event=event).count() == 10
+    kinds = {f.kind for f in integrity.flags(event)}
+    assert {"ip_burst", "identical_ballots"} <= kinds
+    burst = next(f for f in integrity.flags(event) if f.kind == "ip_burst")
+    assert {b.voter_user.email for b in burst.ballots} == {f"voter.cluster{i}@dogfood.local" for i in range(1, 5)}
+    seed()  # create-only
+    assert Ballot.objects.filter(event=event).count() == 10
+
+
+def test_demo_participant_can_vote_in_the_archive():
+    from accounts.models import User
+    from voting import services as voting
+
+    seed()
+    event = Event.objects.get(slug="dogfood-archive-2026")
+    participant = User.objects.get(email="participant@dogfood.local")
+    config = voting.voting_for(event)
+    assert voting.ineligibility(event, config, participant) is None
+    other = Project.objects.filter(event=event).exclude(team__members__user=participant).first()
+    voting.cast(event, voting.Voter(participant), "", {other.pk: 4}, participant)
+
+
+def test_fixture_event_gets_a_closed_vote_after_import():
+    from imports.fixtures import import_file
+    from voting.models import VotingConfig
+    from voting import services as voting
+
+    seed()
+    import_file()
+    with override_settings(DEMO_MODE=True, DEMO_TOKENS=TOKENS):
+        out = StringIO()
+        call_command("seed_demo", "--votes", stdout=out)
+        assert "created" in out.getvalue()
+        call_command("seed_demo", "--votes", stdout=out)
+    config = VotingConfig.objects.exclude(event__slug__startswith="dogfood-").get()
+    assert voting.state(config, timezone.now()) == "closed"

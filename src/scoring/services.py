@@ -865,9 +865,10 @@ def active_publication(event):
 
 
 def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
-    """Publish the event's latest final snapshot. Refusals, each audited: PermissionDenied (not an
-    organizer of the event, nor an admin); NoSuchSnapshot (404); NotFinal (400); NotLatestFinal,
-    VotingOpen (community voting has not closed yet), FinalPredatesVoteClose (the event has a vote but
+    """Publish the event's latest final snapshot. Refusals, each audited, in this order:
+    PermissionDenied (not an organizer of the event, nor an admin); VotingOpen (409: community voting
+    has not closed yet -- checked first, whatever the snapshot); NoSuchSnapshot (404); NotFinal (400);
+    NotLatestFinal, FinalPredatesVoteClose (the event has a vote but
     this final has no tally: it was computed before the vote closed), AlreadyPublished (409)."""
 
     def refuse(error, reason):
@@ -880,6 +881,12 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
     try:
         with transaction.atomic():
             Event.objects.select_for_update().filter(pk=event.pk).first()
+            # The window first (like every deadline): while the vote is open nothing is published,
+            # whatever the snapshot.
+            voting = VotingConfig.objects.filter(event=event).first()
+            if voting is not None and db_now() < voting.closes_at:
+                raise VotingOpen(f"Community voting closes at {voting.closes_at.isoformat()}; final results "
+                                 "can be published once it has closed.")
             snapshot = ResultSnapshot.objects.filter(event=event, pk=snapshot_id).first()
             if snapshot is None:
                 raise NoSuchSnapshot("This event has no such result snapshot.")
@@ -887,10 +894,6 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
                 raise NotFinal("Only a final result can be published; this one is a preview.")
             if latest_final(event).pk != snapshot.pk:
                 raise NotLatestFinal("A newer final result exists; publish that one instead.")
-            voting = VotingConfig.objects.filter(event=event).first()
-            if voting is not None and db_now() < voting.closes_at:
-                raise VotingOpen(f"Community voting closes at {voting.closes_at.isoformat()}; final results "
-                                 "can be published once it has closed.")
             if voting is not None and snapshot.vote_tally_id is None:
                 raise FinalPredatesVoteClose(
                     f"Final #{snapshot.pk} was computed before community voting closed, so it has no vote "

@@ -356,8 +356,17 @@ def test_publishing_final_results_is_refused_while_voting_is_open(vote_event):
         scoring.publish_results(vote_event, snapshot.pk, actor=vote_event.organizer)
     assert (caught.value.status, caught.value.code) == (409, "voting_open")
     assert AuditLog.objects.get(action=AuditAction.RESULTS_PUBLISH_REFUSED).detail["reason"] == "voting_open"
+    # "voting open" is checked first, before anything about the snapshot
+    with pytest.raises(VotingOpen):
+        scoring.publish_results(vote_event, 999999, actor=vote_event.organizer)
     services.end_voting_now(vote_event, actor=vote_event.organizer)
-    scoring.publish_results(vote_event, snapshot.pk, actor=vote_event.organizer)
+    # that final predates the close (no tally): refused; a final computed now can be published
+    from scoring.errors import FinalPredatesVoteClose
+    with pytest.raises(FinalPredatesVoteClose):
+        scoring.publish_results(vote_event, snapshot.pk, actor=vote_event.organizer)
+    fresh = scoring.compute_snapshot(vote_event, "final", actor=vote_event.organizer)
+    assert fresh.vote_tally is not None
+    scoring.publish_results(vote_event, fresh.pk, actor=vote_event.organizer)
 
 
 # --- hidden tallies ------------------------------------------------------------------------------------------------

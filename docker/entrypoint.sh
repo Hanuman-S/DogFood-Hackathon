@@ -40,6 +40,10 @@ fi
 if [ "${SEED_FIXTURES:-0}" = "1" ]; then
     echo "--> importing the organizers' fixture data (create-only; SEED_FIXTURES=0 to skip)"
     python /app/src/manage.py import_fixtures
+    if [ "${DEMO_MODE:-0}" = "1" ]; then
+        # Demo only: a closed community vote on the fixture event (needs the import above).
+        python /app/src/manage.py seed_demo --votes
+    fi
 fi
 
 if [ "${DEMO_MODE:-0}" != "1" ]; then

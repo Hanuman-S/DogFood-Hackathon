@@ -468,3 +468,42 @@ def test_cell_escapes_every_formula_start_but_not_real_numbers():
     for start in ("=", "+", "-", "@", "\t", "\r"):
         assert cell(start + "1+1") == "'" + start + "1+1"
     assert (cell(-1), cell(-0.25)) == ("-1", "-0.25")
+
+
+# --- the JSON API --------------------------------------------------------------------------------------------
+
+@TX
+def test_results_api_compute_publish_settings_unpublish(judged, client_for, make_event):
+    import json
+
+    base = f"/api/events/{judged.slug}/results"
+
+    def post(client, path, body=None):
+        return client.post(base + path, json.dumps(body or {}), content_type="application/json")
+
+    assert post(Client(), "/compute", {"kind": "final"}).status_code == 401
+    assert post(client_for(judged.participant), "/compute", {"kind": "final"}).status_code == 403
+    assert post(client_for(make_event().organizer), "/compute", {"kind": "final"}).status_code == 404
+    organizer = client_for(judged.organizer)
+    assert post(organizer, "/compute", {"kind": "nope"}).status_code == 400
+    created = post(organizer, "/compute", {"kind": "final"})
+    assert created.status_code == 201 and created.json()["kind"] == "final"
+    snapshot = created.json()["id"]
+    assert post(organizer, "/settings", {"visibility": "public_full", "winners_top_n": 3}).json()["visibility"] == "public_full"
+    assert post(organizer, "/settings", {"visibility": "loud", "winners_top_n": 3}).json()["error"] == "invalid_result_settings"
+    assert post(organizer, "/publish", {"snapshot": snapshot}).status_code == 200
+    again = post(organizer, "/publish", {"snapshot": snapshot})
+    assert (again.status_code, again.json()["error"]) == (409, "already_published")
+    assert Client().get(f"/events/{judged.slug}/results").status_code == 200
+    assert post(organizer, "/unpublish").status_code == 200
+    assert Client().get(f"/events/{judged.slug}/results").status_code == 404
+
+
+@TX
+def test_results_api_final_refused_while_judging_open(make_event, client_for):
+    import json
+
+    event = make_event()
+    response = client_for(event.organizer).post(f"/api/events/{event.slug}/results/compute", json.dumps({"kind": "final"}),
+                                                content_type="application/json")
+    assert (response.status_code, response.json()["error"]) == (409, "judging_open")

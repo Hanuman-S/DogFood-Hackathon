@@ -3,13 +3,16 @@
 Roles are per event, so "per role" means: a platform admin, an account that may create events
 and organizes the demo events, two accounts that judge them, and one that competes in them.
 
-    python manage.py seed_demo
+    python manage.py seed_demo            # accounts, the live and archive events, the archive's vote
+    python manage.py seed_demo --votes    # after import_fixtures: a closed vote on the fixture event
 
 Runs on every container boot when DEMO_MODE=1, so it is create-only: an account or token that
 already exists is left exactly as it is (a password someone changed is not reset). It refuses
 to run at all unless DEMO_MODE=1 -- the guard lives here, not in the entrypoint, so calling the
 command by hand cannot bypass it.
 """
+
+import secrets
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -58,6 +61,23 @@ ARCHIVE_PROJECTS = [
 ]
 ARCHIVE_ASSIGNMENT_SEED = 20260926  # fixed: the same round on every boot
 
+# The archive's community vote (T3): seed-only voter accounts (no password: they cannot log in).
+# (email, name, documentation-range IP the ballot "came from", {project name: credits}).
+ARCHIVE_VOTERS = [
+    ("voter.ada@dogfood.local", "Ada V.", "192.0.2.11", {"Quiet Map": 9, "Pairing Hat": 4, "Lamp Post": 1}),
+    ("voter.ben@dogfood.local", "Ben V.", "192.0.2.12", {"Stand-up Bot": 16}),
+    ("voter.cai@dogfood.local", "Cai V.", "192.0.2.13", {"Sleep Debt": 4, "Quiet Map": 4, "Lamp Post": 4, "Pairing Hat": 4}),
+    ("voter.dee@dogfood.local", "Dee V.", "192.0.2.14", {"Pairing Hat": 9, "Sleep Debt": 1}),
+    ("voter.eli@dogfood.local", "Eli V.", "192.0.2.15", {"Quiet Map": 16}),
+    ("voter.fay@dogfood.local", "Fay V.", "192.0.2.16", {"Lamp Post": 9, "Stand-up Bot": 4, "Quiet Map": 1}),
+]
+# One deliberately suspicious cluster: four accounts, one network, identical spread ballots within
+# minutes. The integrity page flags it twice (network burst, identical ballots); nothing is voided.
+ARCHIVE_CLUSTER_IP = "198.51.100.66"
+ARCHIVE_CLUSTER = [(f"voter.cluster{i}@dogfood.local", f"Cluster Voter {i}") for i in range(1, 5)]
+ARCHIVE_CLUSTER_BALLOT = {"Stand-up Bot": 9, "Lamp Post": 4, "Sleep Debt": 1}
+ARCHIVE_COMMUNITY_WEIGHT = 20
+
 
 def _as(user):
     """A request as `user`, for calling services at boot (there is no HTTP request)."""
@@ -81,9 +101,16 @@ def _compete(event, team, user):
 class Command(BaseCommand):
     help = "Create demo accounts (one per role) and fixed API tokens. DEMO_MODE=1 only."
 
+    def add_arguments(self, parser):
+        parser.add_argument("--votes", action="store_true",
+                            help="after import_fixtures: give the fixture event a closed community vote")
+
     def handle(self, *args, **options):
         if not settings.DEMO_MODE:
             raise CommandError("Refusing to seed demo accounts: DEMO_MODE is not 1.")
+        if options["votes"]:
+            self.stdout.write(f"--> fixture event vote: {self._seed_fixture_vote()}")
+            return
 
         rows = []
         for key, (email, name, role, flags) in DEMO_ACCOUNTS.items():
@@ -101,6 +128,7 @@ class Command(BaseCommand):
 
         event_state = self._seed_event()
         closed_state = self._seed_closed_event()
+        closed_state += self._seed_archive_vote()
         self._print(rows)
         base = settings.PORTAL_BASE_URL.rstrip("/")
         self.stdout.write(f"| open demo event:   {base}/events/{DEMO_EVENT_SLUG} [{event_state}]")
@@ -234,6 +262,86 @@ class Command(BaseCommand):
             )
         event.refresh_from_db()
         return "created" + self._ensure_archive_round(event)
+
+    def _seed_archive_vote(self):
+        """The archive's community vote, open for its whole judging phase: quadratic, 16 credits,
+        logged-in voting, community weight 20 (set through the audited weights bypass: judging has
+        already opened, so the weights are otherwise locked). Ten seeded ballots through the real
+        voting service, one cluster of them deliberately suspicious. Create-only: nothing happens if
+        the archive already has a vote.
+
+        "Only accounts created before voting opened" is OFF here, on purpose: the demo accounts are
+        created at boot, after this vote "opened", and the demo participant must be able to vote.
+        """
+        from datetime import timedelta
+
+        from core.audit import Origin
+        from core.net import hash_ip
+        from events.models import Event
+        from projects.models import Project
+        from scoring.models import EventScoringConfig
+        from scoring.services import weights_bypass
+        from voting import services as voting
+        from voting.models import AccessMode, Method, VotingConfig
+
+        event = Event.objects.filter(slug=CLOSED_EVENT_SLUG).first()
+        if event is None or VotingConfig.objects.filter(event=event).exists():
+            return ""
+        organizer = User.objects.get(email=DEMO_ACCOUNTS["organizer"][0])
+        VotingConfig.objects.create(
+            event=event, opens_at=event.submissions_close_at, closes_at=event.judging_ends_at,
+            access_mode=AccessMode.AUTHENTICATED, method=Method.QUADRATIC, credit_budget=16,
+            accounts_before_open_only=False, ballot_secret=secrets.token_hex(32), created_by=organizer,
+        )
+        with weights_bypass("demo seed: the archive's final score is 80% judges, 20% community",
+                            actor=organizer, subject=event.slug):
+            EventScoringConfig.objects.update_or_create(event=event, defaults={
+                "judge_weight": 100 - ARCHIVE_COMMUNITY_WEIGHT, "community_weight": ARCHIVE_COMMUNITY_WEIGHT,
+                "updated_by": organizer})
+        names = {p.name: p.pk for p in Project.objects.filter(event=event)}
+        joined = event.submissions_close_at - timedelta(days=7)
+
+        def voter(email, name):
+            user = User.objects.filter(email=email).first() or User.objects.create_user(email, None, name=name)
+            return user
+
+        def cast(user, ip, ballot):
+            ip_hash = hash_ip(ip)
+            voting.cast(event, voting.Voter(user), ip_hash, {names[n]: c for n, c in ballot.items()}, user,
+                        origin=Origin(ip_hash=ip_hash, user_agent="seed_demo"))
+
+        for email, name, ip, ballot in ARCHIVE_VOTERS:
+            user = voter(email, name)
+            User.objects.filter(pk=user.pk, date_joined__gt=joined).update(date_joined=joined)
+            user.refresh_from_db()
+            cast(user, ip, ballot)
+        for email, name in ARCHIVE_CLUSTER:
+            cast(voter(email, name), ARCHIVE_CLUSTER_IP, ARCHIVE_CLUSTER_BALLOT)
+        return ", community vote seeded"
+
+    def _seed_fixture_vote(self):
+        """Give the organizers' fixture event (Sample Hack 2026) a community vote that has already
+        closed (its window is the event's judging window, in March 2026), with no ballots. It lets
+        t3-check show a late vote refused as 409 voting_closed on real data, and the event's final
+        result still computes and publishes: a final after the close freezes the (empty) tally.
+        Create-only."""
+        from events.models import Event
+        from imports.models import FixtureRef
+        from voting import services as voting
+        from voting.models import AccessMode, Method, VotingConfig
+
+        ref = FixtureRef.objects.filter(kind=FixtureRef.Kind.EVENT, external_id="evt_01").first()
+        event = Event.objects.filter(pk=ref.object_id).first() if ref else None
+        if event is None:
+            return "no fixture event"
+        if VotingConfig.objects.filter(event=event).exists():
+            return "exists"
+        VotingConfig.objects.create(
+            event=event, opens_at=event.submissions_close_at, closes_at=event.judging_ends_at,
+            access_mode=AccessMode.AUTHENTICATED, method=Method.QUADRATIC, credit_budget=16,
+            ballot_secret=secrets.token_hex(32),
+        )
+        return f"created (closed at {event.judging_ends_at.isoformat()})"
 
     def _demo_project(self, event, track, email, name, team_name, project_name, tagline, repo):
         """One demo team and its submitted project, through the participant services."""

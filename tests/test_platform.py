@@ -50,9 +50,11 @@ def test_seed_demo_is_create_only():
     call_command("seed_demo", stdout=StringIO())
     admin.refresh_from_db()
     assert admin.check_password("changed-by-a-human-1")
-    # the five demo accounts, plus four seed-only team accounts (no password) in the archive
-    assert User.objects.count() == 9
-    assert User.objects.filter(email__startswith="team.").exclude(password__startswith="!").count() == 0
+    # the five demo accounts, plus four seed-only team accounts and ten seed-only voters (six
+    # honest, four in the deliberately suspicious cluster) in the archive, none with a password
+    assert User.objects.count() == 19
+    seed_only = User.objects.filter(email__startswith="team.") | User.objects.filter(email__startswith="voter.")
+    assert seed_only.count() == 14 and seed_only.exclude(password__startswith="!").count() == 0
     assert ApiToken.objects.count() == 5
 
 

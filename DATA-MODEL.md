@@ -3,8 +3,8 @@
 The schema, the rules the database itself enforces, and the ways data gets in and out.
 
 Postgres 16 in every real deployment (`docker compose up`). SQLite works for local development
-without Docker, minus the two Postgres-only guarantees marked **(pg)** below; the service layer
-enforces the same rules there.
+without Docker, minus the Postgres-only guarantees marked **(pg)** below (triggers and an exclusion
+constraint); the service layer enforces the same rules there.
 
 ## Entity relationships
 
@@ -46,6 +46,19 @@ erDiagram
 
     Criterion ||--o{ ScoreItem : "is scored in"
     Score ||--o{ ScoreItem : "contains"
+
+    Event ||--o{ ResultSnapshot : "is ranked in"
+    Event ||--o| EventResultSettings : "shows results as"
+    ResultSnapshot ||--o{ Publication : "is published by"
+    Event ||--o| VotingConfig : "may hold a vote"
+    Event ||--o{ VoterLink : "allowlists"
+    Event ||--o{ Ballot : "collects"
+    User ||--o{ Ballot : "casts (logged in)"
+    VoterLink ||--o| Ballot : "casts (by link)"
+    Ballot ||--o{ BallotLine : "places credits"
+    Project ||--o{ BallotLine : "receives credits"
+    Event ||--o{ VoteTallySnapshot : "freezes"
+    VoteTallySnapshot ||--o{ ResultSnapshot : "is used by (final)"
 ```
 
 ## The central decision: roles are per event
@@ -81,7 +94,7 @@ role per account. The portals, URLs and refusals are unchanged; see [ARCHITECTUR
 |---|---|---|
 | `accounts_user` | email (login), name, `is_platform_admin`, `can_create_events`, Argon2id hash | `user_email_ci_unique` on `lower(email)` |
 | `accounts_apitoken` | Bearer tokens: name, 8-char prefix, **SHA-256 digest only**, last used, revoked | `digest` unique |
-| `accounts_usersession` | one row per logged-in browser: session key, IP, user agent, last seen | `session_key` unique |
+| `accounts_usersession` | one row per logged-in browser: session key, **IP hash** (never the address), user agent, last seen | `session_key` unique |
 
 ### events
 
@@ -129,21 +142,22 @@ event" be a plain unique constraint instead of a trigger.
 
 | Table | Holds | Enforced by the database |
 |---|---|---|
-| `scoring_criterion` | one rubric line per event: key, label, **`weight` as a percentage** (decimal, three places; an event's weights add up to exactly 100), min, max, order, description, a written anchor per score level (`level_descriptions`) | `criterion_unique_key_per_event`, `criterion_min_below_max` |
+| `scoring_criterion` | one rubric line per event: key, label, **relative `weight`** (decimal, three places, above 0; a criterion's share is weight / sum), the 1-5 scale, order, description, a written anchor per score level (`level_descriptions`) | `criterion_unique_key_per_event`, `criterion_weight_positive`, `criterion_scale_is_1_to_5` |
 | `scoring_score` | one judge's review of one project: judge **membership**, project, comment, `submitted_at` (null = draft) | `score_unique_judge_project` |
 | `scoring_assignmentround` | one run of the automatic assignment: kind (initial / top-up / reassign), **random seed**, review target, load cap, summary of warnings | |
 | `scoring_assignment` | a judge membership asked to review a project: source (import / auto / manual), status (assigned / declined_conflict / withdrawn), queue position, decline reason | `assignment_one_live_per_judge_project` (partial unique over assigned + declined), status and source CHECKs |
 | `scoring_scoreitem` | the value for one criterion within one review | `scoreitem_unique_per_criterion` |
-| `scoring_eventscoringconfig` | one event's engine configuration overrides (JSON); written only by `set_engine_config`, which refuses once judging has closed | one per event |
-| `scoring_resultsnapshot` | one computed ranking, kept exactly as computed: kind (`preview` / `final`), method and version, the resolved engine config (seed and λ used), the rubric, the sha256 of the engine input, the result and comparison JSON, who computed it (user **PROTECT** + email) | `snapshot_kind_valid`; **(pg)** trigger `dogfood_snapshot_immutable` refuses every UPDATE |
-| `scoring_publication` | which final snapshot is published (model only; no service yet): snapshot (**RESTRICT**), published/unpublished at and by (user **PROTECT** + email) | `publication_one_active_per_event` (partial unique), `publication_unpublished_fields_together`; **(pg)** trigger `dogfood_publication_guard`: only a final snapshot of the same event, and append-only (only unpublishing, once) |
+| `scoring_eventscoringconfig` | one event's engine configuration overrides (JSON; written only by `set_engine_config`, refused once judging has closed) and the final score's **`judge_weight` / `community_weight`** (whole numbers; written only by `set_final_weights`) | one per event; `scoring_final_weights_sum_to_100`; **(pg)** trigger `dogfood_weights_lock`: the weights cannot change once judging or voting has opened (bypass: `dogfood.weights_bypass`, audited) |
+| `scoring_eventresultsettings` | who sees a published result (`public_full` / `public_winners` / `private`, default private) and how many overall winners it names | one per event; `result_visibility_valid`, `result_winners_top_n_range` |
+| `scoring_resultsnapshot` | one computed ranking, kept exactly as computed: kind (`preview` / `final`), method and version, the resolved engine config (seed and λ used), the rubric, the sha256 of the engine input, the result and comparison JSON, who computed it (user **PROTECT** + email); for T3, the frozen vote tally a final used (`vote_tally`, **PROTECT**), the weights used, and the `combined` ranking | `snapshot_kind_valid`; **(pg)** trigger `dogfood_snapshot_immutable` refuses every UPDATE |
+| `scoring_publication` | which final snapshot is published (written only by `publish_results` / `unpublish_results`): snapshot (**RESTRICT**), published/unpublished at and by (user **PROTECT** + email) | `publication_one_active_per_event` (partial unique), `publication_unpublished_fields_together`; **(pg)** trigger `dogfood_publication_guard`: only a final snapshot of the same event, and append-only (only unpublishing, once) |
 
 **Actor emails in results cannot be erased.** A snapshot or publication row stores the email of
 the account that computed or published it, and the row is immutable (or append-only) at the
 database level. The user foreign keys are PROTECT, not SET_NULL, because SET_NULL is an UPDATE the
 triggers refuse. So an account named in a result cannot be deleted, and its email cannot later be
 removed from those rows. This is a deliberate audit trade-off: a result that could be rewritten,
-or lose the record of who produced it, would prove nothing. The full T2 write-up comes in S4.
+or lose the record of who produced it, would prove nothing. Deactivate such an account instead.
 
 Assignments are never deleted: withdrawing or declining one changes its status, so "who was asked
 to review what, and what became of it" stays answerable. A declined assignment still blocks the
@@ -156,11 +170,29 @@ with it. Criteria are rows, not columns, so an organizer's own rubric needs no m
 assumes a balanced matrix: the fixture has 2–5 reviews per project and 1–11 per judge. See
 [JUDGING.md](JUDGING.md).
 
+### voting: the community vote (T3)
+
+| Table | Holds | Enforced by the database |
+|---|---|---|
+| `voting_votingconfig` | one event's vote: `opens_at` / `closes_at` (and `original_closes_at`), access mode (authenticated / email_gated / open_link), method (one person one vote / quadratic), `credit_budget`, "accounts created before voting opened only", the per-event ballot secret, the open-link nonce, a freeze counter | one per event; window, mode, method and budget CHECKs (`voting_one_person_one_vote_budget_is_1`); **(pg)** trigger `dogfood_voting_config`: once voting has opened, the row cannot be deleted and `opens_at` / event cannot change |
+| `voting_voterlink` | email_gated: one allowlisted email per row, a nonce, the **SHA-256 digest** of its link token (the token is derived, not stored), revoked at/by | `voterlink_one_per_email_per_event`, digest unique |
+| `voting_ballot` | one voter's ballot: exactly one identity (`voter_user` / `voter_link` / `voter_cookie`), created/updated at, the **IP hash** of the creating and of the last write, and the void fields (at, by, reason) | one per identity per event (three partial uniques), `ballot_has_exactly_one_voter`, `ballot_void_fields_together`; **(pg)** trigger `dogfood_voting_window` |
+| `voting_ballotline` | the credits one ballot places on one project, and where the project was shown (`shown_position`) | one per ballot and project, one per ballot and position; **(pg)** trigger `dogfood_voting_window` |
+| `voting_votetallysnapshot` | one frozen count (per project: influence, ballots, credits), the voided ballot ids, the input hash, the previous tally and what changed since it | **(pg)** trigger `dogfood_tally_immutable` refuses every UPDATE; `event`, `created_by`, `previous` are PROTECT |
+
+**The voting trigger (pg)** (`voting/migrations/0002`, `0004`): no INSERT or UPDATE of a ballot or
+line outside `[opens_at, closes_at)` by `statement_timestamp()`, except an UPDATE of a ballot that
+changes only its void columns (voiding and restoring work at any time); and **no DELETE of a ballot
+or line once voting has opened**. The foreign keys into ballots are PROTECT (`Ballot.event`,
+`Ballot.voter_user`, `Ballot.voter_link`, `Ballot.voided_by`, `BallotLine.project`), so no cascade
+from an event, project, team or account can remove a vote; a test pins the full list. The one way past
+the trigger is `dogfood.voting_bypass`, set for one block by the audited `voting_bypass`.
+
 ### core and imports
 
 | Table | Holds |
 |---|---|
-| `core_auditlog` | every security-relevant action: who, what, subject, IP, user agent, JSON detail. Read-only in the admin, even for admins |
+| `core_auditlog` | every security-relevant action: who, what, subject, **IP hash** (never the address), user agent, JSON detail. Read-only in the admin, even for admins. Rate limits (logins, vote writes) are counted from it |
 | `imports_fixtureref` | `(source, kind, external_id) → object_id` for every imported row, plus `duplicate_of` and a note |
 
 ## Deadline enforcement in the database **(pg)**
@@ -234,4 +266,12 @@ from each event's control page in the organizer portal.
   projects, assignments, assignment rounds, submitted reviews, results, audit, plus a README), or
   one sheet with `GET /api/export.csv?event=<slug>&sheet=<name>`; the same links are on each
   event's page. Secrets (team invite tokens, judge invite digests) and draft reviews are never
-  exported. See [JUDGING.md](JUDGING.md#csv-export-built) for the rules.
+  exported. See [JUDGING.md](JUDGING.md#csv-export) for the rules.
+- **Results** (organizers of the event): `winners.csv` (winners and People's Choice, with each team
+  member's name and email) and `results.csv` (every project of the latest final: final rank, judged
+  percentile, M2 rank, tie group, influence, vote percentile, People's Choice position).
+- **Voting** (organizers of the event): `tally.csv` (the live tally),
+  `GET /api/events/<slug>/votes/tally`, and `voter-links.csv` (email_gated: each email's link).
+- Every CSV goes through one writer (`core/csvfile.py`): UTF-8 with a BOM, and text cells starting
+  with `=`, `+`, `-`, `@`, a tab or a carriage return are prefixed with `'` so a spreadsheet shows them
+  instead of running them. Every download is audited.
