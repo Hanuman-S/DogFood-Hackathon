@@ -19,12 +19,14 @@
       <span class="frame__meta"><span class="badge{% if window.is_open %} badge--on{% endif %}">{{ event.get_phase_display }}</span></span>
     </header>
     <div class="frame__body">
-      <h2 class="section-title">Judging is easy! Here are the simple steps you need to follow:</h2>
-      <ol class="prose">
-        <li>Read the judging criteria and what each score level means.</li>
-        <li>Score each project in your queue. Save a draft any time; submit once every criterion is scored.</li>
-        <li>If you have a conflict of interest with a project, decline it from its page: the organizers reassign it.</li>
-      </ol>
+      <details class="more">
+        <summary>how judging works</summary>
+        <ol class="prose">
+          <li>Read the judging criteria and what each score level means.</li>
+          <li>Score each project in your queue. Save a draft any time; submit once every criterion is scored.</li>
+          <li>If you have a conflict of interest with a project, decline it from its page: the organizers reassign it.</li>
+        </ol>
+      </details>
       {% if next_project_id %}
       <div class="actions">
         <a class="btn" href="{% url 'judge:project_score' event.slug next_project_id %}">

@@ -126,14 +126,21 @@
             <legend class="field__label bright"><b>{{ item.criterion.label }}</b> <span class="faint">· {{ item.criterion.share }}% of the score</span></legend>
             {% if item.criterion.description %}<p class="field__help">{{ item.criterion.description }}</p>{% endif %}
             <div class="rating-group">
-              {% for v in item.range %}
-              <label class="rating-btn">
-                <input type="radio" name="criterion_{{ item.criterion.key }}" value="{{ v }}" {% if item.value == v %}checked{% endif %}{% if not window.is_open %} disabled{% endif %}>
+              {% for v, text in item.options %}
+              <label class="rating-btn"{% if text %} title="{{ v }}: {{ text }}"{% endif %}>
+                <input type="radio" data-level="{{ text }}" name="criterion_{{ item.criterion.key }}" value="{{ v }}" {% if item.value == v %}checked{% endif %}{% if not window.is_open %} disabled{% endif %}>
                 <span>{{ v }}</span>
               </label>
               {% endfor %}
             </div>
-            {% for level, text in item.levels %}{% if text %}<p class="field__help"><b>{{ level }}</b> &mdash; {{ text }}</p>{% endif %}{% endfor %}
+            {% if item.has_levels %}
+            {# Only the chosen level's description is shown; the rest are one click away. #}
+            <p class="field__help" data-level-hint data-empty="pick {{ item.criterion.min_value }}-{{ item.criterion.max_value }}">{% if item.chosen_text %}<b>{{ item.value }}</b> &mdash; {{ item.chosen_text }}{% else %}pick {{ item.criterion.min_value }}-{{ item.criterion.max_value }}{% endif %}</p>
+            <details class="more">
+              <summary>what each level means</summary>
+              {% for level, text in item.levels %}{% if text %}<p class="field__help"><b>{{ level }}</b> &mdash; {{ text }}</p>{% endif %}{% endfor %}
+            </details>
+            {% endif %}
           </fieldset>
           {% endfor %}
 

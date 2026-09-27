@@ -171,15 +171,20 @@ def project_score(request, slug, project_id):
     given = {i.criterion_id: i.value for i in score.items.all()} if score else {}
     if posted is not None:
         given = {pk: int(v) for pk, v in posted.items() if v.strip().isdigit()}
-    criteria_data = [
-        {
+    criteria_data = []
+    for c in criteria:
+        value = int(given[c.pk]) if c.pk in given and given[c.pk] == int(given[c.pk]) else given.get(c.pk)
+        levels = [(str(v), c.level_descriptions.get(str(v), "")) for v in range(c.min_value, c.max_value + 1)]
+        criteria_data.append({
             "criterion": c,
-            "value": int(given[c.pk]) if c.pk in given and given[c.pk] == int(given[c.pk]) else given.get(c.pk),
+            "value": value,
             "range": range(c.min_value, c.max_value + 1),
-            "levels": [(str(v), c.level_descriptions.get(str(v), "")) for v in range(c.min_value, c.max_value + 1)],
-        }
-        for c in criteria
-    ]
+            "levels": levels,
+            # (value, its description) per rating button; the page shows only the chosen one's text
+            "options": [(int(v), text) for v, text in levels],
+            "has_levels": any(text for _, text in levels),
+            "chosen_text": c.level_descriptions.get(str(value), "") if value is not None else "",
+        })
     return render(request, "judge/project_score.html", {
         "event": event, "membership": membership, "project": project, "criteria_data": criteria_data,
         "score": score, "submitted": bool(score and score.submitted_at), "comment": request.POST.get("comment", "") if posted is not None else (score.comment if score else ""),

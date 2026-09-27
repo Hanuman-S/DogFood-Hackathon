@@ -2,6 +2,23 @@
 (function () {
   "use strict";
 
+  // --- The chosen level's description, under each criterion's buttons ---
+  var showLevel = function (radio) {
+    var field = radio.closest("fieldset");
+    var hint = field ? field.querySelector("[data-level-hint]") : null;
+    if (!hint) return;
+    var text = radio.checked ? radio.getAttribute("data-level") : "";
+    hint.textContent = "";
+    if (radio.checked && text) {
+      var b = document.createElement("b");
+      b.textContent = radio.value;
+      hint.appendChild(b);
+      hint.appendChild(document.createTextNode(" — " + text));
+    } else {
+      hint.textContent = radio.checked ? radio.value : hint.getAttribute("data-empty");
+    }
+  };
+
   // --- Toggleable Rating Radios (allows unchecking a selected rating) ---
   document.querySelectorAll(".rating-btn input[type='radio']").forEach(function (radio) {
     if (radio.checked) {
@@ -31,7 +48,9 @@
         radio._wasChecked = true;
         if (parent) parent.classList.add("active");
       }
+      showLevel(radio);
     });
+    radio.addEventListener("change", function () { showLevel(radio); });
   });
 
   // --- Animated 3D ASCII Progress Donut ---

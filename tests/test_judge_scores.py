@@ -265,6 +265,28 @@ def test_a_refused_review_comes_back_as_typed(world, clock, client_for):
     assert "half written" in html
 
 
+def test_the_review_page_shows_the_chosen_level_and_folds_the_rest(world, clock, client_for):
+    """Every level description is still on the page, but inside <details>; the only one shown
+    open is the chosen level's, under its criterion's buttons."""
+    import html as html_lib
+    import re
+
+    event, judge, project = world["event"], world["judge"], world["projects"][0]
+    clock(during(event))
+    client = client_for(judge)
+    url = f"/judge/events/{event.slug}/projects/{project.pk}/"
+    client.post(url, {"action": "save", "criterion_functionality": "4"})
+    page = html_lib.unescape(client.get(url).content.decode())
+    functionality = Criterion.objects.get(event=event, key="functionality")
+    folded = "".join(re.findall(r"<details class=\"more\">.*?</details>", page, flags=re.S))
+    hints = re.findall(r"<p class=\"field__help\" data-level-hint[^>]*>(.*?)</p>", page, flags=re.S)
+    for c in Criterion.objects.filter(event=event):
+        for text in c.level_descriptions.values():
+            assert text in folded
+    assert functionality.level_descriptions["4"] in hints[0]
+    assert all("pick 1-5" in h for h in hints[1:])  # the others are not scored yet
+
+
 def test_pages_404_for_an_event_you_do_not_judge(world, make_event, make_user, client_for):
     other = make_event()
     client = client_for(world["judge"])

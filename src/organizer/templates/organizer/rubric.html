@@ -12,7 +12,11 @@
       </span>
     </header>
     <div class="frame__body stack">
-      <p class="dim">weights are relative: each is a number above 0, and a criterion's share of the score is its weight over the sum (1 / 1 / 1 is three exact thirds; 2 / 1 / 1 is a half and two quarters). the share is shown as a percentage. judges score every criterion from 1 to 5; the weighted average is what the results use. use "levels" on a criterion to write what any of 1&ndash;5 means (optional, leave the rest empty).</p>
+      <p class="dim">judges score every criterion from 1 to 5; each weight sets that criterion's share of the score.</p>
+      <details class="more">
+        <summary>how weights and levels work</summary>
+        <p class="dim">weights are relative: each is a number above 0, and a criterion's share is its weight over the sum (1 / 1 / 1 is three exact thirds; 2 / 1 / 1 is a half and two quarters). the results use the weighted average. "levels" on a criterion describe what any of 1&ndash;5 means (optional; leave the rest empty).</p>
+      </details>
       {% if locked %}
         <p class="dim">locked since submissions closed ({{ event.submissions_close_at|utc }}): weights and the set of criteria are fixed for judging. labels, descriptions and level descriptions can still be edited, and every edit is logged.</p>
       {% else %}
@@ -93,9 +97,12 @@
           <p class="section-title">{{ c.label }} <span class="faint">&middot; {{ c.share }}% of the score &middot; {{ c.min_value }}&ndash;{{ c.max_value }}</span></p>
           {% if c.description %}<p class="dim">{{ c.description }}</p>{% endif %}
           {% if c.level_descriptions %}
-          <table class="kv kv--prose">
-            {% for level, text in c.level_descriptions.items %}<tr><th scope="row">{{ level }}</th><td class="dim">{{ text }}</td></tr>{% endfor %}
-          </table>
+          <details class="more">
+            <summary>what each level means ({{ c.level_descriptions|length }} described)</summary>
+            <table class="kv kv--prose">
+              {% for level, text in c.level_descriptions.items %}<tr><th scope="row">{{ level }}</th><td class="dim">{{ text }}</td></tr>{% endfor %}
+            </table>
+          </details>
           {% else %}<p class="faint">no level descriptions yet. <a href="{% url 'organizer:criterion_text' event.slug c.pk %}">add them</a> so a 3 means the same to every judge.</p>{% endif %}
         </div>
       {% endfor %}
