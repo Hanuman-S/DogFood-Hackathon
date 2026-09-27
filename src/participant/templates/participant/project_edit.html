@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}edit {{ project.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  {% include "participant/_window_banner.html" %}
+  <fieldset class="frozen stack"{% if not window.is_open %} disabled{% endif %}>
+
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{{ project.name }}</h1>
+      <span class="frame__meta"><span class="badge{% if project.is_submitted %} badge--on{% endif %}">{{ project.status }}</span></span>
+    </header>
+    <div class="frame__body grid-2">
+      <div>
+        <p class="meta">
+          <a href="{% url 'participant:event' event.slug %}">{{ event.name }}</a>
+          <span>team {{ project.team.name }}</span>
+          <span>last edited {{ project.updated_at|utc }}{% if project.last_edited_by %} by {{ project.last_edited_by.name }}{% endif %}</span>
+          {% include "_countdown.html" with closes=window.closes_at now=window.now %}
+        </p>
+        {% if window.is_closed %}
+          <p class="dim">{% if project.is_submitted %}submitted {{ project.submitted_at|utc }}. submissions are closed, so this is the version that will be judged.{% else %}submissions closed while this was still a draft, so it will not be judged.{% endif %}</p>
+        {% elif project.is_submitted %}
+          <p class="dim">submitted {{ project.submitted_at|utc }}. it is in the gallery and will be judged. you can keep editing until submissions close ({{ window.closes_at|utc }}); it must stay complete.</p>
+        {% else %}
+          <p class="dim">draft: only your team and the organizers can see it. submit it before {{ window.closes_at|utc }}.</p>
+        {% endif %}
+        <div class="actions">
+          {% if project.is_submitted %}
+            <form method="post" action="{% url 'participant:project_unsubmit' project.pk %}">{% csrf_token %}<button class="btn btn--ghost" type="submit">withdraw to draft</button></form>
+          {% else %}
+            <form method="post" action="{% url 'participant:project_submit' project.pk %}">{% csrf_token %}<button class="btn" type="submit"{% if missing %} disabled{% endif %}>submit project</button></form>
+          {% endif %}
+          <a class="btn btn--ghost" href="{% url 'participant:project_preview' project.pk %}">preview</a>
+          {% if project.is_submitted and event.is_published %}<a class="btn btn--ghost" href="{% url 'public:project' project.pk %}">public page</a>{% endif %}
+        </div>
+      </div>
+      <div>
+        <p class="section-title">ready to submit?</p>
+        <ul class="checklist">
+          <li{% if not missing.name %} class="done"{% endif %}>project name</li>
+          <li{% if not missing.tagline %} class="done"{% endif %}>tagline</li>
+          <li{% if not missing.description %} class="done"{% endif %}>description</li>
+          <li{% if not missing.repo_url %} class="done"{% endif %}>repository url</li>
+          {% if event.min_team_size > 1 %}<li{% if not missing.team %} class="done"{% endif %}>team of at least {{ event.min_team_size }}</li>{% endif %}
+          {% if form.fields.track.queryset.exists %}<li{% if not missing.track %} class="done"{% endif %}>track</li>{% endif %}
+          {% for q in form.questions %}{% if q.required %}<li{% if not missing|missing_q:q.pk %} class="done"{% endif %}>{{ q.prompt|truncatechars:48 }}</li>{% endif %}{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <form class="stack" method="post" enctype="multipart/form-data" novalidate>
+    {% csrf_token %}
+    {% include "_form_errors.html" %}
+    <div class="grid-2">
+      <section class="frame">
+        <header class="frame__bar"><h2 class="frame__title">the basics</h2></header>
+        <div class="frame__body form">
+          {% include "_field.html" with field=form.name cmd="project --name" %}
+          {% include "_field.html" with field=form.tagline cmd="project --tagline" %}
+          {% include "_field.html" with field=form.track cmd="project --track" %}
+          {% include "_field.html" with field=form.tags cmd="project --tags" %}
+          {% if popular_tags %}
+            <ul class="tags" aria-label="popular tags">{% for t in popular_tags %}<li><button class="tag-chip" type="button" data-tag-add="{{ t }}" hidden>+ {{ t }}</button></li>{% endfor %}</ul>
+          {% endif %}
+        </div>
+      </section>
+      <section class="frame">
+        <header class="frame__bar"><h2 class="frame__title">links</h2></header>
+        <div class="frame__body form">
+          {% include "_field.html" with field=form.repo_url cmd="project --repo" %}
+          {% include "_field.html" with field=form.demo_video_url cmd="project --demo-video" %}
+          {% include "_field.html" with field=form.live_url cmd="project --live" %}
+          <hr class="rule">
+          {% if project.thumbnail %}<img class="thumb" src="/media/{{ project.thumbnail.name }}" alt="current thumbnail">{% endif %}
+          {% include "_field.html" with field=form.thumbnail_upload cmd="project --thumbnail" %}
+          {% if form.remove_thumbnail %}{% include "_field.html" with field=form.remove_thumbnail %}{% endif %}
+        </div>
+      </section>
+    </div>
+
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">description</h2><span class="frame__meta">markdown</span></header>
+      <div class="frame__body form">
+        {% include "_field.html" with field=form.description cmd="project --describe" %}
+      </div>
+    </section>
+
+    {% if form.questions %}
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">organizer questions</h2><span class="frame__meta">{{ event.name }}</span></header>
+      <div class="frame__body form">
+        {% for field in form.question_fields %}{% include "_field.html" with field=field %}{% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <div class="sticky-actions actions"><button class="btn" type="submit">save</button><span class="faint">saving never submits; use "submit project" above.</span></div>
+  </form>
+
+  <section class="frame" id="images">
+    <header class="frame__bar"><h2 class="frame__title">image gallery</h2><span class="frame__meta">{{ images|length }}/{{ max_images }}</span></header>
+    <div class="frame__body stack">
+      {% if images %}
+      <div class="shots">
+        {% for img in images %}
+          <figure class="shot">
+            <img class="thumb" src="/media/{{ img.image.name }}" alt="{{ img.caption|default:'project screenshot' }}">
+            <figcaption><span>{{ img.caption|default:"--" }}</span>
+              <form class="inline-form" method="post" action="{% url 'participant:image_remove' project.pk img.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+            </figcaption>
+          </figure>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <form class="form grid-2" method="post" action="{% url 'participant:image_add' project.pk %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        {% include "_field.html" with field=image_form.image cmd="image add" %}
+        {% include "_field.html" with field=image_form.caption cmd="--caption" %}
+        <div class="actions span-all"><button class="btn btn--small" type="submit">upload image</button><span class="faint">JPEG, PNG, WebP or GIF under 5 MB; re-encoded, metadata removed</span></div>
+      </form>
+    </div>
+  </section>
+  </fieldset>
+</div>
+{% endblock %}

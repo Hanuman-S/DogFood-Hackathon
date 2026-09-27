@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}gallery{% endblock %}
+{% block section %}gallery{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">project gallery</h1>
+      <span class="frame__meta">{{ page.paginator.count }} project{{ page.paginator.count|pluralize }}</span>
+    </header>
+    <div class="frame__body stack">
+      <form class="gallery-search" method="get" action="/projects" role="search">
+        <div class="field">
+          <label class="field__label" for="q"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">grep -i</span></label>
+          <input type="search" id="q" name="q" value="{{ filters.q }}" placeholder='search names, taglines, teams, tags, descriptions. try "exact phrase" or -exclude'>
+        </div>
+        <div class="field">
+          <label class="field__label" for="event"><span class="ps1">$</span> <span class="cmd">--event</span></label>
+          <select id="event" name="event">
+            <option value="">all events</option>
+            {% for e in facets.events %}<option value="{{ e.slug }}"{% if filters.event == e %} selected{% endif %}>{{ e.name }} ({{ e.n }})</option>{% endfor %}
+          </select>
+        </div>
+        {% if facets.tracks %}
+        <div class="field">
+          <label class="field__label" for="track"><span class="ps1">$</span> <span class="cmd">--track</span></label>
+          <select id="track" name="track">
+            <option value="">all tracks</option>
+            {% for t in facets.tracks %}<option value="{{ t.pk }}"{% if filters.track == t %} selected{% endif %}>{{ t.name }} ({{ t.n }})</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="field">
+          <label class="field__label" for="sort"><span class="ps1">$</span> <span class="cmd">--sort</span></label>
+          <select id="sort" name="sort">
+            <option value="newest"{% if filters.sort == "newest" %} selected{% endif %}>newest first</option>
+            <option value="oldest"{% if filters.sort == "oldest" %} selected{% endif %}>oldest first</option>
+            <option value="name"{% if filters.sort == "name" %} selected{% endif %}>name a-z</option>
+          </select>
+        </div>
+        {% if filters.tag %}<input type="hidden" name="tag" value="{{ filters.tag }}">{% endif %}
+        <div class="actions gallery-search__go"><button class="btn" type="submit">search</button>{% if filters.active %}<a class="btn btn--ghost" href="/projects">clear</a>{% endif %}</div>
+      </form>
+      {% if facets.tags %}
+      <ul class="tags" aria-label="filter by tag">
+        {% for t in facets.tags %}
+          <li><a class="tag-chip{% if filters.tag == t.name %} tag-chip--on{% endif %}" href="{% if filters.tag == t.name %}{% gallery_url filters tag='' page='' %}{% else %}{% gallery_url filters tag=t.name page='' %}{% endif %}">{{ t.name }} <span class="faint">{{ t.n }}</span></a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if filters.q %}<p class="faint">sorted by relevance to "{{ filters.q }}".</p>{% endif %}
+    </div>
+  </section>
+
+  {% if page.object_list %}
+  <div class="cards">
+    {% for p in page.object_list %}{% include "public/_project_card.html" with project=p %}{% endfor %}
+  </div>
+  {% else %}
+  <section class="frame"><div class="frame__body">
+    <ul class="boot"><li><span class="dim">{{ role }}@dogfood:~$</span> grep -i "{{ filters.q }}" /projects</li><li><span class="tag">[ -- ]</span> no submitted projects match{% if filters.active %}; <a href="/projects">clear the filters</a>{% endif %}.</li></ul>
+  </div></section>
+  {% endif %}
+
+  {% if page.paginator.num_pages > 1 %}
+  <nav class="pager" aria-label="pages">
+    {% if page.has_previous %}<a class="btn btn--small btn--ghost" href="{% gallery_url filters page=page.previous_page_number %}">prev</a>{% endif %}
+    <span class="dim">page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}<a class="btn btn--small btn--ghost" href="{% gallery_url filters page=page.next_page_number %}">next</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}

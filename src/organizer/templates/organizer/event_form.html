@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}new event{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">new event</h1><span class="frame__meta">all times are UTC</span></header>
+  <div class="frame__body">
+    {% include "_form_errors.html" %}
+    <form class="form" method="post" novalidate>
+      {% csrf_token %}
+      {% include "organizer/_event_fields.html" %}
+      <p class="faint">the event starts unpublished: only you can see it until you publish it. tracks, prizes and questions come next.</p>
+      <div class="actions"><button class="btn" type="submit">create event</button><a class="btn btn--ghost" href="{% url 'organizer:home' %}">cancel</a></div>
+    </form>
+  </div>
+</section>
+{% endblock %}

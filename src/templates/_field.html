@@ -1,0 +1,15 @@
+{% comment %}
+  One form field as a terminal prompt.
+  Usage: {% include "_field.html" with field=form.email cmd="whoami --email" %}
+  Add short=1 in narrow columns to shorten the prompt to "$".
+{% endcomment %}
+<div class="field{% if field.errors %} field--invalid{% endif %}">
+  {% if field.widget_type == "checkbox" %}
+    <label class="check" for="{{ field.id_for_label }}">{{ field }} {{ cmd|default:field.label }}</label>
+  {% else %}
+    <label class="field__label" for="{{ field.id_for_label }}"><span class="ps1">{% if short %}${% else %}{{ role }}@dogfood:~${% endif %}</span> <span class="cmd">{{ cmd|default:field.label }}</span>{% if field.field.required %} <span class="faint">*</span>{% endif %}</label>
+    {{ field }}
+  {% endif %}
+  {% if field.help_text %}<p class="field__help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</p>{% endif %}
+  {% for error in field.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
+</div>

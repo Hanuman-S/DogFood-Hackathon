@@ -1,5 +1,3 @@
-"""WSGI entry point. Gunicorn is pointed at `config.wsgi:application`."""
-
 import os
 
 from django.core.wsgi import get_wsgi_application

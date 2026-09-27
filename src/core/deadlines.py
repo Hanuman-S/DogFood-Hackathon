@@ -1,109 +1,171 @@
-"""The deadline guard.
+"""Deadline enforcement: one rule, enforced twice.
 
-`assert_submissions_open(event)` is the only function in the portal that decides whether the
-submission window is open, and every participant write path calls it. Having exactly one
-implementation is the point: a second copy of this comparison somewhere in a view is how a
-platform ends up accepting a submission one minute after the deadline on one code path and
-refusing it on another.
+The rule
+--------
+A participant write (anything that changes a team, a membership, a project, its answers,
+tags or images) is allowed only while
 
-**Boundary semantics, stated once.** The window is half-open: `[open, close)`.
+    now < effective close
 
-* `now < submissions_open_at`  -> refused (`SubmissionsNotOpen`)
-* `now == submissions_open_at` -> allowed
-* `now <  submissions_close_at` -> allowed
-* `now == submissions_close_at` -> **refused**
+where *effective close* is the event's `submissions_close_at`, pushed later for one team if an
+organizer granted that team an extension. The window is half-open, so **the close instant
+itself is already closed**. Starting a project additionally needs `now >= submissions_open_at`;
+teams may form as soon as the event is published.
 
-The close instant itself is refused. A deadline of 18:00 means the last accepted write
-happens at 17:59:59, which is what participants and organizers both read "closes at 18:00"
-to mean.
+"now" is the **database's** clock (`statement_timestamp()`), not the web worker's, so every
+gunicorn worker -- and the trigger below -- agree on what time it is.
 
-**Where this sits in the order of checks.** On every write:
-`authenticate -> resolve event (404 if missing) -> deadline -> permission -> validation`.
-The deadline is checked before permission and before the request body is looked at, so a
-late submission is refused as a late submission and never masked by a validation error. The
-one thing that precedes it is resolving the event, because there is no window to check
-without one.
+Enforced twice
+--------------
+1. `check_submission_window()` -- called first in every participant service function and at
+   the top of every write view, before permission checks and validation, so a late write is
+   refused *as late* (HTTP 409 `submissions_closed`), never disguised as a 403 or a 400.
+   Refusals are written to the audit log with how late they were.
+2. A Postgres trigger (projects/migrations/0002_deadline_trigger.py) on every table a
+   participant can write. Even a code path that forgot step 1, a raw SQL statement, or a request
+   that passed step 1 at 23:29:59.9 and reached the database at 23:30:00.1 is refused.
 
-**The import bypass.** Historical fixture data is, by construction, already past its
-deadline. The importer therefore does not call this module at all -- it writes through
-`seed/importer.py`, whose methods are named `_import_*` / `_seed_*` and which appears in no
-`urls.py`. See CLAUDE.md ("The import path bypasses the deadline guard") for the boundary.
+Organizers sometimes must write after the close (a judging decision, a fix a team asked for).
+They do it inside `deadline_bypass(request, reason)`, which is audited.
 """
 
-from __future__ import annotations
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime
 
-from typing import Protocol
+from django.db import DatabaseError, connection, transaction
+from django.utils import timezone
 
-from core import clock
-from core.errors import SubmissionsClosed, SubmissionsNotOpen
+TRIGGER_MARKER = "dogfood_submissions_closed"
 
 
-class HasSubmissionWindow(Protocol):
-    """Anything with a submission window.
+class SubmissionsClosed(Exception):
+    def __init__(self, event=None, closed_at=None, now=None):
+        self.event, self.closed_at, self.now = event, closed_at, now
+        super().__init__("Submissions are closed.")
 
-    Typed as a protocol rather than importing `events.models.Event` so that this module has
-    no dependency on the schema and can be unit-tested against a two-field stand-in.
+    @property
+    def late_by_seconds(self):
+        if self.closed_at and self.now:
+            return max(0, int((self.now - self.closed_at).total_seconds()))
+        return None
+
+
+class SubmissionsNotOpen(Exception):
+    def __init__(self, event, opens_at):
+        self.event, self.opens_at = event, opens_at
+        super().__init__("Submissions are not open yet.")
+
+
+def db_now():
+    """The database's clock. Falls back to the app clock on SQLite (local development only)."""
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT statement_timestamp()")
+            return cursor.fetchone()[0]
+    return timezone.now()
+
+
+def is_closed(now, closes):
+    """Half-open window: at the close instant it is already closed."""
+    return now >= closes
+
+
+def effective_close(event, team=None):
+    """(close time for this team, whether an extension moved it)."""
+    closes = event.submissions_close_at
+    if team is not None and team.pk:
+        from teams.models import TeamExtension
+
+        until = TeamExtension.objects.filter(team=team).values_list("until", flat=True).first()
+        if until and until > closes:
+            return until, True
+    return closes, False
+
+
+@dataclass
+class Window:
+    now: datetime
+    opens_at: datetime
+    closes_at: datetime
+    extended: bool
+
+    @property
+    def is_closed(self):
+        return is_closed(self.now, self.closes_at)
+
+    @property
+    def not_yet_open(self):
+        return self.now < self.opens_at
+
+    @property
+    def is_open(self):
+        return not self.is_closed and not self.not_yet_open
+
+
+def window(event, team=None):
+    closes, extended = effective_close(event, team)
+    return Window(now=db_now(), opens_at=event.submissions_open_at, closes_at=closes, extended=extended)
+
+
+def check_submission_window(request, event, team=None, *, action, needs_open=False):
+    """Raise unless a participant may write to `event` (for `team`) right now.
+
+    `needs_open`: also refuse before submissions open (starting a project does; forming a team
+    does not).
     """
+    from core import audit
+    from core.models import AuditAction
 
-    submissions_open_at: object
-    submissions_close_at: object
-
-
-def submissions_are_open(event: HasSubmissionWindow, *, now=None) -> bool:
-    """Non-raising form, for templates and serializers deciding what to offer.
-
-    This is a convenience for rendering, never the enforcement. A template that hides the
-    submit button is a courtesy; `assert_submissions_open` is what actually refuses.
-    """
-    moment = now or clock.now()
-    return event.submissions_open_at <= moment < event.submissions_close_at
-
-
-def assert_submissions_open(event: HasSubmissionWindow, *, now=None) -> None:
-    """Raise unless the submission window is open at `now`.
-
-    Args:
-        now: the instant to judge against, defaulting to `clock.now()`. Service functions
-            read the clock **once** per request and pass that value here, so the instant that
-            passes the deadline check is the same one that gets stamped on the row. Two
-            separate reads leave a gap in which a write can be admitted by the guard and then
-            recorded with a `submitted_at` after the close instant -- rare, but it would put a
-            provably-late timestamp on an accepted submission, which is exactly the thing this
-            module exists to make impossible.
-
-    Raises:
-        SubmissionsNotOpen: the window has not started.
-        SubmissionsClosed: the window has ended (or ends exactly now).
-    """
-    moment = now or clock.now()
-
-    if moment < event.submissions_open_at:
-        raise SubmissionsNotOpen(
-            "Submissions for "
-            f"{getattr(event, 'name', 'this event')} open at "
-            f"{clock.iso(event.submissions_open_at)}.",
-            opens_at=clock.iso(event.submissions_open_at),
-            closed_at=clock.iso(event.submissions_close_at),
+    state = window(event, team)
+    if state.is_closed:
+        error = SubmissionsClosed(event, state.closes_at, state.now)
+        audit.record(
+            AuditAction.LATE_WRITE_REFUSED, request=request, subject=event.slug,
+            attempted=action, team=getattr(team, "name", ""),
+            closed_at=state.closes_at.isoformat(), late_by_seconds=error.late_by_seconds,
         )
-
-    if moment >= event.submissions_close_at:
-        raise SubmissionsClosed(
-            "Submissions for "
-            f"{getattr(event, 'name', 'this event')} closed at "
-            f"{clock.iso(event.submissions_close_at)}.",
-            closed_at=clock.iso(event.submissions_close_at),
+        raise error
+    if needs_open and state.not_yet_open:
+        audit.record(
+            AuditAction.EARLY_WRITE_REFUSED, request=request, subject=event.slug,
+            attempted=action, opens_at=state.opens_at.isoformat(),
         )
+        raise SubmissionsNotOpen(event, state.opens_at)
+    return state
 
 
-def assert_judging_open(event) -> None:
-    """Placeholder boundary for T2, intentionally not implemented in T1.
+@contextmanager
+def deadline_bypass(request, reason, *, subject=""):
+    """Let organizer code write after the close. Audited, and scoped to one transaction:
+    `SET LOCAL` ends with it, so the bypass cannot leak into the next request."""
+    from core import audit
+    from core.models import AuditAction
 
-    T2 will need the same shape of guard for the judging window. It is declared here so the
-    next session extends the one module that owns time-window decisions instead of adding a
-    second one. It raises rather than returning a permissive default, because a guard that
-    silently allows everything is worse than no guard at all.
-    """
-    raise NotImplementedError(
-        "Judging-window enforcement arrives in T2; see JUDGING.md. No T1 code path calls "
-        "this, and it refuses rather than defaulting to open."
-    )
+    with transaction.atomic():
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL dogfood.deadline_bypass = 'on'")
+        try:
+            yield
+        finally:
+            if connection.vendor == "postgresql" and not connection.needs_rollback:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL dogfood.deadline_bypass = 'off'")
+    if request is not None:
+        audit.record(AuditAction.DEADLINE_BYPASSED, request=request, subject=subject, reason=reason)
+
+
+def trigger_refusal(error):
+    """If `error` is the trigger's refusal, a SubmissionsClosed describing it; else None."""
+    if isinstance(error, DatabaseError) and TRIGGER_MARKER in str(error):
+        closed_at = None
+        text = str(error)
+        if "closed at " in text:
+            stamp = text.split("closed at ", 1)[1].split()[0].strip()
+            try:
+                closed_at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError:
+                closed_at = None
+        return SubmissionsClosed(None, closed_at, timezone.now())
+    return None

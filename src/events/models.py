@@ -1,103 +1,69 @@
-"""Events, tracks, prizes, memberships and custom questions.
+"""Events and what an organizer configures on them: tracks, prizes, custom questions, and who
+co-organizes.
 
-**Roles are per event.** That is the central decision in this schema. A global "is a judge"
-column would be wrong: the same person judges one hackathon and competes in the next, and an
-organizer's powers must stop at the edge of their own event. So role lives on
-`EventMembership`, and the only platform-wide flags are the two on `accounts.User`.
-
-The conflict-of-interest rule -- nobody is both a competitor and staff in the same event -- is
-enforced in the database, not only in the service layer. See `EventMembership.Meta`.
+All times are stored and shown in UTC. The event's *phase* (upcoming / open / judging /
+finished) is never stored; it is computed from the dates, so it cannot drift out of sync with
+them. The only stored state is `is_published`, which an organizer sets deliberately.
 """
 
-from __future__ import annotations
-
 from django.conf import settings
-from django.contrib.postgres.constraints import ExclusionConstraint
-from django.contrib.postgres.fields import RangeOperators
-from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Case, Q, Value, When
-from django.utils.text import slugify
-
-from core import clock
+from django.db.models import F, Q
+from django.utils import timezone
 
 
-class Role(models.TextChoices):
-    PARTICIPANT = "participant", "Participant"
-    JUDGE = "judge", "Judge"
-    ORGANIZER = "organizer", "Organizer"
-
-
-# Roles that compete, and roles that run or assess the event. The conflict-of-interest rule is
-# exactly "not both sides at once", so the two sides are named once, here, and every other
-# reference derives from these.
-COMPETITOR_ROLES = frozenset({Role.PARTICIPANT})
-STAFF_ROLES = frozenset({Role.JUDGE, Role.ORGANIZER})
-
-SIDE_COMPETITOR = "competitor"
-SIDE_STAFF = "staff"
+class Phase(models.TextChoices):
+    UPCOMING = "upcoming", "Upcoming"
+    OPEN = "open", "Submissions open"
+    JUDGING = "judging", "Judging"
+    FINISHED = "finished", "Finished"
 
 
 class EventQuerySet(models.QuerySet):
-    def public_gallery(self):
-        """Events whose gallery a stranger may browse."""
-        return self.filter(gallery_public=True)
+    def published(self):
+        return self.filter(is_published=True)
 
-    def visible_to(self, user):
-        """Events a caller may see listed at all.
+    def managed_by(self, user):
+        """Events `user` may configure: every event for an admin, their own for an organizer."""
+        from accounts.roles import Role
 
-        A non-public event is not secret from the people running or entering it -- hiding an
-        event from its own organizer would be absurd -- but it is invisible to everyone else.
-        """
-        if user is None or not getattr(user, "is_authenticated", False):
-            return self.filter(gallery_public=True)
-        if getattr(user, "is_platform_admin", False):
-            return self
-        return self.filter(
-            Q(gallery_public=True) | Q(memberships__user=user) | Q(created_by=user)
-        ).distinct()
+        if not user.is_authenticated:
+            return self.none()
+        if user.role == Role.ADMIN:
+            return self.all()
+        if user.role == Role.ORGANIZER:
+            return self.filter(organizer_links__user=user).distinct()
+        return self.none()
 
 
 class Event(models.Model):
-    name = models.CharField(max_length=200)
-    slug = models.SlugField(
-        max_length=200,
-        unique=True,
-        help_text="URL segment, e.g. /events/sample-hack-2026.",
-    )
-    description = models.TextField(blank=True)
+    slug = models.SlugField(max_length=60, unique=True)
+    name = models.CharField(max_length=120)
+    tagline = models.CharField(max_length=200, blank=True)
+    description = models.TextField(blank=True, help_text="Markdown.")
 
-    # --- the timeline. All UTC, always. ---
-    starts_at = models.DateTimeField(help_text="When the event itself begins (UTC).")
-    submissions_open_at = models.DateTimeField(
-        help_text="Writes are refused before this instant (UTC)."
-    )
-    submissions_close_at = models.DateTimeField(
-        help_text="Writes are refused from this instant onwards (UTC). The instant itself is closed."
-    )
-    judging_ends_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="End of the judging window (UTC). Unused in T1; T2 enforces it.",
-    )
+    starts_at = models.DateTimeField()
+    submissions_open_at = models.DateTimeField()
+    submissions_close_at = models.DateTimeField()
+    # The close time as first set, kept when an organizer extends the deadline for everyone,
+    # so the pages can say "extended from ... to ...".
+    original_submissions_close_at = models.DateTimeField(null=True, blank=True)
+    judging_ends_at = models.DateTimeField()
 
+    min_team_size = models.PositiveSmallIntegerField(
+        default=1, help_text="A team needs at least this many members to submit."
+    )
     max_team_size = models.PositiveSmallIntegerField(default=4)
-    gallery_public = models.BooleanField(
-        default=True,
-        help_text="When false, submitted projects are not shown in the public gallery.",
-    )
+    is_published = models.BooleanField(default=False)
 
+    organizers = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, through="EventOrganizer", through_fields=("event", "user"),
+        related_name="organized_events",
+    )
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="created_events",
-        null=True,
-        blank=True,
-        help_text="Becomes the event's first organizer. Null only for imported events.",
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
     )
-
-    external_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    created_at = models.DateTimeField(default=clock.now, editable=False)
+    created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = EventQuerySet.as_manager()
@@ -105,311 +71,153 @@ class Event(models.Model):
     class Meta:
         ordering = ["-submissions_close_at"]
         constraints = [
-            # The ordering the brief specifies, enforced by the database as well as by
-            # `clean()`. A form is not the only way rows arrive -- imports and the shell also
-            # write -- and an event whose window closes before it opens would make every
-            # deadline comparison meaningless.
+            # The dates must describe a sensible timeline; the database refuses anything else.
             models.CheckConstraint(
-                condition=Q(starts_at__lte=models.F("submissions_open_at")),
-                name="event_starts_before_submissions_open",
+                condition=Q(submissions_open_at__lt=F("submissions_close_at")),
+                name="event_submissions_window_valid",
             ),
             models.CheckConstraint(
-                condition=Q(submissions_open_at__lt=models.F("submissions_close_at")),
-                name="event_submissions_open_before_close",
+                condition=Q(submissions_close_at__lte=F("judging_ends_at")),
+                name="event_judging_after_submissions",
             ),
             models.CheckConstraint(
-                condition=Q(judging_ends_at__isnull=True)
-                | Q(judging_ends_at__gte=models.F("submissions_close_at")),
-                name="event_judging_ends_after_submissions_close",
+                condition=Q(starts_at__lte=F("submissions_close_at")),
+                name="event_starts_before_close",
             ),
             models.CheckConstraint(
-                condition=Q(max_team_size__gte=1),
-                name="event_max_team_size_at_least_one",
+                condition=Q(min_team_size__gte=1, max_team_size__lte=20)
+                & Q(min_team_size__lte=F("max_team_size")),
+                name="event_team_size_range",
             ),
         ]
 
-    def __str__(self) -> str:
+    def __str__(self):
         return self.name
 
-    def clean(self):
-        """Same rules as the DB constraints, reported as friendly field errors.
+    def phase_at(self, now):
+        if now < self.submissions_open_at:
+            return Phase.UPCOMING
+        if now < self.submissions_close_at:
+            return Phase.OPEN
+        if now < self.judging_ends_at:
+            return Phase.JUDGING
+        return Phase.FINISHED
 
-        Duplicated deliberately: the constraint is the guarantee, this is the error message.
-        Relying only on the constraint would surface an IntegrityError to an organizer who
-        simply typed the dates in the wrong order.
-        """
-        errors = {}
-        if self.starts_at and self.submissions_open_at and self.starts_at > self.submissions_open_at:
-            errors["submissions_open_at"] = "Submissions cannot open before the event starts."
-        if (
-            self.submissions_open_at
-            and self.submissions_close_at
-            and self.submissions_open_at >= self.submissions_close_at
-        ):
-            errors["submissions_close_at"] = (
-                "Submissions must close strictly after they open."
+    @property
+    def phase(self):
+        return self.phase_at(timezone.now())
+
+    def get_phase_display(self):
+        return Phase(self.phase).label
+
+    @property
+    def team_size_display(self):
+        if self.min_team_size == self.max_team_size:
+            return f"exactly {self.max_team_size}"
+        if self.min_team_size == 1:
+            return f"up to {self.max_team_size}"
+        return f"{self.min_team_size} to {self.max_team_size}"
+
+    def timeline(self):
+        """[(label, when, passed)] for the four dates, in order."""
+        now = timezone.now()
+        return [
+            (label, when, when <= now)
+            for label, when in (
+                ("event starts", self.starts_at),
+                ("submissions open", self.submissions_open_at),
+                ("submissions close", self.submissions_close_at),
+                ("judging ends", self.judging_ends_at),
             )
-        if (
-            self.judging_ends_at
-            and self.submissions_close_at
-            and self.judging_ends_at < self.submissions_close_at
-        ):
-            errors["judging_ends_at"] = "Judging cannot end before submissions close."
-        if errors:
-            raise ValidationError(errors)
+        ]
 
-    def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = self.build_slug(self.name)
-        super().save(*args, **kwargs)
+    def visible_tracks(self):
+        return self.tracks.filter(is_hidden=False)
 
-    @staticmethod
-    def build_slug(name: str) -> str:
-        """Derive a unique slug from a name.
+    def visible_questions(self):
+        return self.questions.filter(is_hidden=False)
 
-        Kept as a static helper rather than hidden in `save()` so the importer can ask for the
-        slug it is about to create and record it in the import report.
-        """
-        base = slugify(name) or "event"
-        candidate = base
-        suffix = 2
-        while Event.objects.filter(slug=candidate).exists():
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-        return candidate
 
-    # --- window helpers. These are for display; enforcement is core.deadlines. ---
+class EventOrganizer(models.Model):
+    """Who may configure an event. The creator is added automatically."""
 
-    @property
-    def submissions_open(self) -> bool:
-        from core.deadlines import submissions_are_open
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="organizer_links")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="organizer_links"
+    )
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    added_at = models.DateTimeField(default=timezone.now)
 
-        return submissions_are_open(self)
-
-    @property
-    def submissions_have_closed(self) -> bool:
-        return clock.now() >= self.submissions_close_at
+    class Meta:
+        ordering = ["added_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["event", "user"], name="event_organizer_unique"),
+        ]
 
 
 class Track(models.Model):
-    """A category a project competes in. Judges are assigned per track."""
-
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="tracks")
-    name = models.CharField(max_length=200)
-    # Blank for every imported track: the organizer fixture supplies only id and name, and
-    # inventing descriptions would misrepresent their data as ours.
-    description = models.TextField(blank=True)
+    name = models.CharField(max_length=80)
+    description = models.CharField(max_length=300, blank=True)
     order = models.PositiveSmallIntegerField(default=0)
-
-    external_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    created_at = models.DateTimeField(default=clock.now, editable=False)
-    updated_at = models.DateTimeField(auto_now=True)
+    # A track that projects already use can be hidden but not deleted (see services).
+    is_hidden = models.BooleanField(default=False)
 
     class Meta:
-        ordering = ["event", "order", "name"]
+        ordering = ["order", "id"]
         constraints = [
-            models.UniqueConstraint(fields=["event", "name"], name="track_unique_name_per_event"),
+            models.UniqueConstraint(fields=["event", "name"], name="track_name_unique_per_event"),
         ]
 
-    def __str__(self) -> str:
+    def __str__(self):
         return self.name
 
 
 class Prize(models.Model):
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="prizes")
+    title = models.CharField(max_length=120)
+    value = models.CharField(max_length=60, blank=True, help_text='e.g. "$800" or "Swag box"')
+    rank = models.PositiveSmallIntegerField(default=1, help_text="1 = first place")
     track = models.ForeignKey(
-        Track,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name="prizes",
-        help_text="Null for an event-wide prize.",
+        Track, null=True, blank=True, on_delete=models.SET_NULL, related_name="prizes",
+        help_text="Leave empty for an overall prize.",
     )
-    name = models.CharField(max_length=200)
-    description = models.TextField(blank=True)
-    value_text = models.CharField(
-        max_length=120,
-        blank=True,
-        help_text="Free text, e.g. '800 USD'. Not a number: prizes are often not cash.",
-    )
-    order = models.PositiveSmallIntegerField(default=0, help_text="Display rank.")
-
-    external_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    created_at = models.DateTimeField(default=clock.now, editable=False)
-    updated_at = models.DateTimeField(auto_now=True)
+    description = models.CharField(max_length=300, blank=True)
 
     class Meta:
-        ordering = ["event", "order", "name"]
+        ordering = ["rank", "id"]
 
-    def __str__(self) -> str:
-        return self.name
-
-
-class EventMembershipQuerySet(models.QuerySet):
-    def participants(self):
-        return self.filter(role=Role.PARTICIPANT)
-
-    def judges(self):
-        return self.filter(role=Role.JUDGE)
-
-    def organizers(self):
-        return self.filter(role=Role.ORGANIZER)
-
-
-class EventMembership(models.Model):
-    """A user's role in one event. A user may hold more than one role, within limits.
-
-    Allowed: judge + organizer (a small hackathon's organizer often also judges).
-    Forbidden: participant + judge, or participant + organizer -- that is the
-    conflict-of-interest rule, and it is enforced by a database constraint rather than by
-    convention. See `Meta.constraints`.
-    """
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_memberships"
-    )
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="memberships")
-    role = models.CharField(max_length=20, choices=Role.choices)
-
-    # Which side of the conflict-of-interest line this role sits on. A stored generated column
-    # (computed by Postgres, not by application code) so that the exclusion constraint below
-    # can compare sides without trusting anything Python wrote.
-    side = models.GeneratedField(
-        expression=Case(
-            When(role=Role.PARTICIPANT, then=Value(SIDE_COMPETITOR)),
-            default=Value(SIDE_STAFF),
-        ),
-        output_field=models.CharField(max_length=16),
-        db_persist=True,
-    )
-
-    external_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    created_at = models.DateTimeField(default=clock.now, editable=False)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    objects = EventMembershipQuerySet.as_manager()
-
-    class Meta:
-        ordering = ["event", "role", "user"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["user", "event", "role"], name="membership_unique_user_event_role"
-            ),
-            # The conflict-of-interest rule, in the database.
-            #
-            # A CHECK constraint cannot express it, because it depends on *other rows*. A
-            # unique index cannot either: we must allow two staff rows (judge + organizer)
-            # while forbidding one competitor row alongside any staff row. That is an
-            # exclusion constraint -- "no two rows for the same (user, event) may disagree
-            # about `side`" -- which Postgres supports directly.
-            #
-            # It needs the btree_gist extension for the `<>` operator on scalar types; the
-            # migration creates it, and DATA-MODEL.md notes the requirement for self-hosters.
-            ExclusionConstraint(
-                name="membership_no_competitor_and_staff",
-                expressions=[
-                    ("user", RangeOperators.EQUAL),
-                    ("event", RangeOperators.EQUAL),
-                    ("side", RangeOperators.NOT_EQUAL),
-                ],
-            ),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.user.email} as {self.role} in {self.event.slug}"
-
-    @property
-    def is_staff_side(self) -> bool:
-        return self.role in STAFF_ROLES
-
-
-class JudgeTrack(models.Model):
-    """Which tracks a judge is responsible for.
-
-    T1 imports these from the fixture and displays them; T2 uses them to build assignments.
-    """
-
-    membership = models.ForeignKey(
-        EventMembership, on_delete=models.CASCADE, related_name="judge_tracks"
-    )
-    track = models.ForeignKey(Track, on_delete=models.CASCADE, related_name="judge_tracks")
-    created_at = models.DateTimeField(default=clock.now, editable=False)
-
-    class Meta:
-        ordering = ["membership", "track"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["membership", "track"], name="judgetrack_unique_pair"
-            ),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.membership.user.email} judges {self.track.name}"
-
-    def clean(self):
-        """Only a judge membership may carry tracks.
-
-        Not expressible as a database constraint without denormalizing `role` into this table,
-        which would then need keeping in step. Since rows are only ever created by
-        `events.services`, a validation check plus the service-layer guard is the honest
-        trade-off -- and DATA-MODEL.md says so rather than implying a constraint exists.
-        """
-        if self.membership_id and self.membership.role != Role.JUDGE:
-            raise ValidationError(
-                {"membership": "Tracks can only be assigned to a judge membership."}
-            )
-        if self.membership_id and self.track_id and self.membership.event_id != self.track.event_id:
-            raise ValidationError({"track": "The track belongs to a different event."})
+    def __str__(self):
+        return self.title
 
 
 class QuestionKind(models.TextChoices):
-    SHORT_TEXT = "short_text", "Short text"
-    LONG_TEXT = "long_text", "Long text"
-    URL = "url", "URL"
-    CHOICE = "choice", "Choice"
-    BOOLEAN = "boolean", "Yes / no"
+    SHORT = "short", "Short text"
+    LONG = "long", "Long text"
+    URL = "url", "Link"
+    CHOICE = "choice", "Single choice"
+    CHECKBOX = "checkbox", "Checkbox (yes/no)"
 
 
 class CustomQuestion(models.Model):
-    """An organizer-defined question added to the submission form."""
+    """An organizer-defined question every submission in the event answers."""
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="questions")
-    prompt = models.CharField(max_length=300)
-    kind = models.CharField(max_length=20, choices=QuestionKind.choices)
-    choices = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Allowed values, for kind=choice. Ignored otherwise.",
-    )
-    required = models.BooleanField(
-        default=False, help_text="Required questions must be answered to submit, not to draft."
-    )
+    prompt = models.CharField(max_length=200)
+    help_text = models.CharField(max_length=300, blank=True)
+    kind = models.CharField(max_length=10, choices=QuestionKind.choices, default=QuestionKind.SHORT)
+    choices = models.TextField(blank=True, help_text="Single choice only: one option per line.")
+    required = models.BooleanField(default=False)
     order = models.PositiveSmallIntegerField(default=0)
-    show_in_gallery = models.BooleanField(
-        default=False,
-        help_text="When true, the answer is shown publicly on the project page.",
-    )
-
-    external_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    created_at = models.DateTimeField(default=clock.now, editable=False)
-    updated_at = models.DateTimeField(auto_now=True)
+    is_hidden = models.BooleanField(default=False)
 
     class Meta:
-        ordering = ["event", "order", "id"]
+        ordering = ["order", "id"]
 
-    def __str__(self) -> str:
+    def __str__(self):
         return self.prompt
 
-    def clean(self):
-        if self.kind == QuestionKind.CHOICE:
-            values = [str(c).strip() for c in (self.choices or []) if str(c).strip()]
-            if len(values) < 2:
-                raise ValidationError(
-                    {"choices": "A choice question needs at least two options."}
-                )
-            if len(set(values)) != len(values):
-                raise ValidationError({"choices": "Options must be distinct."})
-        elif self.choices:
-            raise ValidationError(
-                {"choices": f"Options are only meaningful for a choice question, not {self.kind}."}
-            )
+    def choice_list(self):
+        return [line.strip() for line in self.choices.splitlines() if line.strip()]

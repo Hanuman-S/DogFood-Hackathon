@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{{ event.name }}</h1>
+      <span class="frame__meta"><span class="badge{% if event.phase == 'open' %} badge--on{% endif %}">{{ event.get_phase_display }}</span></span>
+    </header>
+    <div class="frame__body">
+      <p class="meta">{% include "_countdown.html" with closes=window.closes_at now=window.now %}<span>submissions close {{ window.closes_at|utc }}</span><span>team size: {{ event.team_size_display }}</span><a href="{% url 'public:event_detail' event.slug %}">event page</a></p>
+    </div>
+  </section>
+
+  {% include "participant/_window_banner.html" %}
+<fieldset class="frozen stack"{% if window.is_closed %} disabled{% endif %}>
+{% if not team %}
+  <div class="grid-2">
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">start a team</h2><span class="frame__meta">you become captain</span></header>
+      <div class="frame__body">
+        <form class="form" method="post" action="{% url 'participant:team_create' event.slug %}">
+          {% csrf_token %}
+          <div class="field">
+            <label class="field__label" for="team-name"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">team create --name</span></label>
+            <input type="text" id="team-name" name="name" maxlength="80" placeholder="e.g. Nightshift" required>
+          </div>
+          <div class="actions"><button class="btn" type="submit">create team</button></div>
+        </form>
+        <hr class="rule">
+        <p class="faint">joining someone else's team? open the invite link they sent you.</p>
+      </div>
+    </section>
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">go solo</h2><span class="frame__meta">team of one</span></header>
+      <div class="frame__body">
+        <p class="dim">start your project straight away. a team with just you is created for it, and you can still invite people later.</p>
+        {% if event.min_team_size > 1 %}<p class="field__error">this event needs teams of at least {{ event.min_team_size }} to submit, so you will need to invite people before submitting.</p>{% endif %}
+        <fieldset class="frozen"{% if window.not_yet_open %} disabled{% endif %}>
+        <form class="form" method="post" action="{% url 'participant:project_start' event.slug %}">
+          {% csrf_token %}
+          {% include "_field.html" with field=start_form.name cmd="project init --name" %}
+          <div class="actions"><button class="btn" type="submit">start solo project</button></div>
+        </form>
+        </fieldset>
+      </div>
+    </section>
+  </div>
+{% else %}
+  <div class="grid-2">
+    <section class="frame" id="team">
+      <header class="frame__bar"><h2 class="frame__title">{{ team.name }}</h2><span class="frame__meta">{{ members|length }}/{{ event.max_team_size }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table"><tbody>
+        {% for m in members %}
+          <tr>
+            <td>{{ m.user.name }}{% if m.user_id == team.captain_id %} <span class="pill">captain</span>{% endif %}{% if m.user_id == user.pk %} <span class="faint">(you)</span>{% endif %}<br><span class="faint">{{ m.user.email }}</span></td>
+            <td class="num">
+              {% if is_captain and m.user_id != user.pk %}
+                <form class="inline-form" method="post" action="{% url 'participant:team_captain' team.pk m.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">make captain</button></form>
+                <form class="inline-form" method="post" action="{% url 'participant:team_remove' team.pk m.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody></table>
+      </div>
+      <div class="frame__body stack">
+        {% if is_captain %}
+          <div>
+            <p class="section-title">invite link</p>
+            <div class="invite"><code id="invite-link">{{ invite_url }}</code><button class="btn btn--small" type="button" data-copy="#invite-link" hidden>copy</button></div>
+            <form class="actions" method="post" action="{% url 'participant:team_reset_link' team.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">replace link</button><span class="faint">the old link stops working</span></form>
+          </div>
+          <form class="form form--inline" method="post" action="{% url 'participant:team_rename' team.pk %}">
+            {% csrf_token %}
+            <div class="field">
+              <label class="field__label" for="rename"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">team rename</span></label>
+              <input type="text" id="rename" name="name" value="{{ team.name }}" maxlength="80" required>
+            </div>
+            <button class="btn" type="submit">rename</button>
+          </form>
+        {% else %}
+          <p class="faint">the captain can share the invite link and manage the team.</p>
+        {% endif %}
+        <form method="post" action="{% url 'participant:team_leave' team.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">leave team</button></form>
+      </div>
+    </section>
+
+    <section class="frame" id="project">
+      <header class="frame__bar"><h2 class="frame__title">project</h2>{% if project %}<span class="frame__meta"><span class="badge{% if project.is_submitted %} badge--on{% endif %}">{{ project.status }}</span></span>{% endif %}</header>
+      <div class="frame__body">
+        {% if project %}
+          <p class="card-title">{{ project.name }}</p>
+          <p class="dim">{{ project.tagline|default:"no tagline yet." }}</p>
+          <p class="meta"><span>last edited {{ project.updated_at|utc }}</span>{% if project.last_edited_by %}<span>by {{ project.last_edited_by.name }}</span>{% endif %}</p>
+          <div class="actions">
+            <a class="btn" href="{% url 'participant:project_edit' project.pk %}">edit project</a>
+            <a class="btn btn--ghost" href="{% url 'participant:project_preview' project.pk %}">preview</a>
+          </div>
+        {% else %}
+          <p class="dim">no project yet. anyone on the team can start it.</p>
+          <fieldset class="frozen"{% if window.not_yet_open %} disabled{% endif %}>
+          <form class="form" method="post" action="{% url 'participant:project_start' event.slug %}">
+            {% csrf_token %}
+            {% include "_field.html" with field=start_form.name cmd="project init --name" %}
+            <div class="actions"><button class="btn" type="submit">start project</button></div>
+          </form>
+          </fieldset>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+{% endif %}
+</fieldset>
+</div>
+{% endblock %}

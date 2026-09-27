@@ -1,0 +1,47 @@
+{% extends "_portal.html" %}
+{% load portal %}
+{% block title %}participant portal{% endblock %}
+{% block portal_title %}participant terminal{% endblock %}
+{% block portal_body %}
+<p class="dim">your teams and projects, and events you can still join.</p>
+{% endblock %}
+
+{% block portal_extra %}
+<section class="frame">
+  <header class="frame__bar"><h2 class="frame__title">your events</h2><span class="frame__meta">{{ mine|length }}</span></header>
+  <div class="frame__body frame__body--flush table-wrap">
+    <table class="table">
+      <thead><tr><th>event</th><th>team</th><th>project</th><th>closes</th></tr></thead>
+      <tbody>
+      {% for row in mine %}
+        <tr>
+          <td><a href="{% url 'participant:event' row.event.slug %}">{{ row.event.name }}</a> <span class="badge{% if row.event.phase == 'open' %} badge--on{% endif %}">{{ row.event.get_phase_display }}</span></td>
+          <td>{{ row.team.name }}{% if row.team.captain_id == user.pk %} <span class="pill">captain</span>{% endif %}</td>
+          <td>{% if row.project %}<a href="{% url 'participant:project_edit' row.project.pk %}">{{ row.project.name }}</a> <span class="badge{% if row.project.is_submitted %} badge--on{% endif %}">{{ row.project.status }}</span>{% else %}<span class="faint">not started</span>{% endif %}</td>
+          <td class="dim">{{ row.event.submissions_close_at|utc }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="faint">you are not in any event yet. pick one below, or open a teammate's invite link.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="frame">
+  <header class="frame__bar"><h2 class="frame__title">open events</h2><span class="frame__meta">{{ open_events|length }}</span></header>
+  <div class="frame__body">
+    <div class="cards">
+    {% for e in open_events %}
+      <div>
+        <a class="card-title" href="{% url 'participant:event' e.slug %}">{{ e.name }}</a>
+        <p class="meta"><span class="badge{% if e.phase == 'open' %} badge--on{% endif %}">{{ e.get_phase_display }}</span><span>closes {{ e.submissions_close_at|utc }}</span></p>
+        <p class="dim">{{ e.tagline }}</p>
+      </div>
+    {% empty %}
+      <p class="faint">no events are open right now.</p>
+    {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

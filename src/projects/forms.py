@@ -1,159 +1,135 @@
-"""Forms for the project editor.
+"""The project form: the standard submission fields plus one field per custom question.
 
-Forms here do **field shape** only -- lengths, required-ness for a draft, which tracks are
-offered. Every rule that matters (the deadline, who may edit, whether a project is complete
-enough to submit, whether an uploaded file is really an image) lives in `projects.services` and is
-re-checked there, because the API posts the same data without ever constructing a form.
-
-The custom questions are added as fields at runtime: an organizer can add a question mid-event,
-and a hard-coded form would not know about it.
+Drafts may be incomplete, so only the project name is required while editing. Completeness is
+checked when a project is submitted -- and on every save of an already-submitted project, so a
+submission can never be edited into an incomplete state.
 """
 
-from __future__ import annotations
-
 from django import forms
+from django.conf import settings
+from django.core.validators import URLValidator
 
-from events.models import CustomQuestion, QuestionKind, Track
-from projects.models import TAGLINE_MAX_LENGTH, Project
-from projects.services import MAX_PROJECT_TAGS
+from events.models import QuestionKind
+from projects.images import clean_image
+from projects.models import Project
 
-ANSWER_PREFIX = "question_"
+web_url = URLValidator(schemes=["http", "https"])
 
 
-class ProjectForm(forms.Form):
-    """Draft and edit. Only `name` is required, because a draft needs only a name.
+def normalize_tags(raw):
+    """'Python, Django ,python , ML' -> ['python', 'django', 'ml'] (order kept, no duplicates)."""
+    seen, tags = set(), []
+    for part in (raw or "").replace("\n", ",").split(","):
+        tag = " ".join(part.strip().lower().split())[:40]
+        if tag and tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
+    return tags
 
-    Everything else is required to *submit*, which `services.submit_project` enforces against
-    `missing_to_submit` -- not here. Making them required here would stop a team from saving a
-    half-finished draft at 3 a.m., which is the opposite of what a draft is for.
-    """
 
-    name = forms.CharField(label="Project name", max_length=200)
-    tagline = forms.CharField(
-        label="Tagline",
-        max_length=TAGLINE_MAX_LENGTH,
-        required=False,
-        help_text=f"One line, at most {TAGLINE_MAX_LENGTH} characters.",
-    )
-    description = forms.CharField(
-        label="Description",
-        required=False,
-        widget=forms.Textarea(attrs={"rows": 12}),
-        help_text="Markdown. Links are kept; images are not — upload screenshots below.",
-    )
-    track = forms.ModelChoiceField(
-        label="Track", queryset=Track.objects.none(), required=False, empty_label="— none —"
-    )
-    repo_url = forms.CharField(label="Repository URL", required=False)
-    demo_video_url = forms.CharField(
-        label="Demo video URL",
-        required=False,
-        help_text="Shown as a link. Videos are not embedded, so the page needs no external host.",
-    )
-    live_url = forms.CharField(label="Live demo URL", required=False)
+def answer_field(question):
+    common = {"label": question.prompt, "help_text": question.help_text, "required": False}
+    if question.kind == QuestionKind.LONG:
+        return forms.CharField(max_length=5000, widget=forms.Textarea(attrs={"rows": 4}), **common)
+    if question.kind == QuestionKind.URL:
+        return forms.URLField(validators=[web_url], assume_scheme="https", **common)
+    if question.kind == QuestionKind.CHOICE:
+        choices = [("", "-- choose --")] + [(c, c) for c in question.choice_list()]
+        return forms.ChoiceField(choices=choices, **common)
+    if question.kind == QuestionKind.CHECKBOX:
+        return forms.BooleanField(**common)
+    return forms.CharField(max_length=300, **common)
+
+
+def answer_to_text(question, value):
+    if question.kind == QuestionKind.CHECKBOX:
+        return "yes" if value else ""
+    return (value or "").strip()
+
+
+class ProjectForm(forms.ModelForm):
     tags = forms.CharField(
-        label="Tags",
         required=False,
-        help_text=f"Comma separated, at most {MAX_PROJECT_TAGS}. Lowercased automatically.",
+        help_text=f"comma-separated, up to {settings.MAX_PROJECT_TAGS}",
+        widget=forms.TextInput(attrs={"placeholder": "e.g. python, django, postgres (separate with commas)", "data-tags": ""}),
     )
+    thumbnail_upload = forms.FileField(
+        required=False, label="thumbnail",
+        help_text="JPEG, PNG, WebP or GIF, under 5 MB. Re-encoded on upload; metadata is removed.",
+        widget=forms.ClearableFileInput(attrs={"accept": "image/jpeg,image/png,image/webp,image/gif"}),
+    )
+    remove_thumbnail = forms.BooleanField(required=False, label="remove the current thumbnail")
 
-    def __init__(self, *args, event=None, project: Project | None = None, **kwargs):
+    class Meta:
+        model = Project
+        fields = ["name", "tagline", "description", "track", "repo_url", "demo_video_url", "live_url"]
+        labels = {
+            "name": "project name",
+            "demo_video_url": "demo video url",
+            "repo_url": "repository url",
+            "live_url": "live link",
+        }
+        help_texts = {
+            "description": "markdown: headings, lists, links, code blocks, tables",
+            "demo_video_url": "a hosted video: YouTube, Vimeo, Loom…",
+        }
+        widgets = {
+            "name": forms.TextInput(attrs={"placeholder": "e.g. Quiet Hours"}),
+            "tagline": forms.TextInput(attrs={"placeholder": "one sentence on what it does, e.g. Mutes notifications while you code"}),
+            "description": forms.Textarea(attrs={"rows": 12, "placeholder": "Markdown. A good outline:\n\n## What it does\n## How we built it\n## What we cut, and why\n## What is next"}),
+            "repo_url": forms.URLInput(attrs={"placeholder": "e.g. https://github.com/your-team/your-project"}),
+            "demo_video_url": forms.URLInput(attrs={"placeholder": "e.g. https://youtu.be/abc123 (YouTube, Vimeo or Loom)"}),
+            "live_url": forms.URLInput(attrs={"placeholder": "optional: where a judge can try it, e.g. https://demo.example.org"}),
+        }
+
+    def __init__(self, *args, event, **kwargs):
         super().__init__(*args, **kwargs)
         self.event = event
-        self.project = project
+        self.fields["track"].queryset = event.visible_tracks()
+        self.fields["track"].empty_label = "-- choose a track --"
+        for name in ("repo_url", "demo_video_url", "live_url"):
+            self.fields[name].validators.append(web_url)
+            self.fields[name].assume_scheme = "https"
+        self.questions = list(event.visible_questions())
+        answers = {}
+        if self.instance.pk:
+            answers = {a.question_id: a.value for a in self.instance.answers.all()}
+            self.fields["tags"].initial = ", ".join(self.instance.tags.values_list("name", flat=True))
+        for q in self.questions:
+            field = answer_field(q)
+            stored = answers.get(q.pk, "")
+            field.initial = bool(stored) if q.kind == QuestionKind.CHECKBOX else stored
+            self.fields[f"q_{q.pk}"] = field
+        if not (self.instance.pk and self.instance.thumbnail):
+            del self.fields["remove_thumbnail"]
 
-        self.fields["track"].queryset = Track.objects.filter(event=event).order_by("name")
+    def question_fields(self):
+        return [self[f"q_{q.pk}"] for q in self.questions]
 
-        self.questions = list(
-            CustomQuestion.objects.filter(event=event).order_by("order", "id")
-        )
-        answers = (
-            {answer.question_id: answer.value for answer in project.answers.all()}
-            if project is not None
-            else {}
-        )
-        for question in self.questions:
-            self.fields[f"{ANSWER_PREFIX}{question.pk}"] = _answer_field(
-                question, answers.get(question.pk, "")
-            )
+    def clean_tags(self):
+        tags = normalize_tags(self.cleaned_data.get("tags"))
+        if len(tags) > settings.MAX_PROJECT_TAGS:
+            raise forms.ValidationError(f"At most {settings.MAX_PROJECT_TAGS} tags; you have {len(tags)}.")
+        return tags
 
-    def answers(self) -> dict[int, str]:
-        """`{question_id: value}` for `services.save_answers`."""
-        return {
-            question.pk: self.cleaned_data.get(f"{ANSWER_PREFIX}{question.pk}", "")
-            for question in self.questions
-        }
+    def clean_thumbnail_upload(self):
+        upload = self.cleaned_data.get("thumbnail_upload")
+        return clean_image(upload) if upload else None
 
-    def content(self) -> dict:
-        """The project's own fields, ready to hand to a service function."""
-        return {
-            "name": self.cleaned_data["name"],
-            "tagline": self.cleaned_data["tagline"],
-            "description": self.cleaned_data["description"],
-            "track": self.cleaned_data["track"],
-            "repo_url": self.cleaned_data["repo_url"],
-            "demo_video_url": self.cleaned_data["demo_video_url"],
-            "live_url": self.cleaned_data["live_url"],
-        }
-
-    @classmethod
-    def initial_for(cls, project: Project) -> dict:
-        return {
-            "name": project.name,
-            "tagline": project.tagline,
-            "description": project.description,
-            "track": project.track_id,
-            "repo_url": project.repo_url,
-            "demo_video_url": project.demo_video_url,
-            "live_url": project.live_url,
-            "tags": ", ".join(
-                project.project_tags.values_list("tag__name", flat=True)
-            ),
-        }
-
-
-def _answer_field(question: CustomQuestion, initial: str) -> forms.Field:
-    """One form field per custom question. Never required here -- see the class docstring.
-
-    A question marked `required` is required to *submit*; leaving it blank in a draft is fine, so
-    the requirement is checked by `services.missing_to_submit` rather than by the form. The label
-    still says so, so nobody is surprised at submission time.
-    """
-    label = question.prompt + (" (required to submit)" if question.required else "")
-
-    if question.kind == QuestionKind.BOOLEAN:
-        return forms.BooleanField(
-            label=label, required=False, initial=(initial or "").lower() == "true"
-        )
-    if question.kind == QuestionKind.CHOICE:
-        return forms.ChoiceField(
-            label=label,
-            required=False,
-            initial=initial,
-            choices=[("", "— no answer —")] + [(str(c), str(c)) for c in question.choices or []],
-        )
-    if question.kind == QuestionKind.LONG_TEXT:
-        return forms.CharField(
-            label=label, required=False, initial=initial, widget=forms.Textarea(attrs={"rows": 4})
-        )
-    if question.kind == QuestionKind.URL:
-        return forms.CharField(label=label, required=False, initial=initial)
-    return forms.CharField(label=label, required=False, initial=initial, max_length=300)
+    def answers(self):
+        """{question: text} for every visible question, from cleaned data."""
+        return {q: answer_to_text(q, self.cleaned_data.get(f"q_{q.pk}")) for q in self.questions}
 
 
 class ImageForm(forms.Form):
-    """Just the file and its alt text. The file itself is verified in `services.verify_image`.
-
-    Deliberately a plain `FileField` rather than Django's `ImageField`: `ImageField` calls
-    `Image.open()` to decide validity and would report "upload a valid image" for a
-    decompression bomb, a 20 MB file and an unsupported format alike. The service layer draws
-    those distinctions and produces a message that says which one it was.
-    """
-
-    image = forms.FileField(label="Image")
-    alt_text = forms.CharField(
-        label="Alt text",
-        max_length=200,
-        required=False,
-        help_text="What the image shows, for screen readers. Leave blank if it is decorative.",
+    image = forms.FileField(
+        widget=forms.ClearableFileInput(attrs={"accept": "image/jpeg,image/png,image/webp,image/gif"})
     )
+    caption = forms.CharField(max_length=140, required=False, widget=forms.TextInput(attrs={"placeholder": "optional, e.g. The judge dashboard"}))
+
+    def clean_image(self):
+        return clean_image(self.cleaned_data["image"])
+
+
+class StartProjectForm(forms.Form):
+    name = forms.CharField(max_length=120, widget=forms.TextInput(attrs={"placeholder": "a working title, e.g. Quiet Hours (you can change it later)"}))

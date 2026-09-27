@@ -1,0 +1,17 @@
+<div class="grid-2">
+  {% include "_field.html" with field=form.name cmd="event --name" %}
+  {% include "_field.html" with field=form.slug cmd="event --url-name" %}
+</div>
+{% include "_field.html" with field=form.tagline cmd="event --tagline" %}
+{% include "_field.html" with field=form.description cmd="event --description" %}
+<p class="field__help">dates, all UTC: event starts · submissions open · submissions close · judging ends</p>
+<div class="grid-4">
+  {% include "_field.html" with field=form.starts_at cmd="--event-starts" short=1 %}
+  {% include "_field.html" with field=form.submissions_open_at cmd="--submissions-open" short=1 %}
+  {% include "_field.html" with field=form.submissions_close_at cmd="--submissions-close" short=1 %}
+  {% include "_field.html" with field=form.judging_ends_at cmd="--judging-ends" short=1 %}
+</div>
+<div class="grid-4">
+  {% include "_field.html" with field=form.min_team_size cmd="--min-team" short=1 %}
+  {% include "_field.html" with field=form.max_team_size cmd="--max-team" short=1 %}
+</div>

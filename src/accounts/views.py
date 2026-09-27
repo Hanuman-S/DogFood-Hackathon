@@ -1,185 +1,166 @@
-"""Auth and profile views. Thin: validate the form, call a service, render the result."""
+"""Login, logout, sign-up and the account page (sessions, tokens, password).
 
-from __future__ import annotations
+Views only parse input and render; every rule lives in accounts/services.py.
+"""
 
+from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import update_session_auth_hash
-from django.contrib.auth.decorators import login_required
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods, require_POST
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_POST
 
 from accounts import services
-from accounts.forms import LoginForm, PasswordChangeForm, SignupForm, TokenCreateForm
-from accounts.models import ApiToken
-from accounts.services import InvalidCredentials, LoginThrottled
-from core.errors import PortalError
+from accounts.forms import LoginForm, PasswordChangeForm, SignupForm, TokenForm
+from accounts.guards import login_required
+from accounts.models import ApiToken, UserSession
+from accounts.roles import HOME_PORTAL_URL
+from core.views import forbidden
 
-# Where to send someone after login. Only relative paths are honoured -- see `safe_next`.
-DEFAULT_REDIRECT = "/"
-
-
-def safe_next(request) -> str:
-    """Read `?next=` without becoming an open redirect.
-
-    An absolute URL here would let a phishing page send someone to a real login form and bounce
-    them to a lookalike afterwards, with the portal's own domain in the referring link. Only
-    same-site absolute *paths* are accepted.
-    """
-    candidate = request.POST.get("next") or request.GET.get("next") or ""
-    if candidate.startswith("/") and not candidate.startswith("//"):
-        return candidate
-    return DEFAULT_REDIRECT
+LOGIN_ERRORS = {
+    "invalid": "invalid email or password.",
+    "throttled": "too many failed attempts. wait 15 minutes, then try again.",
+}
 
 
-@require_http_methods(["GET", "POST"])
-def signup(request):
-    if request.user.is_authenticated:
-        return redirect(DEFAULT_REDIRECT)
-
-    form = SignupForm(request.POST or None)
-
-    if request.method == "POST" and form.is_valid():
-        try:
-            user = services.register_account(
-                email=form.cleaned_data["email"],
-                display_name=form.cleaned_data["display_name"],
-                password=form.cleaned_data["password1"],
-                request=request,
-            )
-        except PortalError as error:
-            form.add_error("email" if error.code == "conflict" else None, error.message)
-        else:
-            # Signing up logs you in. The invite flow depends on it: a visitor who opens an invite
-            # link, signs up and is then dumped at a login form would have to find the link again.
-            services.attempt_login(
-                request=request,
-                email=user.email,
-                password=form.cleaned_data["password1"],
-            )
-            messages.success(request, f"Welcome, {user.display_name}.")
-            return redirect(safe_next(request))
-
-    return render(request, "accounts/signup.html", {"form": form, "next": safe_next(request)})
+def home_portal(user):
+    return reverse(HOME_PORTAL_URL[user.role])
 
 
-@require_http_methods(["GET", "POST"])
+def _safe_next(request):
+    target = request.POST.get("next") or request.GET.get("next") or ""
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return target
+    return ""
+
+
+@never_cache
 def login_view(request):
     if request.user.is_authenticated:
-        return redirect(safe_next(request))
+        return redirect(_safe_next(request) or home_portal(request.user))
 
     form = LoginForm(request.POST or None)
     status = 200
-
     if request.method == "POST" and form.is_valid():
-        try:
-            services.attempt_login(
-                request=request,
-                email=form.cleaned_data["email"],
-                password=form.cleaned_data["password"],
-            )
-        except LoginThrottled as error:
-            # 429 rather than 200-with-a-message, so an API client or a monitoring check sees the
-            # throttle for what it is.
-            form.add_error(None, error.message)
-            status = error.status_code
-        except InvalidCredentials as error:
-            form.add_error(None, error.message)
-            status = 401
-        else:
-            return redirect(safe_next(request))
+        result = services.attempt_login(
+            request,
+            form.cleaned_data["email"],
+            form.cleaned_data["password"],
+            form.cleaned_data["remember"],
+        )
+        if result.user:
+            return redirect(_safe_next(request) or home_portal(result.user))
+        form.add_error(None, LOGIN_ERRORS[result.error])
+        status = 429 if result.error == "throttled" else 200
+    elif request.method == "POST":
+        status = 400
 
     return render(
-        request,
-        "accounts/login.html",
-        {"form": form, "next": safe_next(request)},
+        request, "accounts/login.html",
+        {"form": form, "next": _safe_next(request), "signup_open": settings.ALLOW_SIGNUP},
         status=status,
     )
 
 
 @require_POST
 def logout_view(request):
-    """POST only.
-
-    A GET logout can be triggered by any third-party page embedding
-    `<img src="http://portal/logout">`, which is a real if minor annoyance, and it breaks browser
-    prefetching in unpleasant ways. The nav bar posts a small form.
-    """
-    services.log_out(request)
-    messages.success(request, "Signed out.")
-    return redirect(DEFAULT_REDIRECT)
+    """POST only: a GET logout can be triggered by any <img> tag on any website."""
+    services.logout_user(request)
+    messages.success(request, "session closed. goodbye.")
+    return redirect("public:home")
 
 
-@login_required
-@require_http_methods(["GET", "POST"])
-def profile(request):
-    """Profile page: account details and API tokens.
+@never_cache
+def signup_view(request):
+    if not settings.ALLOW_SIGNUP:
+        return forbidden(request, reason="public sign-up is closed for this portal.")
+    if request.user.is_authenticated:
+        return redirect(home_portal(request.user))
 
-    A created token's plaintext is passed to the template through a one-shot `messages` entry
-    rather than being stored anywhere, so a page refresh cannot redisplay it.
-    """
-    token_form = TokenCreateForm(request.POST or None)
-    created_plaintext = None
-
-    if request.method == "POST" and token_form.is_valid():
-        try:
-            _, created_plaintext = services.create_token(
-                user=request.user,
-                name=token_form.cleaned_data["name"],
-                request=request,
-            )
-        except PortalError as error:
-            token_form.add_error(None, error.message)
-        else:
-            token_form = TokenCreateForm()
-
-    tokens = ApiToken.objects.filter(user=request.user).order_by("revoked_at", "-created_at")
-
-    # Shows the caller which roles they hold and where. Reads from the database like every other
-    # page -- there is no hardcoded role list in the template.
-    memberships = (
-        request.user.event_memberships.select_related("event")
-        .order_by("event__name", "role")
+    form = SignupForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        user = services.register_participant(
+            request,
+            name=form.cleaned_data["name"],
+            email=form.cleaned_data["email"],
+            password=form.cleaned_data["password1"],
+        )
+        messages.success(request, f"account created. welcome, {user.get_short_name()}.")
+        return redirect(_safe_next(request) or home_portal(user))
+    return render(
+        request, "accounts/signup.html", {"form": form, "next": _safe_next(request)},
+        status=400 if request.method == "POST" else 200,
     )
 
+
+@never_cache
+@login_required
+def account_view(request, password_form=None, token_form=None, status=200):
     return render(
         request,
-        "accounts/profile.html",
+        "accounts/account.html",
         {
-            "token_form": token_form,
-            "tokens": tokens,
-            "memberships": memberships,
-            # Shown once, then gone. Not stored in the session: a session-stored secret would
-            # survive a refresh and end up in a database backup.
-            "created_plaintext": created_plaintext,
+            "sessions": services.live_sessions(request.user),
+            "current_session_key": request.session.session_key,
+            "tokens": ApiToken.objects.filter(user=request.user),
+            # A freshly issued token is shown exactly once, then forgotten.
+            "new_token": request.session.pop("new_token", None),
+            "password_form": password_form or PasswordChangeForm(request.user),
+            "token_form": token_form or TokenForm(),
         },
+        status=status,
     )
 
 
-@login_required
 @require_POST
-def revoke_token(request, token_id: int):
-    try:
-        token = services.revoke_token(user=request.user, token_id=token_id, request=request)
-    except PortalError as error:
-        messages.error(request, error.message)
-    else:
-        messages.success(request, f"Revoked the token “{token.name}”.")
-    return redirect(reverse("profile"))
-
-
 @login_required
-@require_http_methods(["GET", "POST"])
 def password_change(request):
-    form = PasswordChangeForm(user=request.user, data=request.POST or None)
+    form = PasswordChangeForm(request.user, request.POST)
+    if not form.is_valid():
+        return account_view(request, password_form=form, status=400)
+    services.change_password(request, form)
+    messages.success(request, "password changed. every other session has been signed out.")
+    return redirect("accounts:account")
 
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        # Django rotates the session hash on a password change, which would otherwise sign the
-        # user out of the tab they just used to change it.
-        update_session_auth_hash(request, form.user)
-        services.record_password_change(user=request.user, request=request)
-        messages.success(request, "Password changed.")
-        return redirect(reverse("profile"))
 
-    return render(request, "accounts/password_change.html", {"form": form})
+@require_POST
+@login_required
+def session_revoke(request, session_id):
+    # Scoped to request.user: another user's session id is a 404, not a revoke.
+    user_session = get_object_or_404(UserSession, pk=session_id, user=request.user)
+    if services.revoke_session(request, user_session):
+        messages.success(request, "this session was closed.")
+        return redirect("public:home")
+    messages.success(request, "session revoked.")
+    return redirect("accounts:account")
+
+
+@require_POST
+@login_required
+def sessions_revoke_others(request):
+    count = services.revoke_other_sessions(request)
+    messages.success(request, f"{count} other session{'s' if count != 1 else ''} signed out.")
+    return redirect("accounts:account")
+
+
+@require_POST
+@login_required
+def token_create(request):
+    form = TokenForm(request.POST)
+    if not form.is_valid():
+        return account_view(request, token_form=form, status=400)
+    token, raw = services.issue_token(request, form.cleaned_data["name"])
+    request.session["new_token"] = {"name": token.name, "raw": raw}
+    return redirect(reverse("accounts:account") + "#tokens")
+
+
+@require_POST
+@login_required
+def token_revoke(request, token_id):
+    token = get_object_or_404(ApiToken, pk=token_id, user=request.user)
+    services.revoke_token(request, token)
+    messages.success(request, f"token {token.prefix}… revoked.")
+    return redirect(reverse("accounts:account") + "#tokens")

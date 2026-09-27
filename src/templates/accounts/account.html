@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}account{% endblock %}
+{% block section %}account{% endblock %}
+{% block content %}
+<div class="stack">
+
+  <div class="grid-2">
+    {# identity card #}
+    <section class="frame">
+      <header class="frame__bar">
+        <h1 class="frame__title">subject #{{ user.pk|stringformat:"04d" }}</h1>
+        <span class="frame__meta" aria-hidden="true">[■]</span>
+      </header>
+      <div class="frame__body frame__body--flush">
+        <table class="kv">
+          <tr><th scope="row">name</th><td>{{ user.name }}</td></tr>
+          <tr><th scope="row">email</th><td>{{ user.email }}</td></tr>
+          <tr><th scope="row">role</th><td>{{ user.role }}</td></tr>
+          <tr><th scope="row">joined</th><td>{{ user.date_joined|date:"Y-m-d" }}</td></tr>
+          <tr><th scope="row">last login</th><td>{{ user.last_login|date:"Y-m-d H:i"|default:"--" }} UTC</td></tr>
+          <tr><th scope="row">sessions</th><td>{{ sessions|length }} active</td></tr>
+        </table>
+      </div>
+    </section>
+
+    {# change password #}
+    <section class="frame">
+      <header class="frame__bar">
+        <h2 class="frame__title">passwd</h2>
+        <span class="frame__meta">signs out other sessions</span>
+      </header>
+      <div class="frame__body">
+        {% include "_form_errors.html" with form=password_form %}
+        <form class="form" method="post" action="{% url 'accounts:password_change' %}" novalidate>
+          {% csrf_token %}
+          {% include "_field.html" with field=password_form.old_password cmd="passwd --current" %}
+          {% include "_field.html" with field=password_form.new_password1 cmd="passwd --new" %}
+          {% include "_field.html" with field=password_form.new_password2 cmd="passwd --confirm" %}
+          <div class="actions"><button class="btn" type="submit">change password</button></div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  {# sessions #}
+  <section class="frame" id="sessions">
+    <header class="frame__bar">
+      <h2 class="frame__title">active sessions</h2>
+      {% if sessions|length > 1 %}
+      <form class="inline-form" method="post" action="{% url 'accounts:sessions_revoke_others' %}">
+        {% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">sign out others</button>
+      </form>
+      {% endif %}
+    </header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>device</th><th>ip</th><th>started</th><th>last seen</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
+        <tbody>
+        {% for s in sessions %}
+          <tr>
+            <td>{{ s.device }}{% if s.session_key == current_session_key %} <span class="pill">this one</span>{% endif %}</td>
+            <td class="dim">{{ s.ip|default:"--" }}</td>
+            <td class="dim">{{ s.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="dim">{{ s.last_seen_at|timesince }} ago</td>
+            <td class="num">
+              <form class="inline-form" method="post" action="{% url 'accounts:session_revoke' s.pk %}">
+                {% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">{% if s.session_key == current_session_key %}log out{% else %}revoke{% endif %}</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="faint">no browser sessions. (you are authenticated by an API token.)</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {# api tokens #}
+  <section class="frame" id="tokens">
+    <header class="frame__bar">
+      <h2 class="frame__title">api tokens</h2>
+      <span class="frame__meta">Authorization: Bearer &lt;token&gt;</span>
+    </header>
+    <div class="frame__body">
+      {% if new_token %}
+      <div class="secret" role="status">
+        <span class="bright">new token "{{ new_token.name }}". copy it now; it will not be shown again:</span>
+        <code id="new-token">{{ new_token.raw }}</code>
+        <button class="btn btn--small" type="button" data-copy="#new-token" hidden>copy</button>
+      </div>
+      {% endif %}
+      <form class="form form--inline" method="post" action="{% url 'accounts:token_create' %}" novalidate>
+        {% csrf_token %}
+        {% include "_field.html" with field=token_form.name cmd="token create --name" %}
+        <button class="btn" type="submit">create token</button>
+      </form>
+    </div>
+    {% if tokens %}
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>token</th><th>name</th><th>created</th><th>last used</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
+        <tbody>
+        {% for t in tokens %}
+          <tr>
+            <td><code>{{ t.prefix }}…</code></td>
+            <td>{{ t.name }}</td>
+            <td class="dim">{{ t.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="dim">{% if t.last_used_at %}{{ t.last_used_at|timesince }} ago{% else %}never{% endif %}</td>
+            <td class="num">
+              {% if t.is_active %}
+              <form class="inline-form" method="post" action="{% url 'accounts:token_revoke' t.pk %}">
+                {% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button>
+              </form>
+              {% else %}<span class="faint">revoked</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}

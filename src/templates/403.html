@@ -1,17 +1,28 @@
 {% extends "base.html" %}
-
-{% block title %}Not allowed · {{ portal_name }}{% endblock %}
-
+{% block title %}access denied{% endblock %}
+{% block section %}403{% endblock %}
 {% block content %}
-  <h1>Not allowed</h1>
-  <p>
-    Your account does not have permission to do that.
-  </p>
-  <p>
-    {# Actionable rather than a dead end: the most common reason to land here is lacking the #}
-    {# event-creation grant, which an administrator can give. #}
-    If you expected to be able to, ask a platform administrator to grant your account the
-    necessary access.
-  </p>
-  <p><a href="/">Back to the portal</a></p>
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">access denied</h1><span class="frame__meta">http 403</span></header>
+  <div class="frame__body">
+<pre class="art art--left" aria-hidden="true">
+    .-----.
+   / .---. \
+   | |   | |
+ .-'-'---'-'-.
+ |  .-----.  |
+ |  | 403 |  |
+ |  '-----'  |
+ '-----------'
+</pre>
+    <ul class="boot">
+      <li><span class="tag">[ ERR ]</span> {{ reason|default:"your role does not grant access to this page." }}</li>
+      <li><span class="faint">the attempt has been written to the audit log.</span></li>
+    </ul>
+    <div class="actions">
+      {% if user.is_authenticated %}<a class="btn" href="{{ portal_url }}">back to {{ role }} portal</a>
+      {% else %}<a class="btn" href="{% url 'accounts:login' %}">log in</a>{% endif %}
+    </div>
+  </div>
+</section>
 {% endblock %}

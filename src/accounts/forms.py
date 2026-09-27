@@ -1,96 +1,113 @@
-"""Forms for signup, login, password change and token creation.
-
-Forms validate *shape*; `accounts.services` decides what happens. So there is no `save()` on the
-signup form -- the view calls the service, which is the same function the API would call.
-"""
-
-from __future__ import annotations
-
 from django import forms
+from django.contrib.auth import password_validation
 from django.contrib.auth.forms import PasswordChangeForm as DjangoPasswordChangeForm
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
 
-from accounts.models import User
-
-
-class SignupForm(forms.Form):
-    email = forms.EmailField(
-        label="Email",
-        help_text="Used to sign in.",
-        widget=forms.EmailInput(attrs={"autocomplete": "email", "autofocus": True}),
-    )
-    display_name = forms.CharField(
-        label="Display name",
-        max_length=120,
-        help_text="Shown in the gallery next to your team's projects.",
-        widget=forms.TextInput(attrs={"autocomplete": "name"}),
-    )
-    password1 = forms.CharField(
-        label="Password",
-        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
-    )
-    password2 = forms.CharField(
-        label="Confirm password",
-        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
-    )
-
-    def clean_email(self):
-        return self.cleaned_data["email"].strip().lower()
-
-    def clean_password2(self):
-        password1 = self.cleaned_data.get("password1")
-        password2 = self.cleaned_data.get("password2")
-        if password1 and password2 and password1 != password2:
-            raise ValidationError("The two passwords do not match.")
-        return password2
-
-    def clean(self):
-        cleaned = super().clean()
-        password = cleaned.get("password1")
-        if password:
-            # Django's configured validators: length, commonness, not all-numeric, and not too
-            # similar to the user's own attributes. The unsaved instance is passed so the
-            # similarity check has an email and a name to compare against.
-            candidate = User(
-                email=cleaned.get("email") or "",
-                display_name=cleaned.get("display_name") or "",
-            )
-            try:
-                validate_password(password, user=candidate)
-            except ValidationError as error:
-                self.add_error("password1", error)
-        return cleaned
+from accounts.models import User, normalize_email
+from accounts.roles import Role
 
 
 class LoginForm(forms.Form):
-    """Email and password. No "remember me": session lifetime is a deployment setting, not a
-    per-login choice, and offering the box without honouring it would be worse than omitting it."""
-
     email = forms.EmailField(
-        label="Email",
-        widget=forms.EmailInput(attrs={"autocomplete": "email", "autofocus": True}),
+        widget=forms.EmailInput(
+            attrs={"autocomplete": "username", "placeholder": "the email you signed up with", "autofocus": True}
+        )
     )
     password = forms.CharField(
-        label="Password",
-        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+        strip=False,
+        widget=forms.PasswordInput(
+            attrs={"autocomplete": "current-password", "placeholder": "your password"}
+        ),
+    )
+    remember = forms.BooleanField(required=False, label="remember this terminal for 14 days")
+
+
+class _NewPasswordMixin:
+    """Two password fields, checked against each other and Django's validators."""
+
+    def _check_new_password(self, user):
+        p1 = self.cleaned_data.get("password1")
+        p2 = self.cleaned_data.get("password2")
+        if p1 and p2 and p1 != p2:
+            self.add_error("password2", "The two passwords do not match.")
+        elif p1:
+            try:
+                password_validation.validate_password(p1, user)
+            except forms.ValidationError as error:
+                self.add_error("password1", error)
+
+
+class SignupForm(_NewPasswordMixin, forms.Form):
+    duplicate_email_message = "An account with this email already exists. Log in instead."
+
+    name = forms.CharField(
+        max_length=120,
+        widget=forms.TextInput(
+            attrs={"autocomplete": "name", "placeholder": "your name as teammates should see it, e.g. Ada Lovelace", "autofocus": True}
+        ),
+    )
+    email = forms.EmailField(
+        widget=forms.EmailInput(attrs={"autocomplete": "email", "placeholder": "e.g. ada@example.org"})
+    )
+    password1 = forms.CharField(
+        label="password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password", "placeholder": "at least 10 characters"}),
+        help_text="at least 10 characters, not all digits, not a common password",
+    )
+    password2 = forms.CharField(
+        label="password (again)",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password", "placeholder": "type it again"}),
     )
 
     def clean_email(self):
-        return self.cleaned_data["email"].strip().lower()
+        email = normalize_email(self.cleaned_data["email"])
+        # Trade-off, stated plainly: this reveals that an address is registered. The
+        # alternative ("check your inbox") needs outbound email, which an offline portal does
+        # not have. Login itself never reveals it.
+        if User.objects.filter(email=email).exists():
+            raise forms.ValidationError(self.duplicate_email_message)
+        return email
+
+    def clean(self):
+        cleaned = super().clean()
+        probe = User(email=cleaned.get("email", ""), name=cleaned.get("name", ""))
+        self._check_new_password(probe)
+        return cleaned
+
+
+class AccountCreateForm(SignupForm):
+    """Used by an admin to create an account with any role."""
+
+    duplicate_email_message = "An account with this email already exists."
+    role = forms.ChoiceField(choices=Role.choices, initial=Role.JUDGE)
+
+    field_order = ["name", "email", "role", "password1", "password2"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # This form sits below other content on the admin page; do not steal focus.
+        self.fields["name"].widget.attrs.pop("autofocus", None)
 
 
 class PasswordChangeForm(DjangoPasswordChangeForm):
-    """Django's form, which already requires the current password and runs the validators."""
+    """Django's form (checks the old password, runs the validators), relabelled for the UI."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["old_password"].label = "current password"
+        self.fields["new_password1"].label = "new password"
+        self.fields["new_password2"].label = "new password (again)"
+        self.fields["old_password"].widget.attrs.pop("autofocus", None)
+        self.fields["new_password1"].help_text = "at least 10 characters, not all digits"
+        self.fields["new_password2"].help_text = ""
+        self.fields["old_password"].widget.attrs["placeholder"] = "your current password"
+        self.fields["new_password1"].widget.attrs["placeholder"] = "at least 10 characters"
+        self.fields["new_password2"].widget.attrs["placeholder"] = "type it again"
 
 
-class TokenCreateForm(forms.Form):
+class TokenForm(forms.Form):
     name = forms.CharField(
-        label="Token name",
-        max_length=120,
-        help_text="What this token is for, e.g. 'acceptance checker' or 'my laptop'.",
-        widget=forms.TextInput(attrs={"placeholder": "my laptop"}),
+        max_length=60,
+        widget=forms.TextInput(attrs={"placeholder": "what it is for, e.g. laptop-scripts"}),
     )
-
-    def clean_name(self):
-        return self.cleaned_data["name"].strip()

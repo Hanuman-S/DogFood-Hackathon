@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% comment %}
+  Shared shell for the four role portals. Each portal app has its own home.html that extends
+  this and fills `portal_body` -- so each app, and the teammate who owns it, can grow its own
+  pages without touching the others.
+{% endcomment %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{% block portal_title %}{% endblock %}</h1>
+      <span class="frame__meta">{{ user.email }}</span>
+    </header>
+    <div class="frame__body">
+      <ul class="boot">
+        <li><span class="tag">[ OK ]</span> session authenticated <span class="faint">({{ request.auth_method }})</span></li>
+        <li><span class="tag">[ OK ]</span> role verified by the server: <span class="bright">{{ user.role }}</span></li>
+        <li><span class="tag">[ OK ]</span> welcome, {{ user.get_short_name }}.</li>
+      </ul>
+      {% block portal_body %}{% endblock %}
+    </div>
+  </section>
+  {% block portal_extra %}{% endblock %}
+</div>
+{% endblock %}

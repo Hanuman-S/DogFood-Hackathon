@@ -1,250 +1,173 @@
-"""Account operations: signup, login, password change, API tokens.
+"""Every write the accounts module makes goes through a function in this file.
 
-Every write goes through a function here rather than happening in a view, so the browser and the
-API produce identical audit trails for identical actions.
-
-The login throttle lives here too. It counts the `login.failed` audit rows the brief already
-requires us to write, rather than keeping a second counter somewhere:
-
-* One store, so the count and the audit trail can never disagree.
-* It survives a restart, unlike an in-process cache.
-* It applies across gunicorn workers, unlike per-process memory. The image runs two workers, so a
-  per-process counter would let an attacker get 2x the allowance by luck of load balancing.
-
-The cost is a query per login attempt, which is nothing next to hashing a password.
+Views stay thin: they parse input, call one of these, and render. That way the HTML pages and
+the API (added later) cannot enforce different rules for the same action.
 """
 
-from __future__ import annotations
-
-import datetime as dt
 from dataclasses import dataclass
 
-from django.conf import settings
-from django.contrib.auth import authenticate, login as django_login, logout as django_logout
+from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
+from django.contrib.sessions.models import Session
 from django.db import transaction
+from django.utils import timezone
 
-from accounts.models import ApiToken, User
-from core import audit, clock
-from core.errors import ConflictError, PortalError, ValidationFailed
-from core.models import AuditAction, AuditLog
-
-
-class LoginThrottled(PortalError):
-    """Too many recent failures for this email and IP."""
-
-    code = "login_throttled"
-    status_code = 429
-    message = "Too many failed sign-in attempts. Try again shortly."
+from accounts.models import ApiToken, User, UserSession, normalize_email
+from accounts.roles import Role
+from accounts.throttle import is_throttled
+from core import audit
+from core.models import AuditAction
+from core.net import client_ip, user_agent
 
 
-class InvalidCredentials(PortalError):
-    code = "invalid_credentials"
-    status_code = 400
-    message = "That email and password do not match an account."
+@dataclass
+class LoginResult:
+    user: User | None = None
+    error: str = ""  # "", "invalid", "throttled"
 
 
-# --------------------------------------------------------------------------------------
-# signup
-# --------------------------------------------------------------------------------------
+def attempt_login(request, email, password, remember):
+    """Check the throttle, then the password, then start a session.
 
-
-@transaction.atomic
-def register_account(*, email: str, display_name: str, password: str, request=None) -> User:
-    """Create a portal account.
-
-    Password strength is Django's `AUTH_PASSWORD_VALIDATORS`, applied by the form before this is
-    called. Email uniqueness is a database constraint; the race between two simultaneous signups
-    for the same address is therefore decided by Postgres, not by a check here.
+    The throttle is checked *before* the password, so a throttled caller learns nothing about
+    whether their guess was right. Wrong email and wrong password produce the same error, and
+    Django's ModelBackend hashes a dummy password for unknown emails so the two take the same
+    time.
     """
-    email = (email or "").strip().lower()
-    if not email:
-        raise ValidationFailed("An email address is required.")
+    email = normalize_email(email)
+    ip = client_ip(request)
 
-    if User.objects.filter(email=email).exists():
-        # Deliberately explicit rather than vague. This address is already visible to whoever
-        # holds it, and pretending otherwise would just produce a confusing dead end at signup.
-        # The password reset flow is where address-existence leaks actually matter, and this
-        # portal has none (see the README).
-        raise ConflictError("An account with that email address already exists.")
-
-    user = User.objects.create_user(
-        email=email,
-        password=password,
-        display_name=(display_name or "").strip() or email.split("@")[0],
-    )
-
-    audit.record(AuditAction.SIGNUP, actor=user, target=user, request=request)
-    return user
-
-
-# --------------------------------------------------------------------------------------
-# login
-# --------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ThrottleState:
-    """How close this (email, IP) pair is to being locked out."""
-
-    failures: int
-    limit: int
-    window_minutes: int
-
-    @property
-    def is_throttled(self) -> bool:
-        return self.failures >= self.limit
-
-    @property
-    def remaining(self) -> int:
-        return max(self.limit - self.failures, 0)
-
-
-def throttle_state(*, email: str, ip: str) -> ThrottleState:
-    """Count recent failed attempts for this email and IP.
-
-    Scoped to the pair, not to either alone. Counting by email only would let anyone lock a known
-    user out of their own account by failing five times on their behalf; counting by IP only would
-    lock out everyone behind a shared NAT as soon as one person fumbled a password.
-    """
-    limit = getattr(settings, "LOGIN_FAILURE_LIMIT", 5)
-    window = getattr(settings, "LOGIN_FAILURE_WINDOW_MINUTES", 15)
-    since = clock.now() - dt.timedelta(minutes=window)
-
-    failures = AuditLog.objects.filter(
-        action=AuditAction.LOGIN_FAILED,
-        created_at__gte=since,
-        metadata__email=(email or "").strip().lower(),
-        metadata__ip=ip or "",
-    ).count()
-
-    return ThrottleState(failures=failures, limit=limit, window_minutes=window)
-
-
-def attempt_login(*, request, email: str, password: str) -> User:
-    """Authenticate and open a session, or raise.
-
-    Order matters: the throttle is checked **before** the password is verified. Checking it
-    afterwards would still do the expensive hash comparison on every attempt, which is most of what
-    a throttle is supposed to prevent.
-
-    Raises:
-        LoginThrottled: too many recent failures for this email and IP.
-        InvalidCredentials: no match. Deliberately the same error whether the account does not
-            exist, has an unusable password, or the password is simply wrong.
-    """
-    email = (email or "").strip().lower()
-    ip = audit.client_ip(request)
-
-    state = throttle_state(email=email, ip=ip)
-    if state.is_throttled:
-        audit.record(
-            AuditAction.LOGIN_THROTTLED,
-            metadata={
-                "email": email,
-                "ip": ip,
-                "failures": state.failures,
-                "window_minutes": state.window_minutes,
-            },
-            request=request,
-        )
-        raise LoginThrottled(
-            "Too many failed sign-in attempts for this account from this address. "
-            f"Wait {state.window_minutes} minutes and try again."
-        )
+    if is_throttled(email, ip):
+        audit.record(AuditAction.LOGIN_THROTTLED, request=request, subject=email)
+        return LoginResult(error="throttled")
 
     user = authenticate(request, username=email, password=password)
-
     if user is None:
-        # `email` and `ip` go in the metadata because that is what `throttle_state` counts on.
-        # Changing either key name breaks the throttle silently, so a test asserts the round trip.
-        audit.record(
-            AuditAction.LOGIN_FAILED,
-            metadata={"email": email, "ip": ip},
-            request=request,
-        )
-        raise InvalidCredentials()
+        audit.record(AuditAction.LOGIN_FAILED, request=request, subject=email)
+        return LoginResult(error="invalid")
 
-    django_login(request, user)
-    audit.record(AuditAction.LOGIN_SUCCEEDED, actor=user, target=user, request=request)
+    # login() rotates the session key (no session fixation) and fires user_logged_in, which
+    # records the UserSession row and the audit entry -- see accounts/signals.py.
+    login(request, user)
+    if not remember:
+        # Cookie dies with the browser. The server-side row still expires after
+        # SESSION_COOKIE_AGE, so an abandoned session cannot live forever.
+        request.session.set_expiry(0)
+    return LoginResult(user=user)
+
+
+def logout_user(request):
+    # logout() flushes the session and fires user_logged_out (signals.py cleans up).
+    logout(request)
+
+
+def register_participant(request, *, name, email, password):
+    """Public sign-up. Always creates a participant: nobody can sign themselves up as staff."""
+    user = User.objects.create_user(email, password, name=name, role=Role.PARTICIPANT)
+    audit.record(AuditAction.SIGNUP, request=request, actor=user, subject=user.email)
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
     return user
 
 
-def log_out(request) -> None:
-    """End the session. Called only from a POST -- see the note in `accounts/views.py`."""
-    user = request.user if is_logged_in(request) else None
-    django_logout(request)
-    if user is not None:
-        audit.record(AuditAction.LOGOUT, actor=user, target=user, request=request)
-
-
-def is_logged_in(request) -> bool:
-    return bool(getattr(request, "user", None) and request.user.is_authenticated)
-
-
-def record_password_change(*, user, request=None) -> None:
-    """Audit a password change. The change itself is Django's form; this records that it happened.
-
-    Worth recording because a password change is the step an account takeover ends with, so it is
-    one of the few events an organizer reviewing the trail genuinely needs to see.
-    """
-    audit.record(AuditAction.PASSWORD_CHANGED, actor=user, target=user, request=request)
-
-
-# --------------------------------------------------------------------------------------
-# API tokens
-# --------------------------------------------------------------------------------------
-
-MAX_TOKENS_PER_USER = 20
-
-
-@transaction.atomic
-def create_token(*, user: User, name: str, request=None) -> tuple[ApiToken, str]:
-    """Issue a token, returning `(token, plaintext)`.
-
-    The plaintext is returned once, for display, and is not recoverable afterwards -- only its
-    SHA-256 digest is stored. The caller is responsible for showing it exactly once and never
-    putting it in a log line or an audit entry.
-    """
-    name = (name or "").strip()
-    if not name:
-        raise ValidationFailed("Give the token a name, so you can recognise it later.")
-
-    active = ApiToken.objects.filter(user=user, revoked_at__isnull=True).count()
-    if active >= MAX_TOKENS_PER_USER:
-        raise ConflictError(
-            f"You already have {MAX_TOKENS_PER_USER} active tokens. Revoke one first."
-        )
-
-    token, plaintext = ApiToken.issue(user=user, name=name)
-
-    # Records that a token was created, never its value or digest.
+def create_account(request, *, name, email, role, password):
+    """An admin creating an account for someone else (an organizer or judge, typically)."""
+    user = User.objects.create_user(email, password, name=name, role=role)
     audit.record(
-        AuditAction.TOKEN_CREATED,
-        actor=user,
-        target=token,
-        metadata={"name": name},
-        request=request,
+        AuditAction.ACCOUNT_CREATED, request=request, subject=user.email, role=role
     )
-    return token, plaintext
+    return user
 
 
-@transaction.atomic
-def revoke_token(*, user: User, token_id: int, request=None) -> ApiToken:
-    """Revoke one of the caller's own tokens.
+def start_session(request, user):
+    """Called on every login (signals.py): remember which browser this session belongs to."""
+    now = timezone.now()
+    UserSession.objects.update_or_create(
+        session_key=request.session.session_key,
+        defaults={
+            "user": user,
+            "ip": client_ip(request),
+            "user_agent": user_agent(request),
+            "created_at": now,
+            "last_seen_at": now,
+        },
+    )
 
-    Scoped to `user=user` in the lookup itself, so another account's token id simply does not
-    resolve -- a 404, not a 403, because whether that id exists is none of the caller's business.
+
+def end_session(session_key):
+    """End one session everywhere: Django's session row and our metadata row."""
+    with transaction.atomic():
+        Session.objects.filter(session_key=session_key).delete()
+        UserSession.objects.filter(session_key=session_key).delete()
+
+
+def live_sessions(user):
+    """The user's sessions that Django still considers valid, newest activity first.
+
+    Expired sessions leave UserSession rows behind until `clearsessions` runs; joining on the
+    live django_session rows filters them out, and removes the orphans while we are here.
     """
-    token = ApiToken.objects.filter(pk=token_id, user=user).first()
-    if token is None:
-        raise ValidationFailed("No such token.")
-
-    token.revoke()
-    audit.record(
-        AuditAction.TOKEN_REVOKED,
-        actor=user,
-        target=token,
-        metadata={"name": token.name},
-        request=request,
+    rows = list(UserSession.objects.filter(user=user))
+    live_keys = set(
+        Session.objects.filter(
+            session_key__in=[r.session_key for r in rows], expire_date__gt=timezone.now()
+        ).values_list("session_key", flat=True)
     )
-    return token
+    dead = [r.pk for r in rows if r.session_key not in live_keys]
+    if dead:
+        UserSession.objects.filter(pk__in=dead).delete()
+    return [r for r in rows if r.session_key in live_keys]
+
+
+def revoke_session(request, user_session):
+    is_current = user_session.session_key == request.session.session_key
+    audit.record(
+        AuditAction.SESSION_REVOKED, request=request, subject=user_session.device,
+        ip_of_session=user_session.ip, current=is_current,
+    )
+    if is_current:
+        logout_user(request)
+    else:
+        end_session(user_session.session_key)
+    return is_current
+
+
+def revoke_other_sessions(request, reason=AuditAction.SESSIONS_REVOKED_OTHERS):
+    current = request.session.session_key
+    others = UserSession.objects.filter(user=request.user).exclude(session_key=current)
+    keys = list(others.values_list("session_key", flat=True))
+    for key in keys:
+        end_session(key)
+    if reason:
+        audit.record(reason, request=request, count=len(keys))
+    return len(keys)
+
+
+def change_password(request, form):
+    """Save a new password, keep this session, end every other one.
+
+    Django already invalidates other sessions when the password hash changes (each session
+    stores a hash of the password it was created with). We also delete them outright, so the
+    'active sessions' list is truthful immediately rather than on each stale session's next
+    request.
+    """
+    old_key = request.session.session_key
+    user = form.save()
+    update_session_auth_hash(request, user)  # rotates this session's key
+    UserSession.objects.filter(session_key=old_key).update(
+        session_key=request.session.session_key
+    )
+    ended = revoke_other_sessions(request, reason=None)
+    audit.record(AuditAction.PASSWORD_CHANGED, request=request, other_sessions_ended=ended)
+    return user
+
+
+def issue_token(request, name):
+    token, raw = ApiToken.issue(request.user, name)
+    audit.record(AuditAction.TOKEN_CREATED, request=request, subject=token.prefix, name=name)
+    return token, raw
+
+
+def revoke_token(request, token):
+    if token.revoked_at is None:
+        token.revoked_at = timezone.now()
+        token.save(update_fields=["revoked_at"])
+        audit.record(AuditAction.TOKEN_REVOKED, request=request, subject=token.prefix)

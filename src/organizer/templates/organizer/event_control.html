@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · control{% endblock %}
+{% block content %}
+<div class="stack">
+
+  {# --- header ------------------------------------------------------------ #}
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{{ event.name }}</h1>
+      <span class="frame__meta">
+        <span class="badge{% if event.phase == 'open' %} badge--on{% endif %}">{{ event.get_phase_display }}</span>
+        {% if event.is_published %}<span class="badge badge--on">published</span>{% else %}<span class="badge">unpublished</span>{% endif %}
+      </span>
+    </header>
+    <div class="frame__body grid-2">
+      <div>
+        <p class="dim">{{ event.tagline|default:"no tagline yet." }}</p>
+        <ul class="timeline">
+          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc }}</span></li>{% endfor %}
+        </ul>
+      </div>
+      <div class="stack">
+        <form method="post" action="{% url 'organizer:event_publish' event.slug %}" class="actions">
+          {% csrf_token %}
+          {% if event.is_published %}
+            <input type="hidden" name="publish" value="0"><button class="btn btn--ghost" type="submit">unpublish</button>
+            <span class="faint">public at <a href="{% url 'public:event_detail' event.slug %}">/events/{{ event.slug }}</a></span>
+          {% else %}
+            <input type="hidden" name="publish" value="1"><button class="btn" type="submit">publish</button>
+            <span class="faint">only organizers can see it until then. <a href="{% url 'public:event_detail' event.slug %}">preview</a></span>
+          {% endif %}
+        </form>
+        <table class="kv">
+          <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
+          <tr><th scope="row">projects</th><td>{{ projects|length }}</td></tr>
+          <tr><th scope="row">team size</th><td>{{ event.team_size_display }}</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  {# --- deadline ---------------------------------------------------------- #}
+  <section class="frame" id="deadline">
+    <header class="frame__bar">
+      <h2 class="frame__title">deadline</h2>
+      <span class="frame__meta">{% include "_countdown.html" with closes=window.closes_at now=window.now %}</span>
+    </header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">submissions close</th><td>{{ event.submissions_close_at|utc }}</td></tr>
+        {% if event.original_submissions_close_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_submissions_close_at|utc }}</td></tr>{% endif %}
+        <tr><th scope="row">enforced by</th><td class="dim">the server and the database, on the database clock</td></tr>
+      </table>
+      <div class="grid-2">
+        <form class="form" method="post" action="{% url 'organizer:deadline_extend' event.slug %}" novalidate>
+          {% csrf_token %}
+          <p class="section-title">extend for everyone</p>
+          {% include "_form_errors.html" with form=extend_form %}
+          {% include "_field.html" with field=extend_form.new_close cmd="deadline --extend-to" %}
+          {% include "_field.html" with field=extend_form.reason cmd="--reason" %}
+          <div class="actions"><button class="btn btn--small" type="submit">extend deadline</button></div>
+        </form>
+        <form class="form" method="post" action="{% url 'organizer:extension_grant' event.slug %}" novalidate>
+          {% csrf_token %}
+          <p class="section-title">extend for one team</p>
+          {% include "_form_errors.html" with form=extension_form %}
+          {% include "_field.html" with field=extension_form.team cmd="--team" %}
+          {% include "_field.html" with field=extension_form.until cmd="--until" %}
+          {% include "_field.html" with field=extension_form.reason cmd="--reason" %}
+          <div class="actions"><button class="btn btn--small" type="submit">grant extension</button></div>
+        </form>
+      </div>
+    </div>
+    {% if extensions %}
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>team</th><th>until</th><th>reason</th><th>granted by</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
+        <tbody>
+        {% for x in extensions %}
+          <tr>
+            <td>{{ x.team.name }}</td><td>{{ x.until|utc }}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
+            <td class="num"><form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  {# --- settings ---------------------------------------------------------- #}
+  <section class="frame" id="settings">
+    <header class="frame__bar"><h2 class="frame__title">settings</h2><span class="frame__meta">all times UTC</span></header>
+    <div class="frame__body">
+      {% include "_form_errors.html" with form=settings_form %}
+      <form class="form" method="post" action="{% url 'organizer:event' event.slug %}" novalidate>
+        {% csrf_token %}
+        {% include "organizer/_event_fields.html" with form=settings_form %}
+        <div class="actions"><button class="btn" type="submit">save settings</button></div>
+      </form>
+    </div>
+  </section>
+
+  <div class="grid-2">
+    {# --- tracks ---------------------------------------------------------- #}
+    <section class="frame" id="tracks">
+      <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">{{ tracks|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <tbody>
+          {% for t in tracks %}
+            <tr>
+              <td>{% if t.is_hidden %}<span class="faint">{{ t.name }} (hidden)</span>{% else %}{{ t.name }}{% endif %}<br><span class="faint">{{ t.n }} project{{ t.n|pluralize }}</span></td>
+              <td class="num">
+                <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
+                <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
+                <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+              </td>
+            </tr>
+          {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="frame__body">
+        {% include "_form_errors.html" with form=track_form %}
+        <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'track' %}" novalidate>
+          {% csrf_token %}
+          {% include "_field.html" with field=track_form.name cmd="track add --name" %}
+          {% include "_field.html" with field=track_form.description cmd="--description" %}
+          <div class="actions"><button class="btn btn--small" type="submit">add track</button></div>
+        </form>
+      </div>
+    </section>
+
+    {# --- prizes ---------------------------------------------------------- #}
+    <section class="frame" id="prizes">
+      <header class="frame__bar"><h2 class="frame__title">prizes</h2><span class="frame__meta">{{ prizes|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <tbody>
+          {% for p in prizes %}
+            <tr>
+              <td><span class="bright">#{{ p.rank }}</span> {{ p.title }}<br><span class="faint">{{ p.value|default:"--" }} · {{ p.track.name|default:"overall" }}</span></td>
+              <td class="num">
+                <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'prize' p.pk %}">edit</a>
+                <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'prize' p.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+              </td>
+            </tr>
+          {% empty %}<tr><td class="faint">no prizes yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="frame__body">
+        {% include "_form_errors.html" with form=prize_form %}
+        <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'prize' %}" novalidate>
+          {% csrf_token %}
+          <div class="grid-2">
+            {% include "_field.html" with field=prize_form.title cmd="prize add --title" %}
+            {% include "_field.html" with field=prize_form.value cmd="--value" %}
+            {% include "_field.html" with field=prize_form.rank cmd="--rank" %}
+            {% include "_field.html" with field=prize_form.track cmd="--track" %}
+          </div>
+          <div class="actions"><button class="btn btn--small" type="submit">add prize</button></div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  {# --- custom questions ------------------------------------------------ #}
+  <section class="frame" id="questions">
+    <header class="frame__bar"><h2 class="frame__title">submission questions</h2><span class="frame__meta">asked of every project</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>question</th><th>kind</th><th>required</th><th class="num">answers</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+        <tbody>
+        {% for q in questions %}
+          <tr>
+            <td>{% if q.is_hidden %}<span class="faint">{{ q.prompt }} (hidden)</span>{% else %}{{ q.prompt }}{% endif %}</td>
+            <td class="dim">{{ q.get_kind_display|lower }}</td>
+            <td class="dim">{{ q.required|yesno:"yes,no" }}</td>
+            <td class="num">{{ q.n }}</td>
+            <td class="num">
+              <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'question' q.pk %}">edit</a>
+              <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'question' q.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if q.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if q.is_hidden %}show{% else %}hide{% endif %}</button></form>
+              <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+            </td>
+          </tr>
+        {% empty %}<tr><td colspan="5" class="faint">no custom questions. every project still answers the standard fields.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="frame__body">
+      {% include "_form_errors.html" with form=question_form %}
+      <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'question' %}" novalidate>
+        {% csrf_token %}
+        <div class="grid-2">
+          {% include "_field.html" with field=question_form.prompt cmd="question add --prompt" %}
+          {% include "_field.html" with field=question_form.help_text cmd="--hint" %}
+          {% include "_field.html" with field=question_form.kind cmd="--kind" %}
+          {% include "_field.html" with field=question_form.choices cmd="--choices" %}
+        </div>
+        {% include "_field.html" with field=question_form.required cmd="required to submit" %}
+        <div class="actions"><button class="btn btn--small" type="submit">add question</button></div>
+      </form>
+    </div>
+  </section>
+
+  <div class="grid-2">
+    {# --- organizers ------------------------------------------------------ #}
+    <section class="frame" id="organizers">
+      <header class="frame__bar"><h2 class="frame__title">organizers</h2><span class="frame__meta">can edit this event</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <tbody>
+          {% for link in organizer_links %}
+            <tr>
+              <td>{{ link.user.name }}<br><span class="faint">{{ link.user.email }}</span></td>
+              <td class="num">
+                <form class="inline-form" method="post" action="{% url 'organizer:organizer_remove' event.slug link.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="frame__body">
+        <form class="form form--inline" method="post" action="{% url 'organizer:organizer_add' event.slug %}" novalidate>
+          {% csrf_token %}
+          {% include "_field.html" with field=organizer_form.email cmd="organizer add --email" %}
+          <button class="btn" type="submit">add</button>
+        </form>
+      </div>
+    </section>
+
+    {# --- teams & projects ------------------------------------------------ #}
+    <section class="frame" id="teams">
+      <header class="frame__bar"><h2 class="frame__title">teams</h2><span class="frame__meta">{{ teams|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>team</th><th class="num">size</th><th>project</th></tr></thead>
+          <tbody>
+          {% for t in teams %}
+            <tr>
+              <td>{{ t.name }}</td>
+              <td class="num">{{ t.n }}/{{ event.max_team_size }}</td>
+              <td>{% if t.project %}{{ t.project.name }} <span class="badge{% if t.project.is_submitted %} badge--on{% endif %}">{{ t.project.status }}</span>{% else %}<span class="faint">none yet</span>{% endif %}</td>
+            </tr>
+          {% empty %}<tr><td colspan="3" class="faint">no teams yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+
+  {% if duplicates or import_duplicates %}
+  <section class="frame" id="duplicates">
+    <header class="frame__bar"><h2 class="frame__title">possible duplicates</h2><span class="frame__meta">review by hand</span></header>
+    <div class="frame__body stack">
+      {% for g in duplicates %}
+        <div>
+          <p class="section-title">same {{ g.field }}: <span class="bright">{{ g.value }}</span></p>
+          <ul class="checklist">{% for p in g.projects %}<li class="done">{{ p.name }} <span class="faint">· team {{ p.team.name }} · {{ p.status }}{% if p.submitted_at %} · {{ p.submitted_at|date:"Y-m-d H:i" }} UTC{% endif %}</span></li>{% endfor %}</ul>
+        </div>
+      {% endfor %}
+      {% for ref in import_duplicates %}
+        <p class="dim">[ import ] {{ ref.note }}</p>
+      {% endfor %}
+      <p class="faint">nothing here is removed automatically: two teams can fork the same starter repo. hide or disqualify by hand once judging exists.</p>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

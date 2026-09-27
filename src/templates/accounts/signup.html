@@ -1,22 +1,39 @@
 {% extends "base.html" %}
-
-{% block title %}Sign up · {{ portal_name }}{% endblock %}
-
+{% block title %}sign up{% endblock %}
+{% block section %}signup{% endblock %}
 {% block content %}
-  <article>
-    <h1>Create an account</h1>
-    <p>
-      An account lets you register for an event, join or start a team, and submit a project.
-      Browsing the gallery needs no account at all.
-    </p>
-
-    <form method="post" action="/signup">
-      {% csrf_token %}
-      <input type="hidden" name="next" value="{{ next }}">
-      {% include "_form.html" %}
-      <button type="submit">Create account</button>
-    </form>
-
-    <p>Already have an account? <a href="/login">Sign in</a>.</p>
-  </article>
+<section class="frame">
+  <header class="frame__bar">
+    <h1 class="frame__title">new participant</h1>
+    <span class="frame__meta" aria-hidden="true">useradd</span>
+  </header>
+  <div class="frame__body grid-auth">
+    <div>
+      {% include "_form_errors.html" %}
+      <form class="form" method="post" action="{% url 'accounts:signup' %}" novalidate>
+        {% csrf_token %}
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+        {% include "_field.html" with field=form.name cmd="set --name" %}
+        {% include "_field.html" with field=form.email cmd="set --email" %}
+        {% include "_field.html" with field=form.password1 cmd="passwd" %}
+        {% include "_field.html" with field=form.password2 cmd="passwd --confirm" %}
+        <div class="actions">
+          <button class="btn" type="submit">create account</button>
+          <span class="dim">have one? <a href="{% url 'accounts:login' %}{% if next %}?next={{ next|urlencode }}{% endif %}">log in</a></span>
+        </div>
+      </form>
+    </div>
+    <aside class="art-wrap">
+      <p class="section-title">who can sign up</p>
+      <dl class="code-row">
+        <dt>participant</dt><dd>here, by yourself</dd>
+        <dt>judge</dt><dd>created by an organizer or admin</dd>
+        <dt>organizer</dt><dd>created by an admin</dd>
+        <dt>admin</dt><dd>created by an admin</dd>
+      </dl>
+      <hr class="rule">
+      <p class="faint">every account holds exactly one role. the server checks it on every request, so a hidden link is never the only thing keeping a door shut.</p>
+    </aside>
+  </div>
+</section>
 {% endblock %}

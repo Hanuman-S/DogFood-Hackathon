@@ -1,181 +1,400 @@
 # Architecture
 
-> **T1 snapshot.** This describes the system as it stands with tier T1 complete. It will be expanded
-> after T2 (judging) is built; the judging layer is deliberately absent here rather than sketched, so
-> nothing in this document describes code that does not exist.
-
-Boring Django, deliberately. Server-rendered templates, one database, no SPA, no queue, no cache
-layer, no background worker. The interesting decisions are all about *where a rule lives*, because
-the thing this software is judged on is whether its guarantees actually hold.
-
-## Components
+## Shape of the system
 
 ```
-                    ┌──────────────────────────────────────────────┐
-  browser ─────────▶│ gunicorn ── Django 5.2                       │
-  (HTML, htmx)      │                                              │
-                    │  views ──▶ services ──▶ models ──▶ Postgres 16│
-  API client ──────▶│    │          │                              │
-  (Bearer token)    │    │          ├─ core.clock                  │
-                    │    │          ├─ core.deadlines              │
-                    │    │          ├─ core.permissions            │
-                    │    │          └─ core.audit                  │
-                    │    └─ WhiteNoise (vendored CSS/JS)           │
-                    │    └─ protected media view (uploads)         │
-                    └──────────────────────────────────────────────┘
+browser ──HTML forms──┐
+                      ├──►  gunicorn ─► Django ─► Postgres 16
+script  ──Bearer API──┘      (web)                 (db)
 ```
 
-Two containers: `web` (gunicorn) and `db` (postgres:16-alpine). Uploaded images live on a named
-volume. Static assets are collected into the image at build time and served by WhiteNoise. Nothing
-reaches the network at runtime.
+This is one Django 5.2 LTS app in one container, with Postgres in a second. Pages are
+rendered on the server with plain CSS and a few small scripts, so there is no build step and
+no single-page app. Everything the browser needs, including the fonts, is served by the app
+itself (WhiteNoise). The Content-Security-Policy forbids every other origin, so the offline
+rule is enforced by the browser, not just by review.
 
-## Request flow
+### Why Django
 
-A participant write — submitting a project, creating a team, uploading an image — always runs the
-same five steps, in this order:
+| | Django (chosen) | FastAPI + hand-written HTML | Node (Express/Hono) |
+| --- | --- | --- | --- |
+| Sessions, CSRF, password hashing | built in, well audited | hand-built or several libraries | several libraries |
+| Migrations and admin | built in | Alembic; no admin | Prisma/Knex; no admin |
+| OpenAPI for the API bonus | extra package later | free | extra package |
+| Speed of building within 72 h | fastest | slower | slower |
+
+The hackathon's rules punish broken auth far more than they reward a fashionable stack. Django
+gives us the security-critical parts pre-built and lets us spend the time on judging.
+
+### One app per audience
 
 ```
-authenticate → resolve the event (404 if missing) → deadline → permission → validation
+public/         /               visitors
+participant/    /participant/
+judge/          /judge/
+organizer/      /organizer/     (admins too)
+platform_admin/ /admin/         and the database admin at /admin/db/
 ```
 
-The order is the design. The deadline is checked **before** permissions and **before** the request
-body is examined, so a late submission is refused *as a late submission* rather than being masked by
-a validation error or a permission message. `core.deadlines.assert_submissions_open` is the only
-implementation of that comparison in the codebase, and the window is half-open `[open, close)` — a
-deadline of 18:00 refuses 18:00:00 itself.
+Each portal is its own Django app with its own `urls.py`, `views.py` and `templates/<app>/`.
+Models and rules shared between portals live in `events/`, `teams/` and `projects/`. A
+teammate can own one portal and rarely touch anyone else's files. Shared things live in `core/`
+(audit log, headers, errors) and `accounts/` (identity), plus the shared layout in
+`src/templates/`.
 
-In the API this ordering is visible as a structural detail: the body is validated on a **later
-statement** than the guard call, never as an argument to it. Python evaluates arguments before the
-call, so `service(..., **validate(body))` would run validation first and turn a late request into a
-400. `tests/test_api_submit.py` posts a deliberately unrecognisable body to a closed event and
-requires 409.
+**Adding a page to your portal:** write a view in `<portal>/views.py` and decorate it with
+`@portal_required("<portal>")`. Add it to `<portal>/urls.py` and write a template that extends
+`_portal.html`. Every page needs that decorator. It is the access check, and the server is the
+only place that check lives.
 
-## The layers
+## Authentication and sessions
 
-### Views are thin
+### The role model
 
-A view authenticates, resolves objects, calls a service function, renders the result. No view
-contains a deadline comparison, a role check or an audit write.
+Each account has exactly one role: `participant`, `judge`, `organizer` or `admin`. A
+*visitor* is anyone not logged in; visitors are not stored. The table of who may enter which
+portal is in one place, `accounts/roles.py`:
 
-The reason is that the UI and the API must enforce identical rules. Two code paths to the same write
-is how a platform accepts a late submission through one door and refuses it at another.
+| Portal | Participant | Judge | Organizer | Admin |
+| --- | --- | --- | --- | --- |
+| `/participant/` | yes | – | – | – |
+| `/judge/` | – | yes | – | – |
+| `/organizer/` | – | – | yes | yes |
+| `/admin/` | – | – | – | yes |
 
-### Services own the rules
+Judges and participants are strictly separated. The database refuses any role outside the
+four through a CHECK constraint.
 
-`<app>/services.py` holds every write. Each public function calls the deadline guard, then the
-permission guard, then validates, then writes, then records an audit entry — and each is safe to call
-on its own, because a public write that trusts its caller to have checked is one refactor away from
-being unguarded.
+**Alternative considered: a role per event.** Here the same person could judge one event and
+compete in another, which is more realistic for a platform that runs a dozen events a year.
+The cost is that every page must first work out "your role in which event?", and the idea of
+one portal per role gets blurry. We chose one role per account for clarity and speed. If
+multi-event roles are needed later, an `EventMembership(user, event, role)` table can be added
+without breaking these portals: the account role would become the default.
 
-Transactions are explicit and narrow. No service is decorated `@transaction.atomic`: guards run
-*outside* any transaction so that the audit row describing a refusal survives the exception that
-follows it. An early version had every service decorated, which silently discarded exactly the
-evidence the brief requires keeping; `tests/test_audit_trail.py` now sweeps every guarded path and
-asserts the refusal row is in the database afterwards.
+**How someone gets each role:** sign-up always creates a participant, and a `role` field
+posted to `/signup` is ignored. An admin creates judges, organizers and admins in the admin
+portal, or with `manage.py create_account` for the very first admin when `DEMO_MODE=0`.
 
-### `core.clock` is the only source of time
+### Sessions: server-side, not JWT
 
-`datetime.now()`, `utcnow()` and `django.utils.timezone.now()` appear nowhere in application code.
-`core/clock.py` is UTC-aware, refuses naive datetimes, renders ISO-8601 with `Z`, and is injectable so
-tests pin an instant without freezing the process clock.
+A login creates a row in Postgres (`django_session`). The cookie holds only a random key.
+It is `HttpOnly`, so page scripts cannot read it; `SameSite=Lax`, so it is not sent on
+cross-site POSTs; and `Secure` behind TLS.
 
-Each service entry point reads the clock **once** and passes that instant to both the guard and any
-timestamp it stores. Two separate reads leave a window in which a submission is admitted by the guard
-and then stamped with a time after the deadline.
+| | Server-side sessions (chosen) | Signed JWT in a cookie | External provider (Auth0, Supabase) |
+| --- | --- | --- | --- |
+| Revoke one session instantly | delete the row | impossible until expiry, unless you add a denylist (which is a session table again) | provider feature |
+| Works offline on a laptop | yes | yes | **no, against the rules** |
+| Cost per request | one indexed lookup | none | network call |
+| "Where am I logged in?" page | natural | awkward | provider UI |
 
-### `core.permissions` holds policies and scopers
+At hackathon scale, one indexed lookup per request costs nothing. Being able to revoke a
+session instantly is exactly what an organizer needs when a judge's laptop goes missing.
 
-Named predicates (`can_edit_project(user, project)`) and queryset scopers (`visible_projects(user)`).
-Views and API endpoints call them; no view contains an inline role check, and a template hiding a
-button is a convenience, never the enforcement.
+On top of Django's session row, a `UserSession` row records the device, IP, start time and
+last-seen time. This powers the *active sessions* list. "Last seen" is refreshed at most once
+every 5 minutes per session, to avoid writing to the database on every request.
 
-Roles are **per event** (`events.EventMembership`), except the platform-admin flag. A resource the
-caller may not know exists — another team's draft — returns **404**, not 403, because a 403 confirms
-it exists.
+Session lifetime is 14 days if "remember this terminal" is ticked. Otherwise the cookie ends
+when the browser closes, while the server-side row still expires after 14 days.
 
-Two decisions worth stating because they look like bugs otherwise:
+**Password change** keeps the current session, rotates its key, and deletes every other
+session outright. Django would invalidate them lazily anyway; deleting them makes the sessions
+list truthful immediately.
 
-- **Organizers and platform admins cannot author projects.** The permission matrix says no for both
-  on create/edit/submit, and that specific rule beats the looser "an admin can do anything" prose
-  elsewhere: an admin able to rewrite a submission after the deadline would undermine the one
-  guarantee this software exists to provide. They get full visibility and moderation instead.
-- **The gallery uses a different scoper from everything else.** `gallery_projects()` takes no user at
-  all and returns the same rows to everyone. If a team saw its own unsubmitted draft in the public
-  listing it would conclude the draft was public and never press submit. Drafts remain reachable at
-  `/projects/<id>` for the people entitled to them — that page *is* viewer-dependent.
+### Passwords
 
-### Errors become HTTP statuses in one place
+Passwords are hashed with Argon2id, the current OWASP first choice: memory-hard, so GPU
+guessing is expensive. PBKDF2 is kept as a fallback verifier, and any hash in an older format
+is upgraded on the next login. The validators require at least 10 characters, not all digits,
+not a common password and not similar to the name or email.
 
-Every refusal is a `core.errors.PortalError` subclass carrying a stable code. DRF renders them
-through one exception handler; the UI renders the same message in a banner **with the same status**,
-so a write refused by the deadline answers 409 in a browser too.
+### API tokens (Bearer)
 
-No write path may answer 500. Two translations exist for that reason: `Model.full_clean()`'s Django
-`ValidationError` becomes a 400 (or a 409 when it names the one-active-project constraint), and an
-`IntegrityError` naming that constraint becomes the same 409 — while every *other* `IntegrityError`
-is re-raised, because disguising an unknown one as a conflict hides a real bug.
+`Authorization: Bearer <token>` authenticates scripts, the future REST API and the acceptance
+checker, which sends exactly one header per request and cannot do a login form.
 
-### Authentication: two classes, one of them CSRF-free
+- A token is `dfk_` plus 32 random bytes. It is shown once, and only its **SHA-256 digest** is
+  stored, so a database leak does not leak usable tokens. A fast hash is fine here, unlike
+  for passwords, because the token is high-entropy random, not something a person chose.
+- A bad or revoked token is a **hard 401**. It never falls back to anonymous, so a broken
+  script fails loudly.
+- A Bearer request ignores any session cookie, and **CSRF is not enforced for it**. CSRF exists
+  because browsers attach cookies automatically, and a browser never attaches an
+  `Authorization` header on its own. Cookie requests keep full CSRF checks, and a test proves
+  both halves.
 
-- `core.authentication.BearerTokenAuthentication` — `Authorization: Bearer <token>`, SHA-256 digests
-  only, **no CSRF**. Correct rather than merely convenient: a bearer token is not an ambient
-  credential, so a third-party page cannot make a browser attach it. This is also what makes the
-  acceptance checker's closed-event POST a real test of the deadline, since it can attach exactly one
-  header and therefore never a CSRF token.
-- DRF `SessionAuthentication` — for the browser, with CSRF enforced normally.
+### Login throttle
 
-Login throttling is database-backed, counted from the audit rows that already have to exist, scoped
-to (email, IP). It survives restarts and applies across gunicorn workers, which a per-process counter
-would not.
+The limits are 5 failures per (email, IP) and 30 per IP, within a sliding 15-minute window.
+They are counted from audit-log rows in Postgres, so they survive restarts and are shared
+across gunicorn workers. A successful login resets that email-and-IP counter. The throttle is
+checked **before** the password, so a throttled guess reveals nothing.
 
-## Uploads and media
+**Why not lock the account after N failures?** That lets anyone lock a judge out on judging day
+by typing their email five times. Keying on (email, IP) stops guessing without handing out
+that denial of service.
 
-Uploaded files are hostile input. `projects.services.verify_image` ignores the extension, the
-filename and the declared content type, and consults only what the bytes decode to: a size check, a
-40-megapixel ceiling with Pillow's decompression-bomb *warning* promoted to an error, `verify()` then
-a rewind-and-reopen (verify leaves the image unusable), a format allow-list, and finally a
-**re-encode**. Re-encoding strips EXIF — including the GPS tags a phone attaches — and neutralises
-polyglot files, which pass a format check but do not survive having only their pixels copied.
+A wrong email and a wrong password give the same message. Django hashes a dummy password for
+unknown emails, so the two also take the same time.
 
-Nothing serves `MEDIA_ROOT`. `MEDIA_URL` is `None` so a stray `{{ image.url }}` fails loudly instead
-of leaking a path, and every image goes out through a Django view that re-applies the owning
-project's visibility rules, sends the Content-Type recorded at upload, adds
-`X-Content-Type-Options: nosniff`, and uses `Cache-Control: private, no-store` for anything not
-publicly visible.
+**Stated trade-off:** sign-up says "an account with this email already exists". The
+leak-free alternative ("check your inbox") needs outbound email, which an offline portal
+doesn't have yet.
 
-## Search
+### Access checks
 
-One `SearchVectorField` with a GIN index, maintained in the service layer on every write rather than
-by a database trigger — a trigger would be invisible to the test suite and would need raw SQL in a
-migration to defend. Weights: project name A, tagline/tags/team B, description C.
+`accounts/guards.py` provides `login_required`, `roles_required(...)` and
+`portal_required("<portal>")`.
 
-Visitor input goes through `websearch_to_tsquery`, never `to_tsquery` and never
-`search_type="raw"`: those expect operator syntax and raise a database error on an apostrophe or a
-stray `&`. A second matcher covers partial words in the name (`icontains`, backed by a pg_trgm GIN
-index on `Upper(name)`), because the vector matches whole stemmed words and three letters is what
-people type.
+- A visitor gets a redirect to `/login?next=…` on an HTML page, or a `401` JSON response
+  with `WWW-Authenticate` on the API.
+- The wrong role gets a `403` page or JSON response, and an `access_denied` audit row.
 
-## The fixture import, and why it bypasses the guards
+The database admin (`/admin/db/`) uses **our** login page, so the throttle and the audit trail
+cannot be skipped through Django's built-in login. The audit-log table there is read-only even
+for admins, because an audit trail an admin can edit proves nothing.
 
-`acceptance/fixtures.json` is historical: its event closed in March 2026, so no participant write
-path could ever create its rows. `src/seed/importer.py` therefore writes through the ORM directly and
-never calls a participant service function. Two rules keep that bypass honest: it is imported only by
-the two management commands and appears in no `urls.py`, and its methods are named `_import_*` /
-`_seed_*` so a call site reusing one for a live write would be doing so obviously.
+### Audit log
 
-The import is **create-only**. It runs on every boot, so an importer that wrote the fixture value back
-whenever it differed would revert real edits — an organizer extends a deadline, the container
-restarts, and the deadline silently snaps back. A drifted row is reported as `preserved` with the
-differing field names and left alone; `--sync` is the opt-in escape hatch only a human runs.
+`core.AuditLog` is append-only. Each row holds who did it (plus an email snapshot, so the row
+outlives the account), the action, the subject, the IP, the user agent and JSON detail. It is
+written through a single function, `core.audit.record()`. Later modules add their own actions
+(submission edits, score changes, votes) the same way.
 
-## Testing
+## Events, teams and projects
 
-556 tests, in the container, against the real Postgres — the constraints, the exclusion constraint,
-the partial unique indexes and the full-text search are all things SQLite cannot check. `DEBUG` stays
-`False` so tests exercise production error handling. The organizers' fixture file is imported once per
-session (about 700 rows) and each test's own writes roll back around it, which cut the suite from 95
-seconds to under 30.
+These three apps hold **models and rules only** (`models.py`, `services.py`, `forms.py`). The
+pages that use them live in the portal apps: the organizer portal configures events, the
+participant portal forms teams and edits projects, and the public app shows events. Every
+write, from a page or the JSON API, goes through a function in a `services.py`, so both paths
+enforce the same rules.
 
-Three kinds of test carry more weight than the rest and should be kept if anything is ever trimmed:
-the audit sweep over every guarded write path, the set-equality test proving the gallery is
-viewer-independent, and the parameterized garbage-input sweeps that assert nothing returns 500.
+### Events
+
+- Organizers can create any number of events. Each has a `slug` (`/events/<slug>`), UTC dates
+  (start, submissions open, submissions close, judging end), a minimum and maximum team size
+  (1–20), tracks, prizes and custom questions.
+- **All times are UTC**, stored and shown, and every date field is labelled so. We chose this
+  over a per-event display timezone for simplicity.
+- **Who manages an event:** the organizers linked to it (the creator is linked automatically,
+  and co-organizers can be added by email) plus any admin. For anyone else the event's
+  management URLs return **404, not 403**, so nobody can probe which events exist.
+- **Visibility:** `is_published` is the only stored state. An unpublished event is invisible
+  (404) to everyone but its managers.
+- **Phase** (upcoming, submissions open, judging, finished) is computed from the dates on
+  every read, so it can never drift from them.
+- The database refuses impossible timelines with CHECK constraints: submissions must close
+  after they open, judging can't end before submissions close, and the event must start
+  before submissions close. The form checks the same things first, so organizers get a
+  readable error instead of a crash.
+- **Nothing silently disappears.** A track that projects use, or a question that has answers,
+  can be hidden but not deleted. An answered question's kind can't change, because that would
+  change the meaning of every stored answer. The team-size limit can't drop below the size of
+  the largest existing team.
+
+### Teams
+
+| Rule | Enforced by |
+| --- | --- |
+| one team per participant per event | database unique constraint on `(event, user)` |
+| team name unique within an event, ignoring case | database unique constraint on `(event, lower(name))` |
+| team size ≥ `event.min_team_size` to submit; a submitted team can't shrink below it | `projects/services.py::missing_for_submission`, `teams/services.py::_require_size_kept`; an organizer can't raise the minimum above a submitted team's size |
+| team size ≤ `event.max_team_size` | `teams/services.py`, under a row lock on the team, so two people can't take the last seat at once |
+| only *participants* can be on a team | `teams/services.py::_require_participant` |
+| captain is a member; only the captain renames, removes, replaces the link or hands over | `teams/services.py` |
+
+**The participant-only rule, and where it would change.** With one role per account, judges,
+organizers and admins can never compete, so a conflict of interest is impossible by
+construction. If roles ever become per-event, this rule becomes "not staff *in this event*".
+It lives in one function, `_require_participant` in `teams/services.py`, and the table above
+is repeated in the docstring of `teams/models.py`.
+
+- **Invite links:** one reusable link per team (`/join/<token>`, 128 random bits). The captain
+  can replace it, which kills the old one. The team size cap limits how many people can use
+  it. The link page works for logged-out visitors: it shows the team and event, and sends
+  them through log-in or sign-up and back.
+- **Solo participants:** starting a project without a team creates a team of one. Every
+  project belongs to a team, so there's a single code path.
+- **Leaving:** the captain must hand over captaincy first, unless they're the last member. The
+  last member leaving disbands the team and its draft. It refuses if the project is
+  submitted; the team must withdraw it to draft first.
+- **Registration is implicit:** being on a team in an event means you're registered for it.
+
+### Projects
+
+- **One project per team** (a one-to-one link). Status is `draft` or `submitted`, and the
+  database requires `submitted` exactly when `submitted_at` is set.
+- **Draft-and-edit:**
+  - A draft may be incomplete; only the name is required.
+  - Submitting requires a name, tagline, description, repository URL, a track (if the event
+    has tracks) and every required custom question answered.
+  - A submitted project can still be edited, but only into another complete state. To save
+    incomplete work, withdraw it to draft.
+  - Only submitted projects will appear in the gallery and in judging.
+- **History:** no revision snapshots. Each project records `updated_at` and `last_edited_by`,
+  and every edit, submission and withdrawal writes an audit row naming who did it and which
+  fields changed.
+- **Who can edit:** any team member.
+- **Fields:** name, tagline, description (Markdown), thumbnail, image gallery (≤ 8), demo video
+  URL, repository URL, live link, tags (free-form, normalised to lower case, ≤ 50), track, and
+  one answer per custom question.
+- **Links** must be `http(s)`. `javascript:`, `data:` and `ftp:` are refused.
+- **Markdown** is rendered with raw HTML switched off, then sanitised with nh3 to an allow-list
+  of tags. Links are forced to `rel="nofollow noopener noreferrer"`, and images are not
+  allowed, because an image on another host would break the offline rule.
+- **Images** (`projects/images.py`) go through these steps:
+  1. The size is checked.
+  2. The format is identified from the bytes; the file name and type are ignored.
+  3. The pixel count is checked from the header, so a decompression bomb is refused before
+     decoding.
+  4. The image is decoded, rotated upright, shrunk to at most 2400 px on the long side and
+     **re-encoded**. This drops EXIF and GPS data and any bytes appended after the image,
+     which is how polyglot files carry HTML.
+  5. It is stored under a random name.
+
+  Images are served by a view that applies the project's visibility rule: draft images are
+  visible only to the team and the event's organizers.
+
+## Deadline enforcement
+
+The spec asks for deadline enforcement "that actually holds (refused at the API, not just in
+the UI)". Here it is enforced twice, on one clock, with one rule.
+
+**The rule.** A participant write is allowed only while `now < effective close`:
+
+- The *effective close* is the event's `submissions_close_at`, or the team's extension if an
+  organizer granted one and it ends later.
+- The window is half-open, so **the close instant itself is already closed**.
+- Starting or editing a project also needs `now >= submissions_open_at`. Teams may form as
+  soon as the event is published, even before submissions open.
+- "Participant writes" covers everything: creating, joining, leaving, renaming or managing a
+  team; starting, editing, submitting or withdrawing a project; adding or removing images.
+  After the close, nothing participant-side can change, including withdrawing a submission.
+- Drafts stay drafts: a draft still open at the close is not judged.
+
+**One clock.** "Now" is the database's `statement_timestamp()`, not the web worker's clock, so
+every gunicorn worker and the trigger agree on what time it is.
+
+**Layer 1: the service check** (`core/deadlines.py::check_submission_window`).
+- It is the first thing every participant service function does, and the first thing every
+  write view and API endpoint does, before the permission check and before the form is read.
+- A late write is therefore refused **as late**: HTTP **409** with
+  `{"error": "submissions_closed", "closed_at": "…Z", "late_by_seconds": N}`. It is never
+  disguised as a 403 or a 400. An early project write gets 409 `submissions_not_open`.
+- Pages get the same 409 as a readable page, and before the close, participant pages render
+  their forms disabled with a banner, so nobody is surprised.
+- Every refusal is written to the audit log with the attempted action and **how late it was**,
+  so organizers can see deadline gaming.
+
+**Layer 2: the database trigger** (`projects/migrations/0002_deadline_trigger.py`).
+- A PL/pgSQL function runs `BEFORE INSERT OR UPDATE OR DELETE` on every table a participant
+  can write: projects, answers, images, project tags, teams and team members. It resolves the
+  row's event and team, takes the effective close (reading the extensions table too) and
+  raises when `statement_timestamp()` has reached it.
+- It catches everything layer 1 might miss: a code path that forgot the check, a raw SQL
+  statement, or a request that passed the check at 23:29:59.9 and reached the database at
+  23:30:00.1.
+- `DeadlineMiddleware` turns the trigger's error into the same clean 409 (and audits it), so a
+  forgotten check still never shows a 500. A test removes the service check on purpose and
+  confirms the trigger still refuses the write.
+
+**Organizer writes after the close.** Code that must write after the close (the seeded closed
+event now; judging decisions later) runs inside `deadline_bypass(request, reason)`. This sets
+`dogfood.deadline_bypass` with `SET LOCAL`, so the bypass ends with its transaction and can't
+leak into another request, and it writes a `deadline_bypassed` audit row.
+
+**Extensions.**
+
+| | What it does | Rules |
+| --- | --- | --- |
+| Extend for everyone | moves `submissions_close_at` later | must be later than the current close; the first close is kept in `original_submissions_close_at`; if the new close passes the judging end, the judging end moves by the same amount |
+| Extend for one team | a `TeamExtension(team, until, reason, granted_by)` row | must end after the event close, in the future, and before judging ends; can be revoked |
+
+Both are audited with their reason, and both are honoured by the service check and the
+trigger alike. The team sees a banner: "your team has an extension until …".
+
+**Countdown.** Participant and organizer pages show a live countdown. It counts against the
+**server's** clock, whose time is embedded in the page, so a participant with a wrong laptop
+clock still sees the true deadline.
+
+**The acceptance checker.** The demo seed creates **Dogfood Archive 2026**, an event that closed
+three days before boot, and `.dogfood.toml`'s `submit` route points at
+`/api/events/dogfood-archive-2026/projects`. The checker's "closed event refuses submissions"
+test gets a genuine 409 `submissions_closed`, not an accidental 404.
+
+## Public gallery
+
+`/projects` is the public gallery. `projects/gallery.py` holds its one query, which the page
+and `GET /api/projects` share, so they always agree.
+
+- **Visibility:** only `submitted` projects in `published` events appear. Drafts can't be
+  reached through any filter or URL, and `/projects/<id>` for a draft is a 404. Uploaded images
+  follow the same rule.
+- **Search (Postgres):** a weighted full-text vector over name (A), tagline, team name and
+  tags (B) and description (C), with English stemming, using web-search syntax: `"exact
+  phrase"`, `-exclude` and `or`.
+  - Results are ranked by relevance.
+  - Matching uses the `@@` operator. The rank is only for ordering, because `ts_rank` can give
+    a small positive score to rows that don't match.
+  - Plain queries also match substrings of name, tagline, team and tags, so a partial word
+    like "comp" finds "Compass". Queries that use the advanced syntax skip the substring match,
+    so `-exclude` isn't undone.
+- **Filters:** event, track (within the chosen event) and tag. Sorting is newest, oldest or
+  name, with 48 projects per page. Unknown filter values are ignored rather than rejected, so
+  a stale link still shows a gallery.
+- **The path is exactly `/projects`,** with no trailing-slash redirect, because the acceptance
+  checker requests it.
+
+**Possible duplicates** (organizer control page): projects in the same event with the same name
+(ignoring case) or the same repository URL, plus duplicates recorded during import. They are
+shown for a human to decide on, never removed automatically, because two teams can
+legitimately fork the same starter repo.
+
+## Importing the fixture data
+
+`imports/fixtures.py` maps the organizers' `acceptance/fixtures.json` onto our schema. It runs on
+boot when `SEED_FIXTURES=1` (the default under compose), and by hand with
+`python src/manage.py import_fixtures [--path …]`.
+
+- **Create-only and idempotent.** Every created row gets a `FixtureRef(kind, external_id →
+  object_id)`. A second run finds the refs and creates nothing, and it never overwrites a row
+  an organizer has since edited.
+- **All or nothing.** The whole import is one transaction.
+- **Edge cases are reported, not smoothed over:**
+  - A team that submitted twice (`prj_41` duplicates `prj_07` in the real file): the first
+    submission is kept, and the second external id points at the same project with
+    `duplicate_of` set. Scores for either id will land on one project when judging is imported.
+  - A judge who is also listed as a team member: kept as a judge, left off the team, and
+    reported as a conflict of interest. The real file has none, but a test covers it.
+  - A person on two teams in one event: kept on the first team, and reported.
+- **Derived dates.** The file gives only the close time, so the importer derives the open time
+  (72 hours before the close, or before the earliest submission) and the judging end (14 days
+  after the close), and reports both.
+- **Past the deadline, on purpose.** The fixture event closed in March 2026, so the import runs
+  inside the audited `deadline_bypass()`, the same path organizer tools use.
+- **Accounts.** Imported accounts use the demo password in demo mode. Otherwise they have no
+  usable password until an admin sets one.
+- **Scores** are not imported yet. The scoring model arrives with T2 (judging), and the
+  `FixtureRef` table already maps both duplicate project ids to one project for it.
+
+## Design system: violet CRT
+
+The look is ASCII and terminal, kept calm: one colour family (lavender on near-black), thin
+rules, and at most one illustration per page. The only other hue, pink, is reserved for errors.
+
+- **Fonts:** JetBrains Mono for text, and VT323 (a pixel font) for titles and labels. Both are
+  vendored and OFL-licensed. JetBrains Mono is subset to include box-drawing and block
+  characters, so ANSI art lines up.
+- **Components** (`static/css/crt.css`):
+  - `.frame` is a bordered window with a title bar.
+  - `.kv` is the key-value "subject file" sheet.
+  - `.table` is a data table.
+  - `.btn` is a bracketed button.
+  - `_field.html` renders a form field as a terminal prompt (`role@dogfood:~$ whoami --email`).
+  - `.boot` shows `[ OK ]` status lines, and `.msg` shows flash messages.
+- **Art:** the home banner is the figlet "ANSI Shadow" font. The login page shows a small
+  rotating ASCII torus (`static/js/torus.js`), which renders a single frame for anyone who asks
+  for reduced motion.
+- **No inline styles or scripts:** the CSP would block them, and a test checks that none exist.

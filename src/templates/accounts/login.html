@@ -1,28 +1,37 @@
 {% extends "base.html" %}
-
-{% block title %}Sign in · {{ portal_name }}{% endblock %}
-
+{% load static %}
+{% block title %}log in{% endblock %}
+{% block section %}login{% endblock %}
 {% block content %}
-  <article>
-    <h1>Sign in</h1>
-
-    <form method="post" action="/login">
-      {% csrf_token %}
-      <input type="hidden" name="next" value="{{ next }}">
-      {% include "_form.html" %}
-      <button type="submit">Sign in</button>
-    </form>
-
-    <p>
-      No account? <a href="/signup{% if next != '/' %}?next={{ next|urlencode }}{% endif %}">Sign up</a>.
-    </p>
-    <p>
-      <small class="muted">
-        {# Stated rather than hidden: there is no password reset, because sending email would need #}
-        {# a hosted mail provider and the portal has to run with the network off. #}
-        Forgotten your password? This deployment sends no email, so ask an administrator to reset
-        it for you.
-      </small>
-    </p>
-  </article>
+<section class="frame">
+  <header class="frame__bar">
+    <h1 class="frame__title">auth // log in</h1>
+    <span class="frame__meta" aria-hidden="true">tty1</span>
+  </header>
+  <div class="frame__body grid-auth">
+    <div>
+      <ul class="boot" aria-hidden="true">
+        <li><span class="dim">{{ role }}@dogfood:~$</span> connect --portal</li>
+        <li><span class="tag">[ OK ]</span> <span class="dim">secure session channel ready</span></li>
+      </ul>
+      {% include "_form_errors.html" %}
+      <form class="form" method="post" action="{% url 'accounts:login' %}" novalidate>
+        {% csrf_token %}
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+        {% include "_field.html" with field=form.email cmd="whoami --email" %}
+        {% include "_field.html" with field=form.password cmd="auth --password" %}
+        <label class="check">{{ form.remember }} {{ form.remember.label }}</label>
+        <div class="actions">
+          <button class="btn" type="submit">log in</button>
+          {% if signup_open %}<span class="dim">no account? <a href="{% url 'accounts:signup' %}{% if next %}?next={{ next|urlencode }}{% endif %}">sign up</a></span>{% endif %}
+        </div>
+      </form>
+    </div>
+    <div class="art-wrap" aria-hidden="true">
+      <pre class="art" data-torus></pre>
+      <p class="art-caption">dogfood.eat() · rendering…</p>
+    </div>
+  </div>
+</section>
 {% endblock %}
+{% block scripts %}<script src="{% static 'js/torus.js' %}" defer></script>{% endblock %}

@@ -1,0 +1,16 @@
+{% load portal %}
+<article class="frame card">
+  <a class="card__media" href="{% url 'public:project' project.pk %}" tabindex="-1" aria-hidden="true">
+    {% if project.thumbnail %}<img class="thumb" src="/media/{{ project.thumbnail.name }}" alt="" loading="lazy">
+    {% else %}<div class="thumb thumb--empty thumb--initials">{{ project.name|initials }}</div>{% endif %}
+  </a>
+  <div class="frame__body card__body">
+    <a class="card-title" href="{% url 'public:project' project.pk %}">{{ project.name }}</a>
+    <p class="dim card__tagline">{{ project.tagline|default:"--" }}</p>
+    <p class="meta">
+      <span>{{ project.team.name }}</span>
+      {% if project.track %}<span class="badge">{{ project.track.name }}</span>{% endif %}
+    </p>
+    {% with tags=project.tags.all %}{% if tags %}<ul class="tags">{% for t in tags|slice:":4" %}<li class="tag-chip">{{ t.name }}</li>{% endfor %}{% if tags|length > 4 %}<li class="faint">+{{ tags|length|add:"-4" }}</li>{% endif %}</ul>{% endif %}{% endwith %}
+  </div>
+</article>

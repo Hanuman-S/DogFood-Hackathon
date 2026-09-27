@@ -1,27 +1,13 @@
-# DOGFOOD 2026 portal — pinned runtime + test dependencies.
-#
-# Every version is exact. `docker compose up` must be reproducible, and a floating
-# dependency is the fastest way to make a demo that worked yesterday fail in front of a
-# judge. Django is held at the 5.2 LTS line (the brief asks for Django 5.x) even though
-# 6.x exists.
-
-# --- framework ---
-Django==5.2.17
-djangorestframework==3.18.1
-
-# --- database ---
-psycopg[binary]==3.3.6
-
-# --- serving ---
+# Runtime -- pinned exactly so a judge's build matches ours.
+Django==5.2.17              # LTS, supported until April 2028
+psycopg[binary]==3.3.6      # Postgres driver; the binary wheel needs no libpq build chain
+argon2-cffi==25.1.0         # Argon2id password hashing (Django's recommended hasher)
 gunicorn==26.2.0
-whitenoise==6.12.0
+whitenoise==6.12.0          # serves /static from the app container: no nginx, no CDN
+Pillow==12.3.0              # verifies and re-encodes uploaded images
+markdown-it-py==4.2.0       # project descriptions are Markdown...
+nh3==0.3.7                  # ...sanitised to a safe HTML subset after rendering
 
-# --- content handling ---
-Pillow==12.3.0            # image format/dimension verification, never trust the extension
-markdown-it-py==4.2.0     # render project descriptions
-nh3==0.3.7                # sanitize the rendered HTML (Rust ammonia bindings)
-
-# --- tests ---
-pytest==8.4.2
+# Tests
+pytest==9.1.1
 pytest-django==4.14.0
-time-machine==3.5.1       # only for the few tests that cannot use the injectable clock

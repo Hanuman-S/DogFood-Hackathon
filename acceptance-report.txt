@@ -1,7 +1,7 @@
 DOGFOOD 2026 acceptance report
 portal: http://localhost:8080
 claimed: T1
-fixtures: C:\Users\anura\Desktop\DogFood\clean-clone-test\acceptance\fixtures.json
+fixtures: /home/claude/dogfood/acceptance/fixtures.json
 
 T1  gallery is public ................. PASS
 T1  project from fixtures shown ....... PASS
@@ -11,7 +11,7 @@ T2  judge sees own scores ............. FAIL
        sent as judge_a
        got 404, wanted 200
 T2  judge cannot see peer scores ...... FAIL
-       GET http://localhost:8080/api/judge/scores?judge=jdg_02
+       GET http://localhost:8080/api/judge/scores?judge=judge_a
        sent as judge_b; this is the url that returns judge_a's scores
        got 404, wanted 401 or 403
 T2  participant blocked ............... FAIL
@@ -19,7 +19,7 @@ T2  participant blocked ............... FAIL
        sent as participant
        got 404, wanted 401 or 403
 T2  csv export works .................. FAIL
-       GET http://localhost:8080/api/events/sample-hack-2026/export.csv
+       GET http://localhost:8080/api/export.csv
        sent as organizer
        got 404, wanted 200
 

@@ -1,59 +1,39 @@
-"""Root URL configuration.
+"""Root URL map.
 
-Two routes here are load-bearing for the acceptance checker and are written **without a
-trailing slash on purpose**: `/healthz` and `/projects`.
+One URL prefix per audience, each served by its own Django app:
 
-The checker calls them with `urllib`, which follows redirects -- and on a 301 or 302 it
-rewrites a POST into a GET. If Django's `APPEND_SLASH` were answering for either route, the
-checker would be measuring a redirect rather than the portal. So every path advertised in
-`.dogfood.toml` is registered at exactly the string advertised, and `tests/test_acceptance_
-contract.py` asserts each one answers in a single hop.
+    /               public      visitors (no login): home, and later the gallery
+    /participant/   participant
+    /judge/         judge
+    /organizer/     organizer   (admins may enter too)
+    /admin/         platform_admin, with the raw database admin at /admin/db/
+
+Access to every prefix is decided in the backend by `accounts.guards.portal_required`, never
+by hiding a link.
 """
 
-from django.http import HttpResponse
 from django.urls import include, path
 
-from core.admin_site import portal_admin_site
-from core.views import healthz, home
-from gallery import urls as gallery_urls
-from projects import urls as projects_urls
-from teams import urls as teams_urls
-
-
-def robots_txt(request):
-    """Served locally so the portal never 404s a crawler probe, and so there is no reason
-    for any page to reference an external host."""
-    return HttpResponse("User-agent: *\nAllow: /\n", content_type="text/plain")
-
+from core import views as core_views
+from participant import views as participant_views
+from platform_admin.site import database_admin
+from projects import media
 
 urlpatterns = [
-    path("", home, name="home"),
-    path("healthz", healthz, name="healthz"),
-    path("robots.txt", robots_txt),
-    # Auth and profile at the root: /login, /signup, /profile.
+    path("healthz", core_views.healthz, name="healthz"),
     path("", include("accounts.urls")),
-    # Invite links live at the root so they stay short enough to paste into chat.
-    #
-    # Included as a bare pattern list rather than `include((patterns, "namespace"))`: the namespaced
-    # form would make the URL name `invites:invite_accept`, and every `reverse("invite_accept")` in
-    # the views would fail at runtime rather than at import time. No namespace means no ambiguity.
-    path("", include(teams_urls.invite_urlpatterns)),
-    # The public gallery, at exactly the string `.dogfood.toml` advertises. At the root rather than
-    # inside the `projects/` include below, which owns `/projects/<id>` -- see gallery/urls.py.
-    path("", include(gallery_urls.root_urlpatterns)),
-    path("events/", include("events.urls")),
-    # `/events/<slug>/teams/new` belongs to the teams app but reads naturally under the event.
-    path("events/", include(teams_urls.event_team_urlpatterns)),
-    # Likewise `/events/<slug>/projects/new`: a project is created inside an event, and afterwards
-    # has an identity of its own under /projects/<id>.
-    path("events/", include(projects_urls.event_project_urlpatterns)),
-    # `/events/<slug>/projects` -- the same gallery scoped to one event.
-    path("events/", include(gallery_urls.event_urlpatterns)),
-    path("teams/", include("teams.urls")),
-    path("projects/", include("projects.urls")),
-    # The JSON API. `/api/events/<slug>/projects` is the route `.dogfood.toml` advertises as
-    # `submit`; it is registered at exactly that string, with no trailing slash.
-    path("api/", include("api.urls")),
-    # Admin is gated on is_platform_admin by PortalAdminSite.has_permission.
-    path("admin/", portal_admin_site.urls),
+    path("api/", include("accounts.api_urls")),
+    path("api/", include("projects.api_urls")),
+    path("join/<str:token>", participant_views.join, name="join"),
+    path("media/projects/<str:name>", media.serve, name="project_media"),
+    path("", include("public.urls")),
+    path("participant/", include("participant.urls")),
+    path("judge/", include("judge.urls")),
+    path("organizer/", include("organizer.urls")),
+    path("admin/db/", database_admin.urls),
+    path("admin/", include("platform_admin.urls")),
 ]
+
+handler403 = "core.views.forbidden"
+handler404 = "core.views.not_found"
+handler500 = "core.views.server_error"

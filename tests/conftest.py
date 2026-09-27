@@ -1,81 +1,93 @@
-"""Shared test configuration and fixtures.
-
-Settings overrides do NOT belong here -- they live in `config.settings_test`, because
-pytest-django configures Django before this file is imported. See that module for why.
-"""
-
-from pathlib import Path
-
 import pytest
+from django.test import Client
 
-from core import clock
+from accounts.models import User
+from accounts.roles import Role
 
-# The organizers' real fixture file, located relative to this file rather than to the working
-# directory so the suite runs the same from the repo root or from inside the container.
-FIXTURES_PATH = Path(__file__).resolve().parent.parent / "acceptance" / "fixtures.json"
-
-
-@pytest.fixture(autouse=True)
-def _reset_clock():
-    """Guarantee every test starts on the real clock.
-
-    Autouse and unconditional: a test that installs a fake clock and fails midway must not
-    leak that clock into the next test. `core.clock.frozen_at` already restores on exit, but
-    relying on every future test to use the context manager correctly is exactly the kind of
-    assumption that produces an hour of confused debugging.
-    """
-    clock.set_clock(None)
-    yield
-    clock.set_clock(None)
+PASSWORD = "correct-horse-battery"
 
 
 @pytest.fixture
-def api_client():
-    """DRF test client. Used for the Bearer-token paths."""
-    from rest_framework.test import APIClient
+def make_user(db):
+    def make(role=Role.PARTICIPANT, email=None, password=PASSWORD, name="Test User"):
+        email = email or f"{role}-{User.objects.count() + 1}@example.org"
+        return User.objects.create_user(email, password, name=name, role=role)
 
-    return APIClient()
-
-
-# --------------------------------------------------------------------------------------
-# the shared fixture dataset
-# --------------------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def fixture_report(django_db_setup, django_db_blocker):
-    """Import the organizers' fixture file **once per test session**.
-
-    Importing it per test cost about three seconds a time, which is most of the suite's runtime
-    for data that never varies. Loading it once outside the per-test transaction means every
-    test still sees it, while each test's own writes are rolled back by the ordinary `db`
-    fixture -- so tests remain isolated from each other without re-importing 700 rows.
-
-    Tests use `imported` below rather than this fixture directly, so they also get `db`.
-    """
-    from seed.importer import FixtureImporter
-
-    with django_db_blocker.unblock():
-        yield FixtureImporter(FIXTURES_PATH).run()
+    return make
 
 
 @pytest.fixture
-def imported(db, fixture_report):
-    """The fixture dataset, inside a rolled-back transaction. Returns the import report."""
-    return fixture_report
+def login_client(make_user):
+    """A Client logged in through the real login form, so signals and tracking all run."""
+
+    def make(role=Role.PARTICIPANT, user=None, ip="10.0.0.1", **client_kwargs):
+        user = user or make_user(role=role)
+        client = Client(REMOTE_ADDR=ip, HTTP_USER_AGENT="Mozilla/5.0 (X11; Linux) Firefox/130.0",
+                        **client_kwargs)
+        response = client.post("/login", {"email": user.email, "password": PASSWORD})
+        assert response.status_code == 302, response.content[:500]
+        client.user = user
+        return client
+
+    return make
+
+
+# --- events, teams, projects -----------------------------------------------------------------
+
+from datetime import timedelta  # noqa: E402
+
+from django.utils import timezone  # noqa: E402
 
 
 @pytest.fixture
-def fixture_event(imported):
-    from events.models import Event
+def make_event(make_user):
+    """A published event whose submission window is open, with one organizer."""
+    from events.models import Event, EventOrganizer
 
-    return Event.objects.get(external_id="evt_01")
+    def make(slug=None, organizer=None, published=True, max_team_size=4, **dates):
+        now = timezone.now()
+        organizer = organizer or make_user(role=Role.ORGANIZER)
+        event = Event.objects.create(
+            slug=slug or f"event-{Event.objects.count() + 1}",
+            name="Test Hack",
+            starts_at=dates.get("starts_at", now - timedelta(days=1)),
+            submissions_open_at=dates.get("submissions_open_at", now - timedelta(days=1)),
+            submissions_close_at=dates.get("submissions_close_at", now + timedelta(days=2)),
+            judging_ends_at=dates.get("judging_ends_at", now + timedelta(days=5)),
+            max_team_size=max_team_size,
+            is_published=published,
+            created_by=organizer,
+        )
+        EventOrganizer.objects.create(event=event, user=organizer, added_by=organizer)
+        event.organizer = organizer
+        return event
+
+    return make
 
 
-def bearer(token_plaintext: str) -> dict:
-    """Build the header kwargs for a Bearer-authenticated request.
+@pytest.fixture
+def make_team(make_user):
+    from teams.models import Team, TeamMember
 
-    Mirrors what the acceptance checker sends: a single `Authorization` header and nothing
-    else -- no CSRF token, no session cookie.
-    """
-    return {"HTTP_AUTHORIZATION": f"Bearer {token_plaintext}"}
+    def make(event, captain=None, members=(), name=None):
+        captain = captain or make_user()
+        team = Team.objects.create(event=event, name=name or f"Team {Team.objects.count() + 1}", captain=captain)
+        TeamMember.objects.create(team=team, user=captain)
+        for member in members:
+            TeamMember.objects.create(team=team, user=member)
+        return team
+
+    return make
+
+
+@pytest.fixture
+def client_for():
+    """A logged-in Client for an existing user (via the real login form)."""
+
+    def make(user, ip="10.0.0.9"):
+        client = Client(REMOTE_ADDR=ip)
+        assert client.post("/login", {"email": user.email, "password": PASSWORD}).status_code == 302
+        client.user = user
+        return client
+
+    return make

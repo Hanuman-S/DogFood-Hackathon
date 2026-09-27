@@ -1,22 +1,9 @@
 __pycache__/
 *.py[cod]
-*.egg-info/
-.venv/
-venv/
-
-# collected by `collectstatic` at image build time
-staticfiles/
-
-# uploaded project images live on a docker volume; never commit them
-media/
-
 .pytest_cache/
-.coverage
-htmlcov/
-
-# real secrets never enter the repo; .env.example documents the defaults instead
 .env
-
+dev.sqlite3
+staticfiles/
+media/
+.venv/
 .DS_Store
-.idea/
-.vscode/

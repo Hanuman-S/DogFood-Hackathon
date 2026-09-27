@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}events{% endblock %}
+{% block section %}events{% endblock %}
+{% block content %}
+<ul class="boot"><li><span class="dim">{{ role }}@dogfood:~$</span> ls /events</li></ul>
+<div class="cards">
+{% for e in events %}
+  <section class="frame">
+    <div class="frame__body">
+      <a class="card-title" href="{% url 'public:event_detail' e.slug %}">{{ e.name }}</a>
+      <p class="meta"><span class="badge{% if e.phase == 'open' %} badge--on{% endif %}">{{ e.get_phase_display }}</span><span>closes {{ e.submissions_close_at|utc }}</span></p>
+      <p class="dim">{{ e.tagline }}</p>
+    </div>
+  </section>
+{% empty %}
+  <p class="faint">no published events yet.</p>
+{% endfor %}
+</div>
+{% endblock %}

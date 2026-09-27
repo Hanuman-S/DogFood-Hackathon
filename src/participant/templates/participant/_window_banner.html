@@ -1,0 +1,8 @@
+{% load portal %}
+{% if window.is_closed %}
+  <ul class="msgs" role="status"><li class="msg msg--error">submissions closed at {{ window.closes_at|utc }}. everything below is read-only; the server refuses changes. if something went wrong, ask an organizer for an extension.</li></ul>
+{% elif window.extended %}
+  <ul class="msgs" role="status"><li class="msg msg--warning">your team has an extension until {{ window.closes_at|utc }} (everyone else closed at {{ event.submissions_close_at|utc }}).</li></ul>
+{% elif window.not_yet_open %}
+  <ul class="msgs" role="status"><li class="msg msg--warning">submissions open at {{ window.opens_at|utc }}. you can form a team now; projects can be started once submissions open.</li></ul>
+{% endif %}

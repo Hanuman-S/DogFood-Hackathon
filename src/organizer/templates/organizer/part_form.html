@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}edit {{ kind }}{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">edit {{ kind }}</h1><span class="frame__meta">{{ event.name }}</span></header>
+  <div class="frame__body">
+    {% include "_form_errors.html" %}
+    <form class="form" method="post" novalidate>
+      {% csrf_token %}
+      {% for field in form %}{% include "_field.html" with field=field %}{% endfor %}
+      <div class="actions"><button class="btn" type="submit">save</button><a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back</a></div>
+    </form>
+  </div>
+</section>
+{% endblock %}

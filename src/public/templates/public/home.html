@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}home{% endblock %}
+{% block content %}
+<section class="hero">
+  {% include "_banner.html" %}
+  <p class="hero__lede">a self-hosted hackathon portal: submissions, judging and results, in one place, on your own machine.</p>
+  <ul class="boot" aria-label="system status">
+    <li><span class="tag">[ OK ]</span> auth and sessions online</li>
+    <li><span class="tag">[ OK ]</span> role portals: participant · judge · organizer · admin</li>
+    <li><span class="tag">[ OK ]</span> events, teams by invite link, draft-and-submit projects</li>
+    <li><span class="tag">[ OK ]</span> deadlines enforced by the server and the database</li>
+    <li><span class="tag">[ OK ]</span> public gallery with search and filters</li>
+    <li><span class="tag tag--pending">[ .. ]</span> <span class="faint">judging: next</span></li>
+  </ul>
+  <div class="actions">
+    <a class="btn btn--ghost" href="{% url 'public:gallery' %}">browse {{ project_count }} project{{ project_count|pluralize }}</a>
+    <a class="btn btn--ghost" href="{% url 'public:event_list' %}">browse events</a>
+    {% if user.is_authenticated %}
+      <a class="btn" href="{{ portal_url }}">open {{ role }} portal</a>
+      <a class="btn btn--ghost" href="{% url 'accounts:account' %}">account</a>
+    {% else %}
+      <a class="btn" href="{% url 'accounts:login' %}">log in</a>
+      <a class="btn btn--ghost" href="{% url 'accounts:signup' %}">sign up</a>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

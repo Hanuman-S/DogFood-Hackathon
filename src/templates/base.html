@@ -1,72 +1,50 @@
-{% load static %}<!DOCTYPE html>
-<html lang="en" data-theme="light">
+{% load static %}<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ portal_name }}{% endblock %}</title>
-  {# Every asset below is vendored into src/static/vendor/ and served by WhiteNoise. #}
-  {# There is no CDN link, no webfont and no external request anywhere in this layout: #}
-  {# the portal has to work with the network off. See src/static/vendor/NOTICE.md.     #}
-  <link rel="stylesheet" href="{% static 'vendor/pico.min.css' %}">
-  <link rel="stylesheet" href="{% static 'css/portal.css' %}">
-  <script src="{% static 'vendor/htmx.min.js' %}" defer></script>
+  <title>{% block title %}DOGFOOD{% endblock %} · DOGFOOD portal</title>
   <link rel="icon" href="{% static 'img/favicon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/crt.css' %}">
 </head>
 <body>
-  {% if demo_mode %}
-    <div class="demo-banner" role="status">
-      <strong>DEMO MODE.</strong>
-      Seeded demo accounts with published passwords and fixed API tokens are active.
-      Set <code>DEMO_MODE=0</code> before using this deployment for a real event.
-    </div>
-  {% endif %}
-
-  <header class="container">
-    <nav>
-      <ul>
-        <li><a href="/" class="brand"><strong>{{ portal_name }}</strong></a></li>
-      </ul>
-      <ul>
-        <li><a href="/projects">Gallery</a></li>
-        {% if user.is_authenticated %}
-          <li><a href="/profile">{{ user.display_name }}</a></li>
-          <li>
-            {# Logout is a POST: a GET logout can be triggered by any third-party image tag. #}
-            <form method="post" action="/logout" class="inline-form">
-              {% csrf_token %}
-              <button type="submit" class="secondary outline">Log out</button>
-            </form>
-          </li>
-        {% else %}
-          <li><a href="/login">Log in</a></li>
-          <li><a href="/signup" role="button" class="outline">Sign up</a></li>
-        {% endif %}
-      </ul>
+<div class="screen">
+  <header class="topbar">
+    <a class="brand" href="{% url 'public:home' %}">DOGFOOD<span class="brand__sep">://</span><span class="brand__path">{% block section %}{{ role }}{% endblock %}</span></a>
+    {% with here=request.resolver_match.view_name %}
+    <nav class="nav" aria-label="main">
+      <a href="{% url 'public:home' %}"{% if here == 'public:home' %} aria-current="page"{% endif %}>home</a>
+      <a href="{% url 'public:gallery' %}"{% if here == 'public:gallery' or here == 'public:project' %} aria-current="page"{% endif %}>gallery</a>
+      <a href="{% url 'public:event_list' %}"{% if here == 'public:event_list' or here == 'public:event_detail' %} aria-current="page"{% endif %}>events</a>
+      {% if user.is_authenticated %}
+        <a href="{{ portal_url }}"{% if request.path|slice:":8" == portal_url|slice:":8" %} aria-current="page"{% endif %}>{{ role }} portal</a>
+        <a href="{% url 'accounts:account' %}"{% if here == 'accounts:account' %} aria-current="page"{% endif %}>account</a>
+        <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button type="submit">logout</button></form>
+      {% else %}
+        <a href="{% url 'accounts:login' %}"{% if here == 'accounts:login' %} aria-current="page"{% endif %}>login</a>
+        <a href="{% url 'accounts:signup' %}"{% if here == 'accounts:signup' %} aria-current="page"{% endif %}>sign up</a>
+      {% endif %}
     </nav>
+    {% endwith %}
   </header>
 
-  <main class="container">
+  <main class="main" id="main">
     {% if messages %}
-      {% for message in messages %}
-        <article class="flash flash-{{ message.tags|default:'info' }}" role="alert">
-          {{ message }}
-        </article>
-      {% endfor %}
+    <ul class="msgs" role="status">
+      {% for message in messages %}<li class="msg{% if message.tags %} msg--{{ message.tags }}{% endif %}">{{ message }}</li>{% endfor %}
+    </ul>
     {% endif %}
-
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="container">
-    <hr>
-    <small>
-      {# Stated on every page because a hackathon deadline read in the wrong timezone is #}
-      {# the single most expensive misunderstanding this software can cause.             #}
-      All times shown are <strong>UTC</strong>. Server time is
-      <time datetime="{{ utc_now|date:'c' }}">{{ utc_now|date:"Y-m-d H:i" }} UTC</time>.
-      &middot; Self-hosted Dogfood portal &middot;
-      <a href="/healthz">health</a>
-    </small>
+  <footer class="statusbar">
+    <span>role: <b>{{ role }}</b></span>
+    <span>auth: <b>{% if user.is_authenticated %}{{ request.auth_method|default:"session" }}{% else %}none{% endif %}</b></span>
+    <span>server time: <b>{% now "Y-m-d H:i" %} UTC</b></span>
+    <span aria-hidden="true">ready<span class="cursor">_</span></span>
   </footer>
+</div>
+<script src="{% static 'js/app.js' %}" defer></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

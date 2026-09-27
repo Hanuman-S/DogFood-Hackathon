@@ -1,54 +1,31 @@
-"""Core views: the health check and the landing page."""
-
-from __future__ import annotations
-
 from django.db import connection
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 
-from core import clock
+from core.net import wants_json
 
 
 def healthz(request):
-    """Liveness + readiness in one endpoint, used by the compose healthcheck.
-
-    It deliberately touches the database. A web process that is listening but cannot reach
-    Postgres is not healthy, and compose gating `web` on a check that only proved "gunicorn
-    is up" would report a working portal before it could serve a single page.
-
-    Returns 200 with `{"status": "ok"}` or 503 with the failure reason. Public and unauthen-
-    ticated: a health probe that needs a credential is a health probe that will be turned
-    off. It reveals nothing beyond reachability.
-    """
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-    except Exception as exc:  # noqa: BLE001 - any failure to reach the DB is unhealthy
-        return JsonResponse(
-            {
-                "status": "unavailable",
-                "database": "unreachable",
-                "detail": str(exc)[:200],
-                "time": clock.iso(clock.now()),
-            },
-            status=503,
-        )
-
-    return JsonResponse(
-        {
-            "status": "ok",
-            "database": "ok",
-            "time": clock.iso(clock.now()),
-        }
-    )
+    """200 only when the database answers, so 'healthy' means 'can serve a page'."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT 1")
+    return HttpResponse("ok", content_type="text/plain")
 
 
-def home(request):
-    """Landing page.
+def forbidden(request, exception=None, reason=""):
+    reason = reason or "your role does not grant access to this page."
+    if wants_json(request):
+        return JsonResponse({"error": "forbidden", "detail": reason}, status=403)
+    return render(request, "403.html", {"reason": reason}, status=403)
 
-    Phase 1 renders the skeleton only. Once the `events` app exists this lists the events
-    the caller may see, read from the database -- there is no hardcoded demo content in any
-    template, and a portal with nothing seeded renders an honest empty state.
-    """
-    return render(request, "home.html")
+
+def not_found(request, exception=None):
+    if wants_json(request):
+        return JsonResponse({"error": "not_found"}, status=404)
+    return render(request, "404.html", status=404)
+
+
+def server_error(request):
+    if wants_json(request):
+        return JsonResponse({"error": "server_error"}, status=500)
+    return render(request, "500.html", status=500)

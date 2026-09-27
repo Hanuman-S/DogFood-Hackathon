@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}join a team{% endblock %}
+{% block section %}join{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">team invite</h1><span class="frame__meta">/join</span></header>
+  <div class="frame__body">
+  {% if invalid %}
+    <ul class="boot"><li><span class="tag">[ ERR ]</span> this invite link is not valid. the captain may have replaced it; ask them for the new one.</li></ul>
+  {% else %}
+    <table class="kv">
+      <tr><th scope="row">team</th><td>{{ team.name }}</td></tr>
+      <tr><th scope="row">event</th><td>{{ event.name }}</td></tr>
+      <tr><th scope="row">captain</th><td>{{ team.captain.name }}</td></tr>
+      <tr><th scope="row">members</th><td>{{ size }}/{{ event.max_team_size }}</td></tr>
+    </table>
+    <hr class="rule">
+    {% if not user.is_authenticated %}
+      <p class="dim">log in or sign up as a participant, then you will come back here to join.</p>
+      <div class="actions">
+        <a class="btn" href="{% url 'accounts:login' %}?next={{ request.path|urlencode }}">log in</a>
+        <a class="btn btn--ghost" href="{% url 'accounts:signup' %}?next={{ request.path|urlencode }}">sign up</a>
+      </div>
+    {% elif problem %}
+      <ul class="boot"><li><span class="tag">[ ERR ]</span> {{ problem }}</li></ul>
+      {% if role == "participant" %}<a class="btn btn--ghost" href="{% url 'participant:event' event.slug %}">go to the event</a>{% endif %}
+    {% else %}
+      <form method="post">{% csrf_token %}<button class="btn" type="submit">join {{ team.name }}</button></form>
+    {% endif %}
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

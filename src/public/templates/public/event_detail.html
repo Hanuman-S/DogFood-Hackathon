@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }}{% endblock %}
+{% block section %}events{% endblock %}
+{% block content %}
+<div class="stack">
+  {% if not event.is_published %}<ul class="msgs"><li class="msg msg--warning">preview: this event is unpublished, so only its organizers can see this page.</li></ul>{% endif %}
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{{ event.name }}</h1>
+      <span class="frame__meta"><span class="badge{% if event.phase == 'open' %} badge--on{% endif %}">{{ event.get_phase_display }}</span></span>
+    </header>
+    <div class="frame__body grid-2">
+      <div>
+        {% if event.tagline %}<p class="bright">{{ event.tagline }}</p>{% endif %}
+        <div class="prose">{{ event.description|markdown }}</div>
+      </div>
+      <div class="stack">
+        <ul class="timeline">
+          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc }}</span></li>{% endfor %}
+        </ul>
+        <table class="kv">
+          <tr><th scope="row">teams</th><td>{{ team_count }}</td></tr>
+          <tr><th scope="row">submitted</th><td>{{ submitted_count }}</td></tr>
+          <tr><th scope="row">team size</th><td>{{ event.team_size_display }}</td></tr>
+        </table>
+        <div class="actions">
+          {% if role == "participant" %}<a class="btn" href="{% url 'participant:event' event.slug %}">enter as participant</a>
+          {% elif role == "visitor" %}<a class="btn" href="{% url 'accounts:signup' %}">sign up to take part</a><a class="btn btn--ghost" href="{% url 'accounts:login' %}?next={% url 'participant:event' event.slug %}">log in</a>{% endif %}
+          {% if submitted_count %}<a class="btn btn--ghost" href="/projects?event={{ event.slug }}">browse {{ submitted_count }} project{{ submitted_count|pluralize }}</a>{% endif %}
+          {% if can_manage %}<a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">manage</a>{% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid-2">
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">{{ tracks|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table"><tbody>
+        {% for t in tracks %}<tr><td class="bright">{{ t.name }}</td><td class="dim">{{ t.description }}</td></tr>
+        {% empty %}<tr><td class="faint">one open category: no tracks.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+    </section>
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">prizes</h2><span class="frame__meta">{{ prizes|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table"><tbody>
+        {% for p in prizes %}<tr><td><span class="bright">#{{ p.rank }}</span> {{ p.title }}{% if p.track %} <span class="faint">· {{ p.track.name }}</span>{% endif %}</td><td class="num bright">{{ p.value }}</td></tr>
+        {% empty %}<tr><td class="faint">prizes to be announced.</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

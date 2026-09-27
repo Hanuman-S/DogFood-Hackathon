@@ -1,0 +1,33 @@
+{% extends "_portal.html" %}
+{% load portal %}
+{% block title %}organizer portal{% endblock %}
+{% block portal_title %}organizer control{% endblock %}
+{% block portal_body %}
+<div class="actions"><a class="btn" href="{% url 'organizer:event_create' %}">new event</a></div>
+{% endblock %}
+
+{% block portal_extra %}
+<section class="frame">
+  <header class="frame__bar"><h2 class="frame__title">your events</h2><span class="frame__meta">{{ events|length }} total</span></header>
+  <div class="frame__body frame__body--flush table-wrap">
+    <table class="table">
+      <thead><tr><th>event</th><th>phase</th><th>visibility</th><th>submissions close</th><th class="num">teams</th><th class="num">submitted</th><th class="num">drafts</th></tr></thead>
+      <tbody>
+      {% for e in events %}
+        <tr>
+          <td><a href="{% url 'organizer:event' e.slug %}">{{ e.name }}</a><br><span class="faint">/events/{{ e.slug }}</span></td>
+          <td><span class="badge{% if e.phase == 'open' %} badge--on{% endif %}">{{ e.get_phase_display }}</span></td>
+          <td>{% if e.is_published %}<span class="badge badge--on">published</span>{% else %}<span class="badge">draft</span>{% endif %}</td>
+          <td class="dim">{{ e.submissions_close_at|utc }}</td>
+          <td class="num">{{ e.team_count }}</td>
+          <td class="num">{{ e.submitted_count }}</td>
+          <td class="num dim">{{ e.draft_count }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="faint">no events yet. create one, or ask a co-organizer to add you to theirs.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
