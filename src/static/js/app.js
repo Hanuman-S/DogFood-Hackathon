@@ -40,6 +40,56 @@
     setInterval(tick, 1000);
   }
 
+  // Rubric editor: keep <span data-weight-total> equal to the sum of the [data-weight] inputs
+  // (rows ticked for removal excluded), in thousandths so 33.334 + 33.333 + 33.333 is 100.
+  var weightTotal = document.querySelector("[data-weight-total]");
+  if (weightTotal) {
+    var weights = document.querySelectorAll("[data-weight]");
+    var removal = function (input) {
+      return document.querySelector("[name='" + input.name.replace(/weight$/, "DELETE") + "']");
+    };
+    var recount = function () {
+      var units = 0;
+      weights.forEach(function (input) {
+        var remove = removal(input);
+        if (remove && remove.checked) return;
+        var value = parseFloat(input.value);
+        if (!isNaN(value)) units += Math.round(value * 1000);
+      });
+      weightTotal.textContent = String(units / 1000);
+      weightTotal.classList.toggle("weight-total--off", units !== 100000);
+    };
+    weights.forEach(function (input) {
+      input.addEventListener("input", recount);
+      var remove = removal(input);
+      if (remove) remove.addEventListener("change", recount);
+    });
+    recount();
+  }
+
+  // Live dashboards: <div data-refresh-url="...?partial=1" data-refresh-every="30"> replaces its
+  // contents with a fresh render from the server. Without JavaScript the page is simply static.
+  document.querySelectorAll("[data-refresh-url]").forEach(function (box) {
+    var every = Math.max(10, parseInt(box.getAttribute("data-refresh-every"), 10) || 30) * 1000;
+    var status = document.querySelector("[data-refresh-status]");
+    var refresh = function () {
+      if (document.hidden) return;
+      fetch(box.getAttribute("data-refresh-url"), { credentials: "same-origin", headers: { "Accept": "text/html" } })
+        .then(function (response) {
+          if (!response.ok) throw new Error(response.status);
+          return response.text();
+        })
+        .then(function (html) {
+          box.innerHTML = html;
+          if (status) status.textContent = " (updated " + new Date().toLocaleTimeString() + ")";
+        })
+        .catch(function () {
+          if (status) status.textContent = " (could not refresh; showing the last update)";
+        });
+    };
+    setInterval(refresh, every);
+  });
+
   // [ copy ] buttons: <button data-copy="#target-id">
   document.querySelectorAll("[data-copy]").forEach(function (button) {
     button.hidden = false;

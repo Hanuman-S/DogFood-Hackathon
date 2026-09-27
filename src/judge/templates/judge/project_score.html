@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% load static %}
+{% load portal %}
+{% block title %}Rate: {{ project.name }} · {{ event.name }}{% endblock %}
+{% block section %}judge{% endblock %}
+{% block content %}
+<div class="stack">
+  <div class="actions">
+    <a class="btn btn--small btn--ghost" href="{% url 'judge:event' event.slug %}">&larr; back to {{ event.name }}</a>
+    <span class="faint">Judging submission for <b>{{ event.name }}</b></span>
+  </div>
+
+  <div class="judge-layout">
+    <!-- Main Left Column: Submission Details -->
+    <section class="frame">
+      <header class="frame__bar">
+        <h1 class="frame__title">{{ project.name }}</h1>
+        <span class="frame__meta">
+          {% if project.track %}<span class="badge">{{ project.track.name }}</span>{% endif %}
+          <span class="faint">by {{ project.team.name }}</span>
+        </span>
+      </header>
+      <div class="frame__body stack">
+        <div class="judge-project-header">
+          <div class="judge-project-thumb">
+            {% if project.thumbnail %}
+            <img class="thumb" src="/media/{{ project.thumbnail.name }}" alt="{{ project.name }} thumbnail">
+            {% else %}
+            <div class="thumb thumb--empty thumb--initials">{{ project.name|initials }}</div>
+            {% endif %}
+          </div>
+          <div class="stack">
+            {% if project.tagline %}
+            <p class="bright">{{ project.tagline }}</p>
+            {% endif %}
+
+            <table class="kv">
+              <tr><th scope="row">team</th><td>{{ project.team.name }}</td></tr>
+              {% if project.track %}<tr><th scope="row">track</th><td>{{ project.track.name }}</td></tr>{% endif %}
+              {% if project.submitted_at %}<tr><th scope="row">submitted</th><td>{{ project.submitted_at|utc }}</td></tr>{% endif %}
+              {% if project.repo_url %}
+              <tr><th scope="row">repo</th><td><a href="{{ project.repo_url }}" target="_blank" rel="noopener">{{ project.repo_url|cut:"https://"|truncatechars:35 }}</a></td></tr>
+              {% endif %}
+              {% if project.demo_video_url %}
+              <tr><th scope="row">demo</th><td><a href="{{ project.demo_video_url }}" target="_blank" rel="noopener">watch video</a></td></tr>
+              {% endif %}
+              {% if project.live_url %}
+              <tr><th scope="row">live</th><td><a href="{{ project.live_url }}" target="_blank" rel="noopener">open link</a></td></tr>
+              {% endif %}
+            </table>
+
+            {% with tags=project.tags.all %}
+            {% if tags %}
+            <ul class="tags">
+              {% for t in tags %}<li class="tag-chip">{{ t.name }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+            {% endwith %}
+          </div>
+        </div>
+
+        {% if project.description %}
+        <hr class="rule">
+        <div class="stack">
+          <h3 class="section-title">Description</h3>
+          <div class="prose">
+            {{ project.description|markdown }}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if answers %}
+        <hr class="rule">
+        <div class="stack">
+          <h3 class="section-title">Submission Questions</h3>
+          {% for a in answers %}
+          <div class="code-row">
+            <dt>{{ a.question.prompt }}</dt>
+            <dd>{{ a.value }}</dd>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if project.images.all %}
+        <hr class="rule">
+        <div class="stack">
+          <h3 class="section-title">Screenshots</h3>
+          <div class="shots">
+            {% for img in project.images.all %}
+            <figure class="shot">
+              <img class="thumb" src="/media/{{ img.image.name }}" alt="{{ img.caption|default:project.name }}">
+              {% if img.caption %}<figcaption>{{ img.caption }}</figcaption>{% endif %}
+            </figure>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- Right column: the review -->
+    <section class="frame judge-sticky-sidebar">
+      <header class="frame__bar">
+        <h2 class="frame__title">your review</h2>
+        <span class="frame__meta">
+          {% if submitted %}<span class="badge badge--on">submitted</span>
+          {% elif score %}<span class="badge badge--warn">draft</span>
+          {% else %}<span class="badge">not started</span>{% endif %}
+        </span>
+      </header>
+      <div class="frame__body stack">
+        {% if not window.is_open %}
+        <p class="dim">{% if window.not_started %}judging opens at {{ event.judging_starts_at|utc }}.{% else %}judging closed at {{ event.judging_ends_at|utc }}; this review is read-only.{% endif %}</p>
+        {% elif submitted %}
+        <p class="dim">submitted {{ score.submitted_at|utc }}. saving a draft reopens it; submit again before judging closes.</p>
+        {% else %}
+        <p class="dim">save a draft at any time. submit once every criterion is scored: only submitted reviews count.</p>
+        {% endif %}
+
+        {% if criteria_data %}
+        <form method="post" class="form">
+          {% csrf_token %}
+          {% for item in criteria_data %}
+          <fieldset class="field">
+            <legend class="field__label bright"><b>{{ item.criterion.label }}</b> <span class="faint">· weight {{ item.criterion.weight.normalize }}%</span></legend>
+            {% if item.criterion.description %}<p class="field__help">{{ item.criterion.description }}</p>{% endif %}
+            <div class="rating-group">
+              {% for v in item.range %}
+              <label class="rating-btn">
+                <input type="radio" name="criterion_{{ item.criterion.key }}" value="{{ v }}" {% if item.value == v %}checked{% endif %}{% if not window.is_open %} disabled{% endif %}>
+                <span>{{ v }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            {% for level, text in item.levels %}{% if text %}<p class="field__help"><b>{{ level }}</b> &mdash; {{ text }}</p>{% endif %}{% endfor %}
+          </fieldset>
+          {% endfor %}
+
+          <div class="field">
+            <label class="field__label" for="comment">comment <span class="faint">(optional)</span></label>
+            <textarea name="comment" id="comment"{% if not window.is_open %} disabled{% endif %}>{{ comment }}</textarea>
+          </div>
+
+          {% if window.is_open %}
+          <div class="actions">
+            <button class="btn btn--ghost" type="submit" name="action" value="save">save draft</button>
+            <button class="btn" type="submit" name="action" value="submit">submit</button>
+            {% if next_project %}<button class="btn" type="submit" name="action" value="submit_next">submit &amp; next</button>{% endif %}
+          </div>
+          {% endif %}
+        </form>
+        {% else %}
+        <p class="faint">the organizers have not set the rubric yet.</p>
+        {% endif %}
+
+        {% if not submitted %}
+        <hr class="rule">
+        <form method="post" class="form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="decline">
+          <div class="field">
+            <label class="field__label" for="reason">conflict of interest?</label>
+            <textarea name="reason" id="reason" rows="2" placeholder="say briefly what the conflict is; only organizers see it"></textarea>
+            <p class="field__help">declining removes this project from your queue for good; the organizers reassign it.</p>
+          </div>
+          <div class="actions"><button class="btn btn--ghost" type="submit">decline this project</button></div>
+        </form>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'js/judge.js' %}" defer></script>{% endblock %}

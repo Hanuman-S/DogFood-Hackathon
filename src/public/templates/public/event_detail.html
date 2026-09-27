@@ -17,7 +17,7 @@
       </div>
       <div class="stack">
         <ul class="timeline">
-          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc }}</span></li>{% endfor %}
+          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc:"to be announced" }}</span></li>{% endfor %}
         </ul>
         <table class="kv">
           <tr><th scope="row">teams</th><td>{{ team_count }}</td></tr>
@@ -25,6 +25,7 @@
           <tr><th scope="row">team size</th><td>{{ event.team_size_display }}</td></tr>
         </table>
         <div class="actions">
+          {% if is_judge %}<a class="btn" href="{% url 'judge:event' event.slug %}">judge event</a>{% endif %}
           {% if role == "participant" %}<a class="btn" href="{% url 'participant:event' event.slug %}">enter as participant</a>
           {% elif role == "visitor" %}<a class="btn" href="{% url 'accounts:signup' %}">sign up to take part</a><a class="btn btn--ghost" href="{% url 'accounts:login' %}?next={% url 'participant:event' event.slug %}">log in</a>{% endif %}
           {% if submitted_count %}<a class="btn btn--ghost" href="/projects?event={{ event.slug }}">browse {{ submitted_count }} project{{ submitted_count|pluralize }}</a>{% endif %}

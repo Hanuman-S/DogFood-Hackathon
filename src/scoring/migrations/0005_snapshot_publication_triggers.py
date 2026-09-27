@@ -83,6 +83,6 @@ def uninstall(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("scoring", "0002_scoring_results")]
+    dependencies = [("scoring", "0004_results_tables")]
 
     operations = [migrations.RunPython(install, uninstall)]

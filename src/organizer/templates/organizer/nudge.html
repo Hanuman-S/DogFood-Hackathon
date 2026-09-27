@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}remind {{ judge.user.name }}{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">reminder for {{ judge.user.name }}</h1><span class="frame__meta">{{ event.name }}</span></header>
+  <div class="frame__body stack">
+    <p class="msg">reminder logged. send it from your own mail: the portal does not send email.</p>
+    <table class="kv">
+      <tr><th scope="row">to</th><td>{{ judge.user.email }}</td></tr>
+      <tr><th scope="row">subject</th><td>{{ subject }}</td></tr>
+    </table>
+    <div class="secret"><code id="nudge-text" class="pre">{{ body }}</code><button class="btn btn--small" type="button" data-copy="#nudge-text" hidden>copy</button></div>
+    <div class="actions">
+      <a class="btn" href="{{ mailto }}">open in your mail app</a>
+      <a class="btn btn--ghost" href="{% url 'organizer:progress' event.slug %}">back to progress</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

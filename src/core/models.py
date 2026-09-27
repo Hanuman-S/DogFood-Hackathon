@@ -1,7 +1,6 @@
 """The audit log: one append-only table an organizer can read without a database client.
 
-Auth writes to it now; later modules (submissions, judging, voting) add their own actions to
-`AuditAction` and call `core.audit.record()` the same way.
+Every module adds its actions to `AuditAction` and writes through `core.audit.record()`.
 """
 
 from django.conf import settings
@@ -61,7 +60,35 @@ class AuditAction(models.TextChoices):
     DEADLINE_BYPASSED = "deadline_bypassed", "Wrote past the deadline (organizer bypass)"
     # imports
     FIXTURES_IMPORTED = "fixtures_imported", "Imported the fixture dataset"
-    # scoring
+    # judging (T2). All three T2 parts add their actions here, in one place, so they share one
+    # migration instead of three conflicting ones.
+    # -- organizer: rubric, judges, window, assignment
+    CRITERION_ADDED = "criterion_added", "Added a rubric criterion"
+    CRITERION_UPDATED = "criterion_updated", "Edited a rubric criterion"
+    CRITERION_REMOVED = "criterion_removed", "Removed a rubric criterion"
+    RUBRIC_CHANGE_REFUSED = "rubric_change_refused", "Refused a rubric change (rubric locked)"
+    JUDGE_INVITED = "judge_invited", "Created a judge invite link"
+    JUDGE_INVITE_ACCEPTED = "judge_invite_accepted", "Accepted a judge invite"
+    JUDGE_INVITE_REVOKED = "judge_invite_revoked", "Revoked a judge invite"
+    JUDGE_INVITE_REFUSED = "judge_invite_refused", "Refused a judge invite"
+    JUDGING_EXTENDED = "judging_extended", "Extended judging"
+    JUDGING_EXTENSION_REFUSED = "judging_extension_refused", "Refused to extend judging (a final result exists)"
+    ASSIGNMENTS_GENERATED = "assignments_generated", "Ran an automatic assignment round"
+    ASSIGNMENT_ADDED = "assignment_added", "Assigned a project to a judge"
+    ASSIGNMENT_WITHDRAWN = "assignment_withdrawn", "Withdrew an assignment"
+    ASSIGNMENT_MOVED = "assignment_moved", "Moved an assignment to another judge"
+    ASSIGNMENT_DECLINED = "assignment_declined", "Declined an assignment (conflict of interest)"
+    JUDGE_NUDGED = "judge_nudged", "Reminded a judge"
+    # -- judge: reviews
+    SCORE_SAVED = "score_saved", "Saved a review draft"
+    SCORE_SUBMITTED = "score_submitted", "Submitted a review"
+    SCORE_REOPENED = "score_reopened", "Reopened a submitted review"
+    JUDGING_WRITE_REFUSED = "judging_write_refused", "Refused a review outside the judging window"
+    # -- scoring engine: results
+    RESULTS_COMPUTED = "results_computed", "Computed results"
+    RESULTS_PUBLISHED = "results_published", "Published results"
+    JUDGE_EXCLUDED = "judge_excluded", "Excluded a judge's reviews from results"
+    REVIEW_FLAG_RESOLVED = "review_flag_resolved", "Resolved a flagged review"
     SNAPSHOT_CREATED = "snapshot_created", "Computed a results snapshot"
     SNAPSHOT_REFUSED = "snapshot_refused", "Refused to compute a results snapshot"
     SCORING_CONFIG_CHANGED = "scoring_config_changed", "Changed an event's scoring configuration"

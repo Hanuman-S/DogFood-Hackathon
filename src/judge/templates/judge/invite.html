@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}judge invite{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">judge invite</h1><span class="frame__meta">/invite/judge</span></header>
+  <div class="frame__body stack">
+  {% if state != "open" %}
+    <ul class="boot"><li><span class="tag">[ ERR ]</span>
+      {% if state == "invalid" %}this invite link is not valid. check you copied all of it, or ask the organizer for a new one.
+      {% elif state == "accepted" %}this invite link has already been used. if that was you, <a href="{% url 'judge:home' %}">go to the judge portal</a>.
+      {% elif state == "revoked" %}this invite link was withdrawn by the organizer. ask them for a new one.
+      {% else %}this invite link has expired. ask the organizer for a new one.{% endif %}
+    </li></ul>
+  {% else %}
+    <table class="kv">
+      <tr><th scope="row">event</th><td>{{ event.name }}</td></tr>
+      <tr><th scope="row">role</th><td>judge</td></tr>
+      <tr><th scope="row">tracks</th><td>{% for t in tracks %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>
+      <tr><th scope="row">for</th><td>{{ invite.email }}</td></tr>
+      <tr><th scope="row">invited by</th><td>{{ invite.created_by.name|default:"an organizer" }}</td></tr>
+      <tr><th scope="row">valid until</th><td>{{ invite.expires_at|utc }}</td></tr>
+    </table>
+    <p class="faint">judging this event means you cannot compete in it. you will see only your own scores, never another judge's.</p>
+    <hr class="rule">
+
+    {% if user_here %}
+      {% if problem %}
+        <ul class="boot"><li><span class="tag">[ ERR ]</span> {{ problem }}</li></ul>
+      {% else %}
+        <form method="post">{% csrf_token %}<button class="btn" type="submit">accept: judge {{ event.name }}</button></form>
+      {% endif %}
+    {% elif has_account %}
+      <p class="dim">{{ invite.email }} already has an account. log in as {{ invite.email }}, and you will come back here to accept.</p>
+      <div class="actions"><a class="btn" href="{{ login_url }}">log in</a></div>
+    {% else %}
+      <p class="dim">create your account to accept. the email is the one you were invited as.</p>
+      {% include "_form_errors.html" %}
+      <form class="form" method="post" novalidate>
+        {% csrf_token %}
+        {% include "_field.html" with field=form.name cmd="whoami --name" %}
+        {% include "_field.html" with field=form.email cmd="--email" %}
+        {% include "_field.html" with field=form.password1 cmd="passwd" %}
+        {% include "_field.html" with field=form.password2 cmd="passwd --again" %}
+        <div class="actions"><button class="btn" type="submit">create account and accept</button></div>
+      </form>
+    {% endif %}
+  {% endif %}
+  </div>
+</section>
+{% endblock %}

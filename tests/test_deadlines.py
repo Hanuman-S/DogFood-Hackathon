@@ -17,6 +17,8 @@ from events.models import Event
 from projects.models import Answer, Project, ProjectImage, Status, Tag
 from teams.models import Team, TeamExtension, TeamMember
 
+from _dates import dt_fields
+
 pytestmark = pytest.mark.django_db
 
 
@@ -24,7 +26,7 @@ def close(event, ago=timedelta(hours=1)):
     """Move the event's close into the past (events are not trigger-guarded)."""
     now = timezone.now()
     Event.objects.filter(pk=event.pk).update(
-        starts_at=now - timedelta(days=3), submissions_open_at=now - timedelta(days=3),
+        starts_at=now - timedelta(days=3, hours=1), submissions_open_at=now - timedelta(days=3),
         submissions_close_at=now - ago,
     )
     event.refresh_from_db()
@@ -136,7 +138,7 @@ def test_pages_turn_read_only_after_the_close(world):
 
 def test_teams_can_form_before_submissions_open_but_projects_cannot_start(make_event, make_user, client_for):
     now = timezone.now()
-    event = make_event(starts_at=now + timedelta(days=1), submissions_open_at=now + timedelta(days=1),
+    event = make_event(submissions_open_at=now + timedelta(days=1),
                        submissions_close_at=now + timedelta(days=3), judging_ends_at=now + timedelta(days=5))
     client = client_for(make_user())
     client.post(f"/participant/events/{event.slug}/team", {"name": "Early birds"})
@@ -206,9 +208,9 @@ def test_a_team_extension_reopens_that_team_only(world, make_team, client_for):
     other = make_team(world["event"])  # formed while still open
     event = close(world["event"])
     organizer = client_for(event.organizer)
-    until = (timezone.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    until = timezone.now() + timedelta(hours=2)
     response = organizer.post(f"/organizer/events/{event.slug}/deadline/teams",
-                              {"team": world["team"].pk, "until": until, "reason": "upload failed"})
+                              {"team": world["team"].pk, **dt_fields("until", until), "reason": "upload failed"})
     assert response.status_code == 302
     assert world["captain"].post(f"/participant/projects/{world['project'].pk}/", {"name": "Saved late"}).status_code == 302
     assert Project.objects.get(pk=world["project"].pk).name == "Saved late"
@@ -231,11 +233,11 @@ def test_revoking_an_extension_closes_the_team_again(world, client_for):
 
 
 @pytest.mark.parametrize("hours, ok", [(-0.5, False), (2, True), (24 * 30, False)])
-def test_extension_must_end_after_the_close_and_before_judging_ends(world, client_for, hours, ok):
+def test_extension_must_end_after_the_close_and_before_judging_starts(world, client_for, hours, ok):
     event = close(world["event"])
-    until = (timezone.now() + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M")
+    until = timezone.now() + timedelta(hours=hours)
     response = client_for(event.organizer).post(
-        f"/organizer/events/{event.slug}/deadline/teams", {"team": world["team"].pk, "until": until, "reason": "r"}
+        f"/organizer/events/{event.slug}/deadline/teams", {"team": world["team"].pk, **dt_fields("until", until), "reason": "r"}
     )
     assert TeamExtension.objects.exists() is ok
     assert response.status_code == (302 if ok else 400)
@@ -244,9 +246,9 @@ def test_extension_must_end_after_the_close_and_before_judging_ends(world, clien
 def test_extending_for_everyone_reopens_every_team_and_keeps_the_original(world, client_for):
     event = close(world["event"])
     original = event.submissions_close_at
-    new_close = (timezone.now() + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+    new_close = timezone.now() + timedelta(hours=3)
     client_for(event.organizer).post(f"/organizer/events/{event.slug}/deadline/extend",
-                                     {"new_close": new_close, "reason": "venue wifi died"})
+                                     {**dt_fields("new_close", new_close), "reason": "venue wifi died"})
     event.refresh_from_db()
     assert event.original_submissions_close_at == original
     assert event.submissions_close_at > timezone.now()
@@ -254,39 +256,44 @@ def test_extending_for_everyone_reopens_every_team_and_keeps_the_original(world,
     assert AuditLog.objects.filter(action=AuditAction.DEADLINE_EXTENDED, detail__reason="venue wifi died").exists()
 
 
-def test_extending_past_judging_end_moves_judging_end_by_the_same_amount(world, client_for):
+def test_extending_into_judging_moves_judging_and_results_by_the_same_amount(world, client_for):
     event = world["event"]
+    Event.objects.filter(pk=event.pk).update(results_at=event.judging_ends_at + timedelta(days=1))
+    event.refresh_from_db()
+    before = [event.judging_starts_at, event.judging_ends_at, event.results_at]
     gap = event.judging_ends_at - event.submissions_close_at
-    new_close = event.judging_ends_at + timedelta(days=1)
+    new_close = (event.judging_ends_at + timedelta(days=1)).replace(second=0, microsecond=0)
+    shift = new_close - event.submissions_close_at
     client_for(event.organizer).post(f"/organizer/events/{event.slug}/deadline/extend",
-                                     {"new_close": new_close.strftime("%Y-%m-%dT%H:%M"), "reason": "r"})
+                                     {**dt_fields("new_close", new_close), "reason": "r"})
     event.refresh_from_db()
     assert event.submissions_close_at == new_close.replace(second=0, microsecond=0)
     assert event.judging_ends_at - event.submissions_close_at >= gap - timedelta(minutes=1)
+    assert [event.judging_starts_at, event.judging_ends_at, event.results_at] == [d + shift for d in before]
 
 
 def test_extension_must_move_the_close_later(world, client_for):
     event = world["event"]
-    earlier = (event.submissions_close_at - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+    earlier = event.submissions_close_at - timedelta(hours=1)
     response = client_for(event.organizer).post(f"/organizer/events/{event.slug}/deadline/extend",
-                                                {"new_close": earlier, "reason": "r"})
+                                                {**dt_fields("new_close", earlier), "reason": "r"})
     assert response.status_code == 400
 
 
 @pytest.mark.parametrize("role", [Role.PARTICIPANT, Role.JUDGE])
 def test_only_organizers_grant_extensions(world, role, make_user, client_for):
     event = close(world["event"])
-    until = (timezone.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    until = timezone.now() + timedelta(hours=2)
     client_for(make_user(role=role)).post(f"/organizer/events/{event.slug}/deadline/teams",
-                                          {"team": world["team"].pk, "until": until, "reason": "r"})
+                                          {"team": world["team"].pk, **dt_fields("until", until), "reason": "r"})
     assert not TeamExtension.objects.exists()
 
 
 def test_another_events_organizer_cannot_extend(world, make_user, client_for):
     event = close(world["event"])
-    until = (timezone.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    until = timezone.now() + timedelta(hours=2)
     response = client_for(make_user(role=Role.ORGANIZER)).post(
-        f"/organizer/events/{event.slug}/deadline/teams", {"team": world["team"].pk, "until": until, "reason": "r"}
+        f"/organizer/events/{event.slug}/deadline/teams", {"team": world["team"].pk, **dt_fields("until", until), "reason": "r"}
     )
     assert response.status_code == 404 and not TeamExtension.objects.exists()
 

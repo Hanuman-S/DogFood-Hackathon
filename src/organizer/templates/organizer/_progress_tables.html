@@ -1,0 +1,79 @@
+{% load portal %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">overall</h2><span class="frame__meta">as of {{ now|utc }}</span></header>
+    <div class="frame__body stack">
+      <progress class="meter" value="{{ total_in }}" max="{{ total_needed|default:1 }}" aria-label="{{ percent }} percent of reviews submitted">{{ percent }}%</progress>
+      <table class="kv">
+        <tr><th scope="row">reviews in</th><td><span class="bright">{{ total_in }}</span> of {{ total_needed }} ({{ percent }}%) <span class="faint">&middot; target {{ target }} per project</span></td></tr>
+        <tr><th scope="row">judges not started</th><td>{% if not_started %}<span class="bright">{{ not_started }}</span>{% else %}none{% endif %}</td></tr>
+        <tr><th scope="row">projects short of reviews</th><td>{% if short_projects %}<span class="bright">{{ short_projects }}</span>{% else %}none{% endif %}</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="frame" id="judges-progress">
+    <header class="frame__bar"><h2 class="frame__title">judges</h2><span class="frame__meta">not started first</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>judge</th><th>status</th><th class="num">submitted</th><th class="num">drafts</th><th class="num">not started</th><th>last active</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+        <tbody>
+        {% for r in judge_rows %}
+          <tr>
+            <td>{{ r.judge.user.name }}<br><span class="faint">{{ r.judge.user.email }}{% if r.tracks %} &middot; {{ r.tracks|join:", " }}{% endif %}</span></td>
+            <td>{% if r.state == "not started" %}<span class="badge badge--warn">not started</span>{% elif r.state == "done" %}<span class="badge badge--on">done</span>{% else %}<span class="badge">{{ r.state }}</span>{% endif %}</td>
+            <td class="num">{{ r.submitted }}/{{ r.assigned }}</td>
+            <td class="num">{{ r.drafts }}</td>
+            <td class="num{% if r.unstarted %} bright{% endif %}">{{ r.unstarted }}</td>
+            <td class="faint">{{ r.last_active|utc:"never" }}{% if r.nudged %}<br>nudged {{ r.nudged|utc }}{% endif %}</td>
+            <td class="num">
+              {% if r.unstarted %}
+              <form class="inline-form" method="post" action="{% url 'organizer:judge_nudge' event.slug r.judge.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit" title="log a reminder and open it in your mail app">nudge</button></form>
+              {% if not window.is_closed %}<form class="inline-form" method="post" action="{% url 'organizer:judge_reassign' event.slug r.judge.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'organizer:progress' event.slug %}"><button class="btn btn--small btn--ghost btn--danger" type="submit" title="give their unstarted reviews to other judges">reassign</button></form>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}<tr><td colspan="7" class="faint">no judges yet. add or invite them on the event page.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="grid-2">
+    <section class="frame" id="projects-progress">
+      <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">fewest reviews first</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>project</th><th class="num">in</th><th class="num">assigned</th></tr></thead>
+          <tbody>
+          {% for r in project_rows %}
+            <tr>
+              <td>{{ r.project.name }}<br><span class="faint">{{ r.project.track.name|default:"no track" }}</span></td>
+              <td class="num{% if r.in < target %} bright{% endif %}">{{ r.in }}/{{ target }}</td>
+              <td class="num">{{ r.assigned }}{% if r.short %} <span class="badge badge--warn">{{ r.short }} short</span>{% endif %}</td>
+            </tr>
+          {% empty %}<tr><td colspan="3" class="faint">no submitted projects.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="frame" id="tracks-progress">
+      <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">reviews in / needed</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>track</th><th class="num">projects</th><th class="num">judges</th><th class="num">reviews</th></tr></thead>
+          <tbody>
+          {% for t in track_rows %}
+            <tr>
+              <td>{{ t.name }}</td>
+              <td class="num">{{ t.projects }}</td>
+              <td class="num{% if t.judges < target %} bright{% endif %}">{{ t.judges }}</td>
+              <td class="num">{{ t.in }}/{{ t.needed }} <span class="faint">{{ t.percent }}%</span></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>

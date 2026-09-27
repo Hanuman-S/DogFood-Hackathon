@@ -1,0 +1,95 @@
+"""Rubric forms. They only shape and type-check input: the rules (weights add up to 100, the
+lock, keys unique, scored criteria stay) live in `scoring.services`, so any API enforces the same."""
+
+from django import forms
+
+from scoring.services import SCALE_MAX, SCALE_MIN, RubricRow
+
+
+class CriterionRowForm(forms.Form):
+    """One line of the rubric editor."""
+
+    id = forms.IntegerField(required=False, widget=forms.HiddenInput)
+    label = forms.CharField(max_length=120, widget=forms.TextInput(attrs={"placeholder": "e.g. Functionality"}))
+    key = forms.SlugField(
+        max_length=60, required=False,
+        widget=forms.TextInput(attrs={"placeholder": "made from the label"}),
+    )
+    weight = forms.DecimalField(
+        max_digits=6, decimal_places=3, min_value=0, max_value=100,
+        widget=forms.NumberInput(attrs={"step": "0.001", "min": 0, "max": 100, "data-weight": ""}),
+    )
+    min_value = forms.IntegerField(
+        min_value=SCALE_MIN, max_value=SCALE_MAX, initial=1,
+        widget=forms.NumberInput(attrs={"min": SCALE_MIN, "max": SCALE_MAX}),
+    )
+    max_value = forms.IntegerField(
+        min_value=SCALE_MIN, max_value=SCALE_MAX, initial=5,
+        widget=forms.NumberInput(attrs={"min": SCALE_MIN, "max": SCALE_MAX}),
+    )
+
+    def to_row(self, order):
+        data = self.cleaned_data
+        return RubricRow(
+            id=data.get("id"), key=data.get("key") or "", label=data.get("label") or "",
+            weight=data.get("weight"), min_value=data.get("min_value"),
+            max_value=data.get("max_value"), order=order, delete=bool(data.get("DELETE")),
+        )
+
+
+class BaseRubricFormSet(forms.BaseFormSet):
+    @staticmethod
+    def counts(form):
+        """An untouched blank row is not a criterion; an existing one always is."""
+        return form.has_changed() or bool(form.cleaned_data.get("id"))
+
+    def rows(self):
+        """The submitted rubric, in the order shown."""
+        rows = []
+        for form in self.forms:
+            if self.counts(form):
+                rows.append(form.to_row(order=len(rows) + 1))
+        return rows
+
+
+RubricFormSet = forms.formset_factory(
+    CriterionRowForm, formset=BaseRubricFormSet, extra=1, can_delete=True, max_num=20,
+    validate_max=True,
+)
+
+
+def rubric_initial(criteria):
+    return [
+        {"id": c.pk, "label": c.label, "key": c.key, "weight": c.weight.normalize(),
+         "min_value": c.min_value, "max_value": c.max_value}
+        for c in criteria
+    ]
+
+
+class CriterionTextForm(forms.Form):
+    """What judges read: label, description, and a written anchor per level of the scale."""
+
+    label = forms.CharField(max_length=120)
+    description = forms.CharField(
+        required=False, max_length=1000,
+        widget=forms.Textarea(attrs={"rows": 3, "placeholder": "what judges should look for"}),
+    )
+
+    def __init__(self, *args, criterion, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.criterion = criterion
+        for level in range(criterion.min_value, criterion.max_value + 1):
+            self.fields[f"level_{level}"] = forms.CharField(
+                label=f"level {level}", required=False, max_length=300,
+                initial=criterion.level_descriptions.get(str(level), ""),
+                widget=forms.TextInput(attrs={"placeholder": f"what a {level} looks like (optional)"}),
+            )
+
+    def level_fields(self):
+        return [self[f"level_{n}"] for n in range(self.criterion.min_value, self.criterion.max_value + 1)]
+
+    def levels(self):
+        return {
+            str(n): self.cleaned_data.get(f"level_{n}", "")
+            for n in range(self.criterion.min_value, self.criterion.max_value + 1)
+        }

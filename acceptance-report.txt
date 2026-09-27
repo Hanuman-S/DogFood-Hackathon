@@ -6,18 +6,9 @@ fixtures: C:\Users\anura\Desktop\DogFood\DogFood_Hackathon\acceptance\fixtures.j
 T1  gallery is public ................. PASS
 T1  project from fixtures shown ....... PASS
 T1  closed event refuses submissions .. PASS
-T2  judge sees own scores ............. FAIL
-       GET http://localhost:8080/api/judge/scores
-       sent as judge_a
-       got 404, wanted 200
-T2  judge cannot see peer scores ...... FAIL
-       GET http://localhost:8080/api/judge/scores?judge=judge_a
-       sent as judge_b; this is the url that returns judge_a's scores
-       got 404, wanted 401 or 403
-T2  participant blocked ............... FAIL
-       GET http://localhost:8080/api/judge/scores
-       sent as participant
-       got 404, wanted 401 or 403
+T2  judge sees own scores ............. PASS
+T2  judge cannot see peer scores ...... PASS
+T2  participant blocked ............... PASS
 T2  csv export works .................. FAIL
        GET http://localhost:8080/api/export.csv
        sent as organizer

@@ -12,23 +12,36 @@ from core.models import AuditAction, AuditLog
 from events.models import CustomQuestion, Event, Phase, Prize, Track
 from projects.models import Answer, Project
 
+from _dates import dt_fields
+
 pytestmark = pytest.mark.django_db
 
 
+DATE_FIELDS = ("starts_at", "submissions_open_at", "submissions_close_at", "judging_starts_at",
+               "judging_ends_at", "results_at")
+
+
 def event_form(**overrides):
-    data = {
+    """The event form as a browser posts it. Dates are given as "YYYY-MM-DDTHH:MM" (or "" for
+    empty) and posted as the date box and time box the form actually has."""
+    values = {
         "name": "Spring Hack 2027",
         "slug": "",
         "tagline": "48 hours",
         "description": "## Hello",
-        "starts_at": "2027-03-01T09:00",
+        "starts_at": "2027-03-01T08:00",
         "submissions_open_at": "2027-03-01T09:00",
         "submissions_close_at": "2027-03-03T09:00",
+        "judging_starts_at": "2027-03-03T12:00",
         "judging_ends_at": "2027-03-06T09:00",
+        "results_at": "",
         "min_team_size": "1",
         "max_team_size": "4",
     }
-    data.update(overrides)
+    values.update(overrides)
+    data = {}
+    for name, value in values.items():
+        data.update(dt_fields(name, value) if name in DATE_FIELDS else {name: value})
     return data
 
 
@@ -49,19 +62,58 @@ def test_organizer_creates_an_unpublished_event_they_manage(make_user, client_fo
     [
         ({"submissions_close_at": "2027-02-28T09:00"}, "submissions_close_at"),
         ({"judging_ends_at": "2027-03-02T09:00"}, "judging_ends_at"),
-        ({"starts_at": "2027-03-04T09:00"}, "starts_at"),
+        ({"starts_at": "2027-03-04T09:00"}, "submissions_open_at"),
+        # every date strictly after the one before: equal is refused too
+        ({"starts_at": "2027-03-01T09:00"}, "submissions_open_at"),
+        ({"judging_starts_at": "2027-03-03T09:00"}, "judging_starts_at"),
+        ({"judging_starts_at": "2027-03-06T09:00"}, "judging_ends_at"),
+        ({"results_at": "2027-03-06T09:00"}, "results_at"),
+        ({"results_at": "2027-03-05T09:00"}, "results_at"),
+        # required fields
+        ({"judging_starts_at": ""}, "judging_starts_at"),
+        ({"tagline": ""}, "tagline"),
+        ({"description": "  "}, "description"),
         ({"max_team_size": "0"}, "max_team_size"),
         ({"max_team_size": "21"}, "max_team_size"),
         ({"min_team_size": "0"}, "min_team_size"),
         ({"min_team_size": "5"}, "min_team_size"),  # larger than the max of 4
     ],
 )
-def test_nonsense_dates_and_sizes_are_refused(make_user, client_for, overrides, field):
+def test_nonsense_dates_sizes_and_missing_fields_are_refused(make_user, client_for, overrides, field):
     client = client_for(make_user(role=Role.ORGANIZER))
     response = client.post("/organizer/events/new", event_form(**overrides))
     assert response.status_code == 400
     assert field in response.context["form"].errors
     assert not Event.objects.exists()
+
+
+def test_a_date_without_a_time_is_refused_not_guessed(make_user, client_for):
+    """The browser's calendar fills the date box only; the time must be picked too."""
+    client = client_for(make_user(role=Role.ORGANIZER))
+    data = event_form()
+    data["submissions_close_at_1"] = ""
+    response = client.post("/organizer/events/new", data)
+    assert response.status_code == 400
+    assert "Pick a time as well as the date." in response.context["form"].errors["submissions_close_at"]
+
+
+def test_results_are_optional_and_every_date_is_stored_as_typed_in_utc(make_user, client_for):
+    client = client_for(make_user(role=Role.ORGANIZER))
+    assert client.post("/organizer/events/new", event_form(results_at="2027-03-08T18:00")).status_code == 302
+    event = Event.objects.get()
+    assert event.judging_starts_at.isoformat() == "2027-03-03T12:00:00+00:00"
+    assert event.results_at.isoformat() == "2027-03-08T18:00:00+00:00"
+    event.delete()
+    assert client.post("/organizer/events/new", event_form()).status_code == 302
+    assert Event.objects.get().results_at is None
+
+
+def test_the_new_event_form_starts_with_every_date_empty_and_autofill_off(make_user, client_for):
+    page = client_for(make_user(role=Role.ORGANIZER)).get("/organizer/events/new").content.decode()
+    for name in DATE_FIELDS:
+        for part, kind in (("0", "date"), ("1", "time")):
+            tag = page.split(f'name="{name}_{part}"')[0].rsplit("<input", 1)[1] + page.split(f'name="{name}_{part}"')[1].split(">", 1)[0]
+            assert f'type="{kind}"' in tag and 'autocomplete="off"' in tag and "value=" not in tag
 
 
 def test_the_database_refuses_an_inverted_window(make_event):
@@ -107,11 +159,44 @@ def test_unpublished_events_are_invisible_to_the_public(make_event, make_user, c
 
 
 def test_publishing_makes_it_public_and_is_audited(make_event, client_for):
-    event = make_event(published=False)
+    event = ready_to_publish(make_event(published=False))
     client = client_for(event.organizer)
     client.post(f"/organizer/events/{event.slug}/publish", {"publish": "1"})
     assert Client().get(f"/events/{event.slug}").status_code == 200
     assert AuditLog.objects.filter(action=AuditAction.EVENT_PUBLISHED).exists()
+
+
+def ready_to_publish(event):
+    from scoring.services import create_standard_rubric
+
+    Event.objects.filter(pk=event.pk).update(tagline="48 hours", description="## Hello")
+    create_standard_rubric(event)
+    event.refresh_from_db()
+    return event
+
+
+@pytest.mark.parametrize("missing, sentence", [
+    ("tagline", "add a tagline"),
+    ("description", "add a description"),
+    ("rubric", "set up the rubric"),
+    ("weights", "must add up to 100%"),
+])
+def test_an_incomplete_event_cannot_be_published(make_event, client_for, missing, sentence):
+    event = ready_to_publish(make_event(published=False))
+    if missing in ("tagline", "description"):
+        Event.objects.filter(pk=event.pk).update(**{missing: ""})
+    elif missing == "rubric":
+        event.criteria.all().delete()
+    else:
+        event.criteria.filter(key="quality").update(weight=10)
+    client = client_for(event.organizer)
+    page = client.get(f"/organizer/events/{event.slug}/").content.decode()
+    assert sentence in page  # the checklist says what is missing before anyone clicks
+    response = client.post(f"/organizer/events/{event.slug}/publish", {"publish": "1"}, follow=True)
+    assert sentence in response.content.decode()
+    event.refresh_from_db()
+    assert not event.is_published
+    assert not AuditLog.objects.filter(action=AuditAction.EVENT_PUBLISHED).exists()
 
 
 def test_phase_is_computed_from_the_dates(make_event):
@@ -122,6 +207,8 @@ def test_phase_is_computed_from_the_dates(make_event):
     )
     assert event.phase == Phase.UPCOMING
     assert event.phase_at(now + timedelta(days=1, hours=1)) == Phase.OPEN
+    # between the close and the judging start: submissions closed, judging not started yet
+    assert event.phase_at(now + timedelta(days=2, minutes=30)) == Phase.CLOSED
     assert event.phase_at(now + timedelta(days=2, hours=1)) == Phase.JUDGING
     assert event.phase_at(now + timedelta(days=4)) == Phase.FINISHED
 

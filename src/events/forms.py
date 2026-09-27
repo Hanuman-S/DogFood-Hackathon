@@ -3,32 +3,91 @@ from django.utils.text import slugify
 
 from events.models import CustomQuestion, Event, Prize, QuestionKind, Track
 
-DATETIME_FORMAT = "%Y-%m-%dT%H:%M"
+
+class UTCDateTimeWidget(forms.SplitDateTimeWidget):
+    """A date box (with the browser's calendar) and a time box, side by side.
+
+    One combined datetime-local box was replaced because some browsers' pickers set only the
+    day of it, leaving the month and year to be typed by hand. Separate date and time inputs are
+    the browsers' plain, reliable pickers. Autofill is off, so a new event starts with every date
+    empty. The server's time zone is UTC, so what is typed is UTC.
+    """
+
+    template_name = "widgets/utc_datetime.html"
+
+    def __init__(self, attrs=None):
+        super().__init__(
+            attrs=attrs,
+            date_attrs={"type": "date", "autocomplete": "off"},
+            time_attrs={"type": "time", "autocomplete": "off", "aria-label": "time (UTC)"},
+            date_format="%Y-%m-%d",
+            time_format="%H:%M",
+        )
+
+    def id_for_label(self, id_):
+        # The label names the date box; the time box carries its own aria-label.
+        return f"{id_}_0" if id_ else id_
 
 
-class UTCDateTimeInput(forms.DateTimeInput):
-    """A datetime-local picker. The server's time zone is UTC, so what is typed is UTC."""
+class UTCDateTimeField(forms.SplitDateTimeField):
+    """A date and a time, both needed. Says which half is missing rather than a generic error:
+    the browser's calendar fills in only the date box, so a forgotten time is the usual case."""
 
-    input_type = "datetime-local"
+    def clean(self, value):
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            date, time = (v.strip() if isinstance(v, str) else v for v in value)
+            if date and not time:
+                raise forms.ValidationError(self.error_messages["invalid_time"], code="invalid_time")
+            if time and not date:
+                raise forms.ValidationError(self.error_messages["invalid_date"], code="invalid_date")
+        return super().clean(value)
 
-    def __init__(self, **kwargs):
-        super().__init__(format=DATETIME_FORMAT, **kwargs)
+
+def utc_datetime_field(label, required=True, help_text=""):
+    return UTCDateTimeField(
+        label=label, required=required, help_text=help_text,
+        widget=UTCDateTimeWidget(),
+        input_date_formats=["%Y-%m-%d"], input_time_formats=["%H:%M", "%H:%M:%S"],
+        error_messages={
+            "required": "Pick a date and a time (UTC).",
+            "incomplete": "Pick a date and a time (UTC).",
+            "invalid_date": "Pick a date as well as the time.",
+            "invalid_time": "Pick a time as well as the date.",
+        },
+    )
+
+
+# The timeline, in the only order the database accepts. Labels double as error sentences.
+TIMELINE = [
+    ("starts_at", "event starts"),
+    ("submissions_open_at", "submissions open"),
+    ("submissions_close_at", "submissions close"),
+    ("judging_starts_at", "judging starts"),
+    ("judging_ends_at", "judging ends"),
+    ("results_at", "results"),
+]
 
 
 class EventForm(forms.ModelForm):
+    starts_at = utc_datetime_field("event starts (UTC)")
+    submissions_open_at = utc_datetime_field("submissions open (UTC)")
+    submissions_close_at = utc_datetime_field("submissions close (UTC)")
+    judging_starts_at = utc_datetime_field("judging starts (UTC)")
+    judging_ends_at = utc_datetime_field("judging ends (UTC)")
+    results_at = utc_datetime_field(
+        "results (UTC)", required=False, help_text="optional: leave empty for 'to be announced'",
+    )
+
     class Meta:
         model = Event
         fields = [
             "name", "slug", "tagline", "description",
-            "starts_at", "submissions_open_at", "submissions_close_at", "judging_ends_at",
+            "starts_at", "submissions_open_at", "submissions_close_at",
+            "judging_starts_at", "judging_ends_at", "results_at",
             "min_team_size", "max_team_size",
         ]
         labels = {
             "slug": "url name",
-            "starts_at": "event starts (UTC)",
-            "submissions_open_at": "submissions open (UTC)",
-            "submissions_close_at": "submissions close (UTC)",
-            "judging_ends_at": "judging ends (UTC)",
             "min_team_size": "min team size",
             "max_team_size": "max team size",
         }
@@ -43,10 +102,6 @@ class EventForm(forms.ModelForm):
             "slug": forms.TextInput(attrs={"placeholder": "leave empty to make one from the name"}),
             "tagline": forms.TextInput(attrs={"placeholder": "one sentence, e.g. 48 hours to build developer tools"}),
             "description": forms.Textarea(attrs={"rows": 6, "placeholder": "Markdown. What the event is about, rules, judging, anything participants should read first."}),
-            "starts_at": UTCDateTimeInput(),
-            "submissions_open_at": UTCDateTimeInput(),
-            "submissions_close_at": UTCDateTimeInput(),
-            "judging_ends_at": UTCDateTimeInput(),
             "min_team_size": forms.NumberInput(attrs={"min": 1, "max": 20, "placeholder": "e.g. 1"}),
             "max_team_size": forms.NumberInput(attrs={"min": 1, "max": 20, "placeholder": "e.g. 4"}),
         }
@@ -54,8 +109,9 @@ class EventForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["slug"].required = False
-        for name in ("starts_at", "submissions_open_at", "submissions_close_at", "judging_ends_at"):
-            self.fields[name].input_formats = [DATETIME_FORMAT, "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"]
+        # A published event page needs to say what the event is.
+        self.fields["tagline"].required = True
+        self.fields["description"].required = True
 
     def clean_slug(self):
         slug = self.cleaned_data.get("slug") or slugify(self.cleaned_data.get("name", ""))
@@ -106,17 +162,18 @@ class EventForm(forms.ModelForm):
         low, high = cleaned.get("min_team_size"), cleaned.get("max_team_size")
         if low and high and low > high:
             self.add_error("min_team_size", "The minimum cannot be larger than the maximum.")
-        opens = cleaned.get("submissions_open_at")
-        closes = cleaned.get("submissions_close_at")
-        judging = cleaned.get("judging_ends_at")
-        starts = cleaned.get("starts_at")
-        # Mirrors the database's CHECK constraints, so the organizer gets a sentence, not a 500.
-        if opens and closes and opens >= closes:
-            self.add_error("submissions_close_at", "Submissions must close after they open.")
-        if closes and judging and judging < closes:
-            self.add_error("judging_ends_at", "Judging cannot end before submissions close.")
-        if starts and closes and starts > closes:
-            self.add_error("starts_at", "The event must start before submissions close.")
+        # Mirrors the database's CHECK constraints, so the organizer gets a sentence, not a 500:
+        # each date must come strictly after the one before it (results only when set).
+        previous = None
+        for name, label in TIMELINE:
+            when = cleaned.get(name)
+            if when is None:
+                if name != "results_at":
+                    previous = None  # missing or invalid: its own error says so
+                continue
+            if previous is not None and when <= previous[1]:
+                self.add_error(name, f"{label.capitalize()} must come after {previous[0]}.")
+            previous = (label, when)
         return cleaned
 
 
@@ -190,7 +247,7 @@ class AddOrganizerForm(forms.Form):
 
 
 class AddJudgeForm(forms.Form):
-    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing account"}))
+    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "e.g. ada@example.org"}))
     tracks = forms.ModelMultipleChoiceField(
         queryset=None, required=False, widget=forms.CheckboxSelectMultiple,
         help_text="leave all unticked to judge every track",
@@ -202,20 +259,24 @@ class AddJudgeForm(forms.Form):
 
 
 class ExtendDeadlineForm(forms.Form):
-    new_close = forms.DateTimeField(
-        label="new close (UTC)", widget=UTCDateTimeInput(), input_formats=[DATETIME_FORMAT, "%Y-%m-%d %H:%M"],
-    )
+    new_close = utc_datetime_field("new close (UTC)")
     reason = forms.CharField(
         max_length=200,
         widget=forms.TextInput(attrs={"placeholder": "shown in the audit log, e.g. Wi-Fi outage at the venue"}),
     )
 
 
+class ExtendJudgingForm(forms.Form):
+    new_end = utc_datetime_field("new judging end (UTC)")
+    reason = forms.CharField(
+        max_length=200,
+        widget=forms.TextInput(attrs={"placeholder": "shown in the audit log, e.g. two judges fell ill"}),
+    )
+
+
 class TeamExtensionForm(forms.Form):
     team = forms.ModelChoiceField(queryset=None, empty_label="-- choose a team --")
-    until = forms.DateTimeField(
-        label="extended until (UTC)", widget=UTCDateTimeInput(), input_formats=[DATETIME_FORMAT, "%Y-%m-%d %H:%M"],
-    )
+    until = utc_datetime_field("extended until (UTC)")
     reason = forms.CharField(
         max_length=200,
         widget=forms.TextInput(attrs={"placeholder": "e.g. Upload failed at 23:28, confirmed in Discord"}),

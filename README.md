@@ -152,10 +152,12 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 - An audit trail of logins, failures, throttles, revocations, token changes and refused portal
   access. The admin portal shows it, and it is read-only in the database admin.
 - A strict Content-Security-Policy, POST-only logout and CSRF protection on every form.
-- **Events** (organizer portal): any number of events, each with UTC dates (start, submissions
-  open, submissions close, judging end), a max team size, tracks, prizes and custom
-  submission questions. An event is a draft until it is published. Its phase (upcoming, open,
-  judging or finished) is computed from the dates. Co-organizers and judges (optionally per
+- **Events** (organizer portal): any number of events, each with a tagline, a description, UTC
+  dates in strict order (start, submissions open, submissions close, judging start, judging end,
+  and an optional results date), a max team size, tracks, prizes and custom submission
+  questions. An event is a draft until it is published, and it cannot be published without a
+  tagline, a description and a rubric. Its phase (upcoming, open, closed, judging or finished) is
+  computed from the dates. Co-organizers and judges (optionally per
   track) are added by email on the event's control page. Organizers only see their own events,
   and platform admins see all.
 - **Teams** (participant portal): create a team, share its reusable invite link at `/join/<token>`,
@@ -186,7 +188,8 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 
 ## What it does not do yet
 
-- Judging (T2): no score entry, rubric editing, normalization or CSV export yet. The data model
+- Judging (T2): the organizer's side works (rubric, judge invites, judging window, assignment,
+  progress dashboard); no score entry, normalization, results or CSV export yet. The data model
   and the imported reviews are ready for it. See [JUDGING.md](JUDGING.md).
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.

@@ -1,9 +1,19 @@
-"""Scoring tables.
+"""Scoring tables: the rubric, the reviews, and who is asked to review what.
 
-**Scope warning.** Criterion / Score / ScoreItem are populated by the fixture importer. The
-scoring engine (`scoring/engine/`, through `scoring/services.py`) reads them to compute result
-snapshots; nothing writes a score outside the importer yet, and no page shows a score or a
-result to anyone. There is no judging UI, no assignment and no export. `JUDGING.md` says so.
+Ownership inside T2 (so three people can work here without stepping on each other):
+
+* **Organizer side** -- `Criterion` (the rubric editor), `AssignmentRound` and `Assignment`
+  (who reviews what), and `Score.submitted_at` as read by the progress dashboard. Writes go
+  through `scoring/services.py`.
+* **Judge side** -- writes `Score` / `ScoreItem` and sets `Score.submitted_at`. A judge may
+  score a project only while they hold an `assigned` Assignment for it, and declines one only
+  through `scoring.services.decline_assignment` (never by editing `status` directly).
+* **Scoring engine** -- reads submitted scores and weights (`scoring/engine/`, through
+  `scoring.services.build_input`); its own tables are below: `EventScoringConfig`,
+  `ResultSnapshot` (immutable) and `Publication` (append-only, model only).
+
+Nothing outside organizers reads a score yet: the gallery and the project pages do not show
+scores to anyone. `JUDGING.md` states what is and is not built.
 
 They are defined now rather than in T2 because the fixture ships 126 reviews and discarding
 them on import would mean re-importing later against a schema designed without them in view.
@@ -20,7 +30,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -32,6 +42,10 @@ class Criterion(models.Model):
     `weight` is stored per criterion because the brief's central complaint about existing
     platforms is that "the market leader cannot weight judging criteria". Weighting has to be
     data, not code.
+
+    **Locked from the submission close onward** (`scoring.services.rubric_locked`): weights, the
+    min/max of the scale and the set of criteria cannot change once judging can start, because
+    they change the ranking. Labels and descriptions stay editable, and every edit is audited.
     """
 
     event = models.ForeignKey("events.Event", on_delete=models.CASCADE, related_name="criteria")
@@ -43,14 +57,21 @@ class Criterion(models.Model):
     weight = models.DecimalField(
         max_digits=6,
         decimal_places=3,
-        default=1,
-        validators=[MinValueValidator(0)],
-        help_text="Relative weight in the weighted average. Decimal, not float: a rubric that "
-        "sums to 1.000 must still sum to 1.000 after being read back.",
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Percentage of the final score; an event's weights add up to exactly 100 "
+        "(scoring.services.save_rubric). Decimal, not float: 33.334 + 33.333 + 33.333 must "
+        "still be 100.000 after being read back.",
     )
     min_value = models.SmallIntegerField(default=1)
     max_value = models.SmallIntegerField(default=5)
     order = models.PositiveSmallIntegerField(default=0)
+    description = models.TextField(
+        blank=True, help_text="What judges should look for under this criterion."
+    )
+    # {"1": "Does not run", ..., "5": "Works end to end, polished"}: a written anchor per score
+    # level, so a 3 means the same thing to every judge. Keys are the levels as strings.
+    level_descriptions = models.JSONField(default=dict, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
@@ -67,7 +88,7 @@ class Criterion(models.Model):
         verbose_name_plural = "criteria"
 
     def __str__(self) -> str:
-        return f"{self.label} (x{self.weight})"
+        return f"{self.label} ({self.weight.normalize():f}%)"
 
 
 class Score(models.Model):
@@ -88,6 +109,9 @@ class Score(models.Model):
     )
     # Empty for 51 of the fixture's 126 reviews, so blank must be allowed.
     comment = models.TextField(blank=True)
+    # Null while the judge is still drafting. Only submitted reviews count: for progress, for
+    # normalization and for results. Imported fixture reviews are submitted (at import time).
+    submitted_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
@@ -164,6 +188,128 @@ class ScoreItem(models.Model):
             raise ValidationError({"criterion": "The criterion belongs to a different event."})
 
 
+# --- assignment -------------------------------------------------------------------------------
+
+
+class AssignmentStatus(models.TextChoices):
+    ASSIGNED = "assigned", "Assigned"
+    # The judge declared a conflict of interest; the organizer's queue reassigns the review.
+    DECLINED = "declined_conflict", "Declined (conflict of interest)"
+    # Taken away by an organizer (moved to another judge, or removed). Kept, not deleted, so
+    # the history of who was asked to review what stays readable.
+    WITHDRAWN = "withdrawn", "Withdrawn by an organizer"
+
+
+# A judge-project pair may have at most one row in one of these states at a time.
+LIVE_STATUSES = (AssignmentStatus.ASSIGNED, AssignmentStatus.DECLINED)
+
+
+class AssignmentSource(models.TextChoices):
+    IMPORT = "import", "Imported with an existing review"
+    AUTO = "auto", "Automatic assignment"
+    MANUAL = "manual", "Added by an organizer"
+
+
+class RoundKind(models.TextChoices):
+    INITIAL = "initial", "Initial assignment"
+    TOP_UP = "top_up", "Top-up to the review target"
+    REASSIGN = "reassign", "Reassignment of declined or stalled reviews"
+
+
+class AssignmentRound(models.Model):
+    """One run of the automatic assignment: its parameters, its random seed and what it found.
+
+    The assignment is randomised within the hard rules (track, conflict of interest, load), so
+    nobody can predict or steer which judge sees which project. The seed is stored, so the same
+    round can be re-run and produces exactly the same assignments.
+    """
+
+    event = models.ForeignKey(
+        "events.Event", on_delete=models.CASCADE, related_name="assignment_rounds"
+    )
+    kind = models.CharField(max_length=12, choices=RoundKind.choices)
+    seed = models.BigIntegerField()
+    target_reviews = models.PositiveSmallIntegerField(
+        help_text="Reviews each project should end up with."
+    )
+    max_load = models.PositiveSmallIntegerField(
+        null=True, blank=True, help_text="Most live assignments one judge may hold; empty = no cap."
+    )
+    # Counts, capacity and connectivity warnings, projects left short: what the page shows.
+    summary = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} #{self.pk} (seed {self.seed})"
+
+
+class Assignment(models.Model):
+    """A request for one judge (a judge membership) to review one project."""
+
+    judge = models.ForeignKey(
+        "events.EventMembership", on_delete=models.CASCADE, related_name="assignments"
+    )
+    project = models.ForeignKey(
+        "projects.Project", on_delete=models.CASCADE, related_name="assignments"
+    )
+    round = models.ForeignKey(
+        AssignmentRound, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="assignments",
+    )
+    source = models.CharField(max_length=10, choices=AssignmentSource.choices)
+    status = models.CharField(
+        max_length=20, choices=AssignmentStatus.choices, default=AssignmentStatus.ASSIGNED
+    )
+    # The project's place in this judge's queue. Shuffled at assignment time, so no project is
+    # always reviewed first (or last) -- position bias.
+    position = models.PositiveIntegerField(default=0)
+    decline_reason = models.TextField(blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+    status_changed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["judge", "position", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["judge", "project"],
+                condition=Q(status__in=[s.value for s in LIVE_STATUSES]),
+                name="assignment_one_live_per_judge_project",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=AssignmentStatus.values),
+                name="assignment_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(source__in=AssignmentSource.values),
+                name="assignment_source_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["project", "status"], name="assignment_project_idx"),
+            models.Index(fields=["judge", "status"], name="assignment_judge_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.judge_id} -> {self.project_id} ({self.status})"
+
+    def clean(self):
+        from accounts.roles import Role
+
+        if self.judge_id and self.judge.role != Role.JUDGE:
+            raise ValidationError({"judge": "Only a judge membership can be assigned a project."})
+        if self.judge_id and self.project_id and self.judge.event_id != self.project.event_id:
+            raise ValidationError({"project": "The project belongs to a different event."})
+
 # --- results ------------------------------------------------------------------------------------
 
 
@@ -200,7 +346,7 @@ class ResultSnapshot(models.Model):
 
     Created only by `scoring.services.compute_snapshot`; there is no update path anywhere.
     `save()` refuses to update an existing row, and a Postgres trigger rejects every UPDATE
-    (scoring/migrations/0003), so a stored result cannot be edited even by raw SQL. DELETE is
+    (scoring/migrations/0005), so a stored result cannot be edited even by raw SQL. DELETE is
     allowed, so a snapshot goes with its event.
 
     * preview: computable at any time by the event's organizers; never publishable.
@@ -247,7 +393,7 @@ class Publication(models.Model):
     """Which final snapshot is the event's published result. **Append-only.**
 
     Only the model and its guarantees exist; there is no publishing service or page yet.
-    Enforced in Postgres by a trigger (scoring/migrations/0003): a publication may only point
+    Enforced in Postgres by a trigger (scoring/migrations/0005): a publication may only point
     at a *final* snapshot of the *same* event, and once written the only change allowed is
     setting `unpublished_at` / `unpublished_by` once. A partial unique constraint allows one
     active (not unpublished) publication per event. `clean()` checks the same on SQLite.

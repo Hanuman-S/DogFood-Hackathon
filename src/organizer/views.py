@@ -8,6 +8,7 @@ event* and platform admins (404 for anyone else, so slugs cannot be probed).
 from django.contrib import messages
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
@@ -18,10 +19,12 @@ from imports.models import FixtureRef
 from projects.gallery import possible_duplicates
 from accounts.roles import Role
 from events.forms import (
-    AddJudgeForm, AddOrganizerForm, EventForm, ExtendDeadlineForm, PrizeForm, QuestionForm, TeamExtensionForm, TrackForm,
+    AddJudgeForm, AddOrganizerForm, EventForm, ExtendDeadlineForm, ExtendJudgingForm, PrizeForm, QuestionForm, TeamExtensionForm, TrackForm,
 )
-from events.models import CustomQuestion, Event, Prize, Track
+from events.models import CustomQuestion, Event, JudgeInvite, Prize, Track
 from projects.models import Project, Status
+from core.judging import judging_window
+from scoring.services import rubric_locked
 from teams.models import Team, TeamExtension
 
 PARTS = {
@@ -72,6 +75,8 @@ def _control(request, event, status=200, **forms):
         "organizer_form": forms.get("organizer_form") or AddOrganizerForm(),
         "judge_form": forms.get("judge_form") or AddJudgeForm(event=event),
         "extend_form": forms.get("extend_form") or ExtendDeadlineForm(),
+        "judging_form": forms.get("judging_form") or ExtendJudgingForm(),
+        "judging_window": judging_window(event),
         "extension_form": forms.get("extension_form") or TeamExtensionForm(event=event),
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),
         "window": deadlines.window(event),
@@ -83,6 +88,14 @@ def _control(request, event, status=200, **forms):
         "prizes": event.prizes.select_related("track"),
         "questions": event.questions.annotate(n=Count("answers")),
         "organizer_links": event.memberships.filter(role=Role.ORGANIZER).select_related("user"),
+        "criteria": event.criteria.all(),
+        "rubric_locked": rubric_locked(event),
+        "publish_blockers": services.publish_blockers(event),
+        "judge_invites": [
+            (invite, services.judge_invite_state(invite))
+            for invite in event.judge_invites.select_related("created_by", "accepted_by")
+            .prefetch_related("tracks")[:20]
+        ],
         "judges": event.memberships.filter(role=Role.JUDGE).select_related("user")
         .prefetch_related("judge_tracks__track"),
         "teams": Team.objects.filter(event=event).annotate(n=Count("members")).select_related("project"),
@@ -111,7 +124,11 @@ def event_control(request, slug):
 def event_publish(request, slug):
     event = services.get_managed_event(request.user, slug)
     publish = request.POST.get("publish") == "1"
-    services.set_published(request, event, publish)
+    try:
+        services.set_published(request, event, publish)
+    except services.EventRuleError as error:
+        messages.error(request, str(error))
+        return redirect("organizer:event", slug=event.slug)
     messages.success(request, "event published: it is now public." if publish else "event unpublished: only organizers can see it.")
     return redirect("organizer:event", slug=event.slug)
 
@@ -181,6 +198,45 @@ def part_delete(request, slug, kind, part_id):
     except services.EventRuleError as error:
         messages.error(request, str(error))
     return redirect(f"/organizer/events/{event.slug}/#{anchor}")
+
+
+# --- judge invite links -----------------------------------------------------------------
+
+
+@never_cache
+@require_POST
+@portal_required("organizer")
+def judge_invite_create(request, slug):
+    """Create a one-time judge link and show it -- once. Rendered, not redirected, because the
+    raw token is not stored anywhere and so could not be shown after a redirect."""
+    event = services.get_managed_event(request.user, slug)
+    form = AddJudgeForm(request.POST, event=event)
+    if not form.is_valid():
+        return _control(request, event, status=400, judge_form=form)
+    try:
+        invite, raw = services.create_judge_invite(
+            request, event, form.cleaned_data["email"], form.cleaned_data["tracks"]
+        )
+    except services.EventRuleError as error:
+        form.add_error("email", str(error))
+        return _control(request, event, status=400, judge_form=form)
+    link = request.build_absolute_uri(reverse("judge_invite", args=[raw]))
+    return render(request, "organizer/judge_invite_created.html", {
+        "event": event, "invite": invite, "link": link,
+    })
+
+
+@require_POST
+@portal_required("organizer")
+def judge_invite_revoke(request, slug, invite_id):
+    event = services.get_managed_event(request.user, slug)
+    invite = get_object_or_404(JudgeInvite, pk=invite_id, event=event)
+    try:
+        services.revoke_judge_invite(request, event, invite)
+        messages.success(request, f"invite for {invite.email} revoked: the link no longer works.")
+    except services.EventRuleError as error:
+        messages.error(request, str(error))
+    return redirect(f"/organizer/events/{event.slug}/#judges")
 
 
 # --- co-organizers ----------------------------------------------------------------------
@@ -262,6 +318,23 @@ def deadline_extend(request, slug):
         except services.EventRuleError as error:
             form.add_error("new_close", str(error))
     return _control(request, event, status=400, extend_form=form)
+
+
+@require_POST
+@portal_required("organizer")
+def judging_extend(request, slug):
+    event = services.get_managed_event(request.user, slug)
+    form = ExtendJudgingForm(request.POST)
+    if form.is_valid():
+        try:
+            services.extend_judging(request, event, form.cleaned_data["new_end"], form.cleaned_data["reason"])
+        except services.EventRuleError as error:
+            form.add_error("new_end", str(error))
+        else:
+            messages.success(request, "judging extended.")
+            return redirect(f"/organizer/events/{event.slug}/#judging")
+    event.refresh_from_db()
+    return _control(request, event, status=400, judging_form=form)
 
 
 @require_POST

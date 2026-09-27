@@ -1,9 +1,28 @@
-"""Scoring services: the only code that turns the database into engine input and stores results.
+"""Every write to an event's rubric and its assignments. Pages and any API call these,
+so they cannot enforce different rules. Each write leaves an audit row.
+
+The rubric rules
+----------------
+* **Weights are percentages** of the final score, and an event's weights add up to exactly
+  100. What the organizer types is what is stored and what judges see. The whole rubric is
+  saved in one go (`save_rubric`), because adding, removing or reweighting one criterion changes
+  the total; a half-saved rubric that adds up to 80 never exists.
+* **Locked from the submission close.** From `submissions_close_at` on (by the database clock,
+  like the deadline), anything that changes the ranking is refused: weights, the scale's min and
+  max, and adding or removing criteria. An extension for everyone moves the close, and the lock
+  with it. Labels, descriptions and the written anchor per score level stay editable
+  (`update_criterion_text`), because fixing a typo mid-judging changes nobody's result; every
+  such edit is still audited.
+* **Nothing already scored is rewritten.** A criterion with scores cannot be removed, and its
+  scale cannot shrink past a value already given.
+
+The results rules
+-----------------
+Scoring services: the only code that turns the database into engine input and stores results.
 
 * `build_input(event)`     the event's submitted projects, reviews and rubric, as an EngineInput.
-* `judging_closed(event, now)`  THE one place that decides whether judging is over. Nothing else
-                           may compare against `judging_ends_at` (judging extensions will plug in
-                           here later).
+* `judging_closed(event, now)`  THE rule for whether judging is over; defined in core.judging and
+                           shared with the judges' write window and the assignment freeze.
 * `compute_snapshot(...)`  a preview (any time) or a final (only after judging closed) result.
 * `set_engine_config(...)` an event's engine configuration; locked once judging has closed.
 
@@ -20,35 +39,530 @@ and any future view that calls it must be decorated @transaction.non_atomic_requ
 from __future__ import annotations
 
 import hashlib
+import secrets
+from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
 
 from django.core.exceptions import PermissionDenied
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
+from django.utils import timezone
+from django.utils.text import slugify
 
-from accounts.roles import is_organizer_of
+from accounts.roles import Role, is_organizer_of
 from core import audit
 from core.deadlines import db_now
+from core.judging import judging_closed
 from core.models import AuditAction
+from events.models import Event, EventMembership
 from imports.models import FixtureRef
 from projects.models import Project, Status
+from scoring.models import (
+    Assignment, AssignmentRound, AssignmentSource, AssignmentStatus, Criterion, EventScoringConfig,
+    ResultSnapshot, RoundKind, Score, ScoreItem, SnapshotKind,
+)
 
 from .engine import pipeline
 from .engine.config import EngineConfig
 from .engine.errors import ConfigError, EngineError
-from .engine.types import Criterion, EngineInput, Exclusion, Review, Rubric, dumps, to_jsonable
+from .engine.types import Criterion as EngineCriterion
+from .engine.types import EngineInput, Exclusion, Review, Rubric, dumps, to_jsonable
 from .errors import (FinalOverrideRefused, InvalidConfig, JudgingOpen, ScoringConfigLocked,
                      SnapshotInsideTransaction)
-from .models import Criterion as CriterionRow
-from .models import EventScoringConfig, ResultSnapshot, Score, SnapshotKind
 
-FIXTURE_SOURCE = "dogfood-fixtures"
+FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
+WEIGHT_TOTAL = Decimal("100")
+WEIGHT_STEP = Decimal("0.001")  # Criterion.weight has three decimal places
+SCALE_MIN, SCALE_MAX = 0, 10  # a written anchor per level stays readable up to 11 levels
+
+
+class RubricError(Exception):
+    """A refused rubric change, with a sentence the page can show as-is."""
+
+
+class RubricLocked(RubricError):
+    pass
+
+
+# --- the lock ---------------------------------------------------------------------------------
+
+
+def rubric_locked(event, now=None):
+    """True from the submission close onward: judging can start, so the ranking rules are fixed."""
+    return (now or db_now()) >= event.submissions_close_at
+
+
+def _refuse_if_locked(request, event, what):
+    if rubric_locked(event):
+        audit.record(
+            AuditAction.RUBRIC_CHANGE_REFUSED, request=request, subject=event.slug, change=what,
+            locked_since=event.submissions_close_at.isoformat(),
+        )
+        raise RubricLocked(
+            "the rubric is locked: submissions closed, so weights, scales and the set of "
+            "criteria can no longer change. labels and level descriptions can still be edited."
+        )
+
+
+# --- weights ----------------------------------------------------------------------------------
+
+
+def split_equally(n):
+    """`n` weights that add up to exactly 100.000, as equal as three decimals allow.
+
+    The leftover thousandths go to the first criteria: 3 -> 33.334, 33.333, 33.333.
+    """
+    if n <= 0:
+        return []
+    units = int(WEIGHT_TOTAL / WEIGHT_STEP)
+    base, extra = divmod(units, n)
+    return [(base + (1 if i < extra else 0)) * WEIGHT_STEP for i in range(n)]
+
+
+def as_percentages(weights):
+    """Rescale arbitrary non-negative weights to percentages that add up to exactly 100.000.
+
+    Used once, to convert rubrics stored before weights became percentages. Proportions are
+    kept; rounding leftovers go to the largest weights first. All-zero weights split equally.
+    """
+    weights = [Decimal(w) for w in weights]
+    total = sum(weights)
+    if total <= 0:
+        return split_equally(len(weights))
+    exact = [w * WEIGHT_TOTAL / total for w in weights]
+    rounded = [e.quantize(WEIGHT_STEP, rounding=ROUND_DOWN) for e in exact]
+    left = int((WEIGHT_TOTAL - sum(rounded)) / WEIGHT_STEP)
+    order = sorted(range(len(weights)), key=lambda i: (-weights[i], i))
+    for i in order[:left]:
+        rounded[i] += WEIGHT_STEP
+    return rounded
+
+
+# --- the standard rubric -----------------------------------------------------------------------
+
+# The organizers' fixture scores these three criteria on 1-5; offering them as a starting point
+# means a new event is one click from a rubric that matches the shared data.
+STANDARD_RUBRIC = [
+    ("functionality", "Functionality", "Does it work, end to end, for the problem it claims to solve?", {
+        "1": "Does not run, or the core flow is missing.",
+        "2": "Runs, but the core flow breaks or is mostly faked.",
+        "3": "The core flow works with rough edges or manual steps.",
+        "4": "Works end to end; minor gaps only.",
+        "5": "Works end to end, handles errors and edge cases, ready for real users.",
+    }),
+    ("quality", "Quality", "Code, design and documentation a stranger could pick up.", {
+        "1": "Hard to read or run; no docs.",
+        "2": "Runs with effort; thin docs, inconsistent structure.",
+        "3": "Readable and runnable; some tests or docs.",
+        "4": "Clean structure, sensible tests, clear docs.",
+        "5": "Idiomatic, well tested, documented well enough to adopt.",
+    }),
+    ("innovation", "Innovation", "Is the idea or the approach new, or notably better than what exists?", {
+        "1": "A copy of something that exists, with nothing added.",
+        "2": "A familiar idea with a small twist.",
+        "3": "A sensible new angle on a known problem.",
+        "4": "A clearly new approach, well chosen.",
+        "5": "Something the judges would steal.",
+    }),
+]
+
+
+def create_standard_rubric(event):
+    """The standard three criteria, split equally. No lock check and no audit row: callers are
+    `use_standard_rubric` (which does both) and the demo seed (which runs at boot)."""
+    weights = split_equally(len(STANDARD_RUBRIC))
+    return [
+        Criterion.objects.create(
+            event=event, key=key, label=label, description=description,
+            level_descriptions=levels, weight=weight, order=order,
+        )
+        for order, ((key, label, description, levels), weight) in enumerate(
+            zip(STANDARD_RUBRIC, weights), start=1
+        )
+    ]
+
+
+def use_standard_rubric(request, event):
+    """Give an event with no criteria the standard three, split equally. Refused once locked."""
+    _refuse_if_locked(request, event, "standard rubric")
+    with transaction.atomic():
+        Event.objects.select_for_update().get(pk=event.pk)
+        if event.criteria.exists():
+            raise RubricError("this event already has a rubric; edit it instead.")
+        criteria = create_standard_rubric(event)
+    for criterion in criteria:
+        audit.record(
+            AuditAction.CRITERION_ADDED, request=request, subject=event.slug,
+            key=criterion.key, weight=str(criterion.weight),
+            scale=[criterion.min_value, criterion.max_value], source="standard rubric",
+        )
+
+
+# --- saving the whole rubric ------------------------------------------------------------------
+
+
+@dataclass
+class RubricRow:
+    """One line of the rubric as the organizer submitted it. `id` is None for a new criterion."""
+
+    id: int | None
+    key: str
+    label: str
+    weight: Decimal
+    min_value: int
+    max_value: int
+    order: int
+    delete: bool = False
+
+
+RANKING_FIELDS = ("weight", "min_value", "max_value")
+
+
+def validate_rows(rows):
+    """The rules a rubric must satisfy, whoever submits it. Returns the rows that are kept."""
+    kept = [r for r in rows if not r.delete]
+    if not kept:
+        raise RubricError("a rubric needs at least one criterion.")
+    keys = set()
+    for row in kept:
+        row.label = (row.label or "").strip()
+        if not row.label:
+            raise RubricError("every criterion needs a label.")
+        row.key = slugify(row.key or row.label)[:60]
+        if not row.key:
+            raise RubricError(f"'{row.label}' needs a key made of letters or digits.")
+        if row.key in keys:
+            raise RubricError(f"two criteria share the key '{row.key}'; keys must differ.")
+        keys.add(row.key)
+        if row.weight is None or row.weight < 0:
+            raise RubricError(f"'{row.label}': a weight cannot be negative.")
+        if row.weight != row.weight.quantize(WEIGHT_STEP):
+            raise RubricError(f"'{row.label}': weights have at most three decimal places.")
+        row.weight = row.weight.quantize(WEIGHT_STEP)  # as stored: 60 -> 60.000
+        if not (SCALE_MIN <= row.min_value < row.max_value <= SCALE_MAX):
+            raise RubricError(
+                f"'{row.label}': the scale must run from a lower to a higher whole number, "
+                f"within {SCALE_MIN}-{SCALE_MAX}."
+            )
+    total = sum(r.weight for r in kept)
+    if total != WEIGHT_TOTAL:
+        raise RubricError(
+            f"weights add up to {total.normalize():f}%, not 100%. "
+            "adjust them, or use 'split equally'."
+        )
+    return kept
+
+
+def save_rubric(request, event, rows):
+    """Replace the event's rubric with `rows`, all or nothing, and audit every change."""
+    _refuse_if_locked(request, event, "rubric")
+    kept = validate_rows(rows)
+    with transaction.atomic():
+        # One rubric edit at a time per event: two organizers saving at once cannot interleave
+        # into a rubric that adds up to 130.
+        Event.objects.select_for_update().get(pk=event.pk)
+        existing = {c.pk: c for c in event.criteria.all()}
+        unknown = [r.id for r in rows if r.id is not None and r.id not in existing]
+        if unknown:
+            raise RubricError("the rubric changed while you were editing it; reload and try again.")
+
+        changes = []
+        for row in rows:
+            if row.delete and row.id is not None:
+                criterion = existing[row.id]
+                if ScoreItem.objects.filter(criterion=criterion).exists():
+                    raise RubricError(f"'{criterion.label}' already has scores, so it cannot be removed.")
+                changes.append((AuditAction.CRITERION_REMOVED, {"key": criterion.key}))
+                criterion.delete()
+
+        # Keys are unique per event; free the old keys first so two criteria can swap keys.
+        for row in kept:
+            if row.id is not None and existing[row.id].key != row.key:
+                Criterion.objects.filter(pk=row.id).update(key=f"__renaming-{row.id}")
+
+        for row in kept:
+            if row.id is None:
+                criterion = Criterion.objects.create(
+                    event=event, key=row.key, label=row.label, weight=row.weight,
+                    min_value=row.min_value, max_value=row.max_value, order=row.order,
+                )
+                changes.append((AuditAction.CRITERION_ADDED, {
+                    "key": row.key, "weight": str(row.weight),
+                    "scale": [row.min_value, row.max_value],
+                }))
+                continue
+            criterion = existing[row.id]
+            before = {f: getattr(criterion, f) for f in ("key", "label", "weight", "min_value", "max_value", "order")}
+            if (row.min_value, row.max_value) != (criterion.min_value, criterion.max_value):
+                given = ScoreItem.objects.filter(criterion=criterion)
+                if given.filter(value__lt=row.min_value).exists() or given.filter(value__gt=row.max_value).exists():
+                    raise RubricError(
+                        f"'{criterion.label}' has scores outside {row.min_value}-{row.max_value}; "
+                        "the scale cannot shrink past them."
+                    )
+            criterion.key, criterion.label, criterion.weight = row.key, row.label, row.weight
+            criterion.min_value, criterion.max_value, criterion.order = row.min_value, row.max_value, row.order
+            criterion.level_descriptions = {
+                k: v for k, v in criterion.level_descriptions.items()
+                if k.lstrip("-").isdigit() and row.min_value <= int(k) <= row.max_value
+            }
+            criterion.save()
+            after = {f: getattr(criterion, f) for f in before}
+            diff = {f: [str(before[f]), str(after[f])] for f in before if before[f] != after[f]}
+            if diff:
+                changes.append((AuditAction.CRITERION_UPDATED, {"key": criterion.key, "changed": diff}))
+
+    for action, detail in changes:
+        audit.record(action, request=request, subject=event.slug, **detail)
+    return changes
+
+
+# --- text that may change at any time ------------------------------------------------------------
+
+
+def update_criterion_text(request, criterion, *, label, description, level_descriptions):
+    """Edit what judges read -- the label, the description and the anchor per score level.
+
+    Allowed even while the rubric is locked: wording does not change anyone's ranking. The key,
+    weight and scale are not touched here.
+    """
+    label = (label or "").strip()
+    if not label:
+        raise RubricError("a criterion needs a label.")
+    levels = {}
+    for level, text in (level_descriptions or {}).items():
+        text = (text or "").strip()
+        if not text:
+            continue
+        if not (str(level).lstrip("-").isdigit() and criterion.min_value <= int(level) <= criterion.max_value):
+            raise RubricError(f"{level} is not a level on this criterion's scale.")
+        levels[str(int(level))] = text[:300]
+    before = {"label": criterion.label, "description": criterion.description, "levels": criterion.level_descriptions}
+    criterion.label, criterion.description = label, (description or "").strip()
+    criterion.level_descriptions = levels
+    criterion.save(update_fields=["label", "description", "level_descriptions", "updated_at"])
+    after = {"label": criterion.label, "description": criterion.description, "levels": criterion.level_descriptions}
+    changed = [f for f in before if before[f] != after[f]]
+    if changed:
+        audit.record(
+            AuditAction.CRITERION_UPDATED, request=request, subject=criterion.event.slug,
+            key=criterion.key, changed=changed,
+            while_locked=rubric_locked(criterion.event),
+        )
+    return changed
+
+
+# --- assignment -----------------------------------------------------------------------------------
+#
+# Who reviews what. The plan comes from scoring.assignment (hard rules, balance, seeded
+# randomness, connectivity); these functions check the timing, write the rows and audit them.
+# Assignments are never deleted: withdrawing or declining changes the status.
+
+DEFAULT_TARGET = 3
+
+
+class AssignmentError(Exception):
+    """A refused assignment change, with a sentence the page can show as-is."""
+
+
+def review_target(event):
+    """The review target of the event's latest round, or the default of 3."""
+    latest = event.assignment_rounds.order_by("-created_at", "-id").first()
+    return latest.target_reviews if latest else DEFAULT_TARGET
+
+
+def _refuse_if_judging_over(event):
+    if judging_closed(event, db_now()):
+        raise AssignmentError("judging has ended, so assignments are frozen. extend judging first.")
+
+
+def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed=None,
+                   exclude_judges=(), kind=None):
+    """Assign judges until every submitted project has `target` reviews (where the rules allow).
+
+    Returns the AssignmentRound, whose `summary` says what was added, what is still short, and
+    any warnings. `seed` reproduces an earlier round exactly (given the same starting state).
+    """
+    from scoring.assignment import make_plan
+
+    _refuse_if_judging_over(event)
+    if not 1 <= target <= 20:
+        raise AssignmentError("the review target must be between 1 and 20.")
+    if max_load is not None and max_load < 1:
+        raise AssignmentError("the load cap must be at least 1, or empty for no cap.")
+    seed = seed if seed is not None else secrets.randbits(62)
+    with transaction.atomic():
+        Event.objects.select_for_update().get(pk=event.pk)
+        plan = make_plan(event, target=target, max_load=max_load, seed=seed, exclude_judges=exclude_judges)
+        if kind is None:
+            kind = RoundKind.TOP_UP if Assignment.objects.filter(project__event=event).exists() else RoundKind.INITIAL
+        warnings = list(plan.warnings)
+        if db_now() < event.submissions_close_at:
+            warnings.insert(0, "submissions are still open: projects submitted later will need a top-up.")
+        round_ = AssignmentRound.objects.create(
+            event=event, kind=kind, seed=seed, target_reviews=target, max_load=max_load,
+            created_by=request.user if request and request.user.is_authenticated else None,
+            summary={
+                "added": len(plan.new),
+                "bridges": len(plan.bridges),
+                "short": {str(p): n for p, n in sorted(plan.short.items())},
+                "warnings": warnings,
+                "islands_before": plan.islands_before,
+                "islands_after": plan.islands_after,
+                "excluded_judges": sorted(getattr(j, "pk", j) for j in exclude_judges),
+            },
+        )
+        now = timezone.now()
+        Assignment.objects.bulk_create([
+            Assignment(
+                judge_id=j, project_id=p, round=round_, source=AssignmentSource.AUTO,
+                position=plan.positions[(j, p)], created_by=round_.created_by, created_at=now,
+            )
+            for j, p in plan.new
+        ])
+    audit.record(
+        AuditAction.ASSIGNMENTS_GENERATED, request=request, subject=event.slug, round=round_.pk,
+        kind=kind, seed=seed, target=target, max_load=max_load, added=len(plan.new),
+        short=sum(plan.short.values()), warnings=len(warnings),
+    )
+    return round_
+
+
+def _check_can_review(event, judge, project):
+    from accounts.roles import Role
+
+    if judge.event_id != event.pk or judge.role != Role.JUDGE:
+        raise AssignmentError("that account is not a judge of this event.")
+    if project.event_id != event.pk:
+        raise AssignmentError("that project is not in this event.")
+    from projects.models import Status
+
+    if project.status != Status.SUBMITTED:
+        raise AssignmentError("only submitted projects are judged.")
+    tracks = set(judge.judge_tracks.values_list("track_id", flat=True))
+    if tracks and project.track_id is not None and project.track_id not in tracks:
+        raise AssignmentError(f"{judge.user.email} does not judge the {project.track.name} track.")
+    live = Assignment.objects.filter(judge=judge, project=project, status__in=[
+        AssignmentStatus.ASSIGNED, AssignmentStatus.DECLINED])
+    if live.filter(status=AssignmentStatus.DECLINED).exists():
+        raise AssignmentError(f"{judge.user.email} declined this project (conflict of interest).")
+    if live.exists():
+        raise AssignmentError(f"{judge.user.email} is already assigned {project.name}.")
+
+
+def _next_position(judge):
+    last = Assignment.objects.filter(judge=judge).order_by("-position").values_list("position", flat=True).first()
+    return 0 if last is None else last + 1
+
+
+def add_assignment(request, event, judge, project):
+    """Assign one project to one judge by hand, under the same rules as the automatic rounds."""
+    _refuse_if_judging_over(event)
+    _check_can_review(event, judge, project)
+    try:
+        with transaction.atomic():
+            assignment = Assignment.objects.create(
+                judge=judge, project=project, source=AssignmentSource.MANUAL,
+                position=_next_position(judge), created_by=request.user,
+            )
+    except IntegrityError as error:
+        raise AssignmentError("that judge was just assigned this project.") from error
+    audit.record(
+        AuditAction.ASSIGNMENT_ADDED, request=request, subject=event.slug,
+        judge=judge.user.email, project=project.pk,
+    )
+    return assignment
+
+
+def _has_review(assignment):
+    return Score.objects.filter(judge=assignment.judge_id, project=assignment.project_id).exists()
+
+
+def withdraw_assignment(request, event, assignment, *, action=AuditAction.ASSIGNMENT_WITHDRAWN, **detail):
+    """Take a project back from a judge who has not started reviewing it."""
+    _refuse_if_judging_over(event)
+    if assignment.project.event_id != event.pk:
+        raise AssignmentError("that assignment is not in this event.")
+    if assignment.status != AssignmentStatus.ASSIGNED:
+        raise AssignmentError("that assignment is not active.")
+    if _has_review(assignment):
+        raise AssignmentError(
+            f"{assignment.judge.user.email} has already started reviewing {assignment.project.name}; "
+            "a review is never thrown away."
+        )
+    assignment.status, assignment.status_changed_at = AssignmentStatus.WITHDRAWN, timezone.now()
+    assignment.save(update_fields=["status", "status_changed_at"])
+    audit.record(
+        action, request=request, subject=event.slug,
+        judge=assignment.judge.user.email, project=assignment.project_id, **detail,
+    )
+
+
+def move_assignment(request, event, assignment, to_judge):
+    """Withdraw from one judge and give to another, in one step."""
+    with transaction.atomic():
+        from_email = assignment.judge.user.email
+        withdraw_assignment(
+            request, event, assignment, action=AuditAction.ASSIGNMENT_MOVED, to=to_judge.user.email,
+        )
+        _check_can_review(event, to_judge, assignment.project)
+        moved = Assignment.objects.create(
+            judge=to_judge, project=assignment.project, source=AssignmentSource.MANUAL,
+            position=_next_position(to_judge), created_by=request.user,
+        )
+    return moved, from_email
+
+
+def decline_assignment(request, assignment, reason):
+    """For the judge side: the assigned judge declares a conflict of interest.
+
+    Only the judge themself may decline, only an active assignment, and only before they have
+    submitted a review of it. The project goes to the organizer's reassignment queue, and the
+    same judge can never be given it again.
+    """
+    if assignment.judge.user_id != getattr(request.user, "pk", None):
+        raise AssignmentError("only the assigned judge can decline this project.")
+    if assignment.status != AssignmentStatus.ASSIGNED:
+        raise AssignmentError("that assignment is not active.")
+    if Score.objects.filter(judge=assignment.judge_id, project=assignment.project_id,
+                            submitted_at__isnull=False).exists():
+        raise AssignmentError("you have already submitted a review of this project.")
+    reason = (reason or "").strip()
+    if not reason:
+        raise AssignmentError("say briefly what the conflict is; only organizers see it.")
+    assignment.status, assignment.status_changed_at = AssignmentStatus.DECLINED, timezone.now()
+    assignment.decline_reason = reason[:1000]
+    assignment.save(update_fields=["status", "status_changed_at", "decline_reason"])
+    audit.record(
+        AuditAction.ASSIGNMENT_DECLINED, request=request, subject=assignment.project.event.slug,
+        project=assignment.project_id, reason=assignment.decline_reason,
+    )
+    return assignment
+
+
+def reassign_unstarted(request, event, judge, *, target=None, max_load=None):
+    """A stalled judge: withdraw every assignment they have not started, then top up without
+    them. Their started reviews stay theirs."""
+    _refuse_if_judging_over(event)
+    started = set(Score.objects.filter(judge=judge).values_list("project_id", flat=True))
+    pending = Assignment.objects.filter(judge=judge, status=AssignmentStatus.ASSIGNED).exclude(project_id__in=started)
+    with transaction.atomic():
+        count = 0
+        for assignment in pending.select_related("project", "judge__user"):
+            withdraw_assignment(request, event, assignment, reason="reassigning a stalled judge")
+            count += 1
+        round_ = run_assignment(
+            request, event, target=target or review_target(event), max_load=max_load,
+            exclude_judges=[judge], kind=RoundKind.REASSIGN,
+        )
+    return count, round_
+
+
+# ==================================================================================== results
 
 # --- the window -----------------------------------------------------------------------------------
-
-def judging_closed(event, now) -> bool:
-    """Whether judging for `event` is over at `now` (the database clock). The boundary instant
-    counts as closed, like the submission window."""
-    return now >= event.judging_ends_at
+# `judging_closed(event, now)` lives in core.judging (imported above): the one rule, shared with the
+# judges' write window and the assignment freeze.
 
 
 # --- engine input ----------------------------------------------------------------------------------
@@ -57,9 +571,10 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
     """The event as the engine sees it.
 
     * projects: the event's *submitted* projects, by id, with their track.
-    * reviews: every Score of the event, in creation order (the order the engine's
-      cross-validation folds depend on). A review of a project that is not submitted is listed in
-      `excluded` ("project not submitted"), never silently dropped.
+    * reviews: every *submitted* Score of the event, in creation order (the order the engine's
+      cross-validation folds depend on). Nothing is silently dropped: a draft is listed in
+      `excluded` ("draft, not submitted"), and so is a review of a project that is not submitted
+      ("project not submitted") and a review with no values ("no scores").
     * duplicates: submissions the fixture importer folded into another. A review the importer
       moved from a duplicate onto the kept project is given back to the duplicate here (under the
       id "dup:<fixture id>"), so the engine's duplicate policy decides what happens to it -- the
@@ -68,13 +583,13 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
       previews only; `compute_snapshot` refuses it on a final).
     * event_id: the slug, from which the default CV seed is derived.
     """
-    criteria = list(CriterionRow.objects.filter(event=event).order_by("order", "key"))
+    criteria = list(Criterion.objects.filter(event=event).order_by("order", "key"))
     weights = weights or {}
     unknown = sorted(set(weights) - {c.key for c in criteria})
     if unknown:
         raise InvalidConfig(f"Weights name criteria this event does not have: {', '.join(unknown)}.")
     rubric = Rubric(tuple(
-        Criterion(c.key, float(weights.get(c.key, c.weight)), float(c.min_value), float(c.max_value))
+        EngineCriterion(c.key, float(weights.get(c.key, c.weight)), float(c.min_value), float(c.max_value))
         for c in criteria
     ))
 
@@ -108,10 +623,17 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
     for score in scores:
         project_id = moved.get(score.pk, str(score.project_id))
         judge_id = str(score.judge_id)
+        review_id = f"{judge_id}:{project_id}"
+        if score.submitted_at is None:
+            excluded.append(Exclusion("review", review_id, "draft, not submitted"))
+            continue
         if project_id not in projects:
-            excluded.append(Exclusion("review", f"{judge_id}:{project_id}", "project not submitted"))
+            excluded.append(Exclusion("review", review_id, "project not submitted"))
             continue
         items = {item.criterion.key: float(item.value) for item in score.items.all()}
+        if not items:
+            excluded.append(Exclusion("review", review_id, "no scores"))
+            continue
         reviews.append(Review(judge_id, project_id, items, projects[project_id]))
     return EngineInput(event_id=event.slug, reviews=tuple(reviews), rubric=rubric, projects=projects,
                        duplicates=duplicates, excluded=tuple(excluded))
@@ -264,3 +786,194 @@ def set_engine_config(actor, event, overrides, *, request=None) -> EventScoringC
     audit.record(AuditAction.SCORING_CONFIG_CHANGED, request=request, actor=actor, subject=event.slug,
                  overrides=overrides)
     return row
+
+
+# ==================================================================================== the judge side
+#
+# A judge writes one review per assigned project: a draft (any subset of the criteria) until they
+# submit it (every criterion, then `submitted_at` is set; only submitted reviews count anywhere).
+# Saving a draft over a submitted review reopens it. Order of checks on every write:
+#   1. the judging window (core.judging, 409 judging_not_started / judging_closed) -- first, so a
+#      late write is refused as late;
+#   2. a live `assigned` Assignment for this judge and project (403 not_assigned);
+#   3. the values against the rubric (400 invalid_review).
+# A conflict of interest is declared with `decline_assignment` (above), never by editing a review.
+
+CIRCLE_CIRCUMFERENCE = 264  # the progress donut's stroke length (judge/event.html)
+VALUE_STEP = Decimal("0.01")  # ScoreItem.value has two decimal places
+
+
+class ReviewError(Exception):
+    """A refused review write, with a sentence the page can show as-is."""
+
+    status = 400
+    code = "invalid_review"
+
+
+class ReviewForbidden(ReviewError):
+    status = 403
+    code = "not_assigned"
+
+
+def judge_membership(user, event):
+    """`user`'s judge membership in `event`, or None."""
+    if user is None or not user.is_authenticated or event is None:
+        return None
+    return EventMembership.objects.filter(user=user, event=event, role=Role.JUDGE).first()
+
+
+def live_assignment(membership, project):
+    """The judge's active assignment for `project`, or None."""
+    return Assignment.objects.filter(judge=membership, project=project, status=AssignmentStatus.ASSIGNED).first()
+
+
+def judge_queue(membership):
+    """The judge's active assignments to submitted projects, in queue order."""
+    return (
+        Assignment.objects.filter(judge=membership, status=AssignmentStatus.ASSIGNED,
+                                  project__status=Status.SUBMITTED)
+        .select_related("project__team", "project__track").order_by("position", "id")
+    )
+
+
+def terminal_bar(done, total, width=32):
+    """A text progress bar: "████░░░░  25% | 2/8"."""
+    pct = 0.0 if total <= 0 else max(0.0, min(100.0, done / total * 100.0))
+    filled = int(round(pct / 100.0 * width))
+    return f"{'█' * filled}{'░' * (width - filled)}  {pct:>3.0f}% | {done}/{total}"
+
+
+def weighted_rating(criteria, items):
+    """The judge's own weighted average for display, over the criteria scored (None if none)."""
+    scored = [(c, items[c.pk]) for c in criteria if c.pk in items]
+    if not scored:
+        return None
+    total = sum(Decimal(c.weight) for c, _ in scored)
+    if total <= 0:
+        return sum(Decimal(v) for _, v in scored) / len(scored)
+    return sum(Decimal(v) * Decimal(c.weight) for c, v in scored) / total
+
+
+def judge_progress(membership):
+    """The judge console: every active assignment with its review state, and the totals.
+
+    Read-only: nothing is created here (an event without a rubric simply has no criteria yet)."""
+    event = membership.event
+    criteria = list(Criterion.objects.filter(event=event).order_by("order", "key"))
+    queue = list(judge_queue(membership))
+    scores = {
+        s.project_id: s
+        for s in Score.objects.filter(judge=membership, project__in=[a.project_id for a in queue])
+        .prefetch_related("items")
+    }
+    rows, submitted, drafts = [], 0, 0
+    for assignment in queue:
+        score = scores.get(assignment.project_id)
+        items = {i.criterion_id: i.value for i in score.items.all()} if score else {}
+        if score is None:
+            status = "not started"
+        elif score.submitted_at:
+            status = "submitted"
+            submitted += 1
+        else:
+            status = "draft"
+            drafts += 1
+        rating = weighted_rating(criteria, items)
+        rows.append({
+            "assignment": assignment, "project": assignment.project, "score": score, "status": status,
+            "rating": f"{rating:.2f}" if rating is not None else "-",
+        })
+    total = len(queue)
+    pct = (submitted / total * 100.0) if total else 0.0
+    return {
+        "event": event, "criteria": criteria, "projects": rows, "total_projects": total,
+        "submitted": submitted, "drafts": drafts, "progress_pct": round(pct, 1),
+        "dash_offset": int(round(CIRCLE_CIRCUMFERENCE * (1.0 - pct / 100.0))),
+        "terminal_bar": terminal_bar(submitted, total),
+    }
+
+
+def _parse_values(criteria, values, *, require_all):
+    """{criterion key: Decimal} from submitted values; empty strings mean "not scored yet"."""
+    by_key = {c.key: c for c in criteria}
+    values = {k: v for k, v in (values or {}).items() if v is not None and str(v).strip() != ""}
+    unknown = sorted(set(values) - set(by_key))
+    if unknown:
+        raise ReviewError(f"not criteria of this event: {', '.join(unknown)}.")
+    parsed = {}
+    for key, raw in values.items():
+        criterion = by_key[key]
+        if isinstance(raw, bool):
+            raise ReviewError(f"'{criterion.label}': {raw!r} is not a number.")
+        try:
+            value = Decimal(str(raw).strip())
+        except Exception:
+            raise ReviewError(f"'{criterion.label}': {raw!r} is not a number.") from None
+        if not value.is_finite() or value != value.quantize(VALUE_STEP):
+            raise ReviewError(f"'{criterion.label}': use a number with at most two decimal places.")
+        if not criterion.min_value <= value <= criterion.max_value:
+            raise ReviewError(
+                f"'{criterion.label}': {value.normalize():f} is outside "
+                f"{criterion.min_value}-{criterion.max_value}."
+            )
+        parsed[key] = value
+    if require_all:
+        missing = [c.label for c in criteria if c.key not in parsed]
+        if missing:
+            raise ReviewError(f"score every criterion before submitting; missing: {', '.join(missing)}.")
+    return parsed
+
+
+def save_review(request, membership, project, values, comment="", *, submit=False):
+    """Save the judge's review of `project` as a draft, or submit it. Returns the Score.
+
+    Refusals: core.judging.JudgingNotOpen (409), ReviewForbidden (403), ReviewError (400).
+    Every write is audited with the values before and after, so the audit log is the revision
+    history."""
+    from core.judging import check_judging_window
+
+    event = membership.event
+    check_judging_window(request, event, action="submit review" if submit else "save review")
+    if membership.role != Role.JUDGE:
+        raise ReviewForbidden("only judges review projects.")
+    if (project.event_id != event.pk or project.status != Status.SUBMITTED
+            or live_assignment(membership, project) is None):
+        raise ReviewForbidden("this project is not in your queue.")
+    criteria = list(Criterion.objects.filter(event=event).order_by("order", "key"))
+    if not criteria:
+        raise ReviewError("the organizers have not set the rubric yet.")
+    parsed = _parse_values(criteria, values, require_all=submit)
+    comment = (comment or "").strip()
+
+    with transaction.atomic():
+        score, created = Score.objects.select_for_update().get_or_create(judge=membership, project=project)
+        before = {i.criterion.key: str(i.value) for i in score.items.select_related("criterion")}
+        was_submitted = score.submitted_at is not None
+        score.comment = comment
+        score.submitted_at = db_now() if submit else None
+        score.save()
+        by_key = {c.key: c for c in criteria}
+        ScoreItem.objects.filter(score=score).exclude(criterion__key__in=list(parsed)).delete()
+        for key, value in parsed.items():
+            ScoreItem.objects.update_or_create(score=score, criterion=by_key[key], defaults={"value": value})
+
+    if submit:
+        action = AuditAction.SCORE_SUBMITTED
+    elif was_submitted:
+        action = AuditAction.SCORE_REOPENED
+    else:
+        action = AuditAction.SCORE_SAVED
+    audit.record(
+        action, request=request, subject=event.slug, project=project.pk,
+        values={k: str(v) for k, v in parsed.items()}, previous=None if created else before,
+        comment_length=len(comment),
+    )
+    return score
+
+
+def reviews_of(user):
+    """Every review `user` wrote as a judge, in any event (their own only)."""
+    return (
+        Score.objects.filter(judge__user=user, judge__role=Role.JUDGE)
+        .select_related("judge__event", "project").prefetch_related("items__criterion").order_by("pk")
+    )

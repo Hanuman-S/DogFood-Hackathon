@@ -7,7 +7,12 @@ edge of their own event. The conflict-of-interest rule -- nobody is both a compe
 in one event -- is enforced by an exclusion constraint on the membership table (see
 events/migrations/0002_membership_conflict_of_interest.py), not only by the service layer.
 
-All times are stored and shown in UTC. The event's *phase* (upcoming / open / judging /
+The timeline is strictly ordered, and the database refuses anything else:
+
+    event starts < submissions open < submissions close < judging starts < judging ends
+                                                                      < results (optional: TBD)
+
+All times are stored and shown in UTC. The event's *phase* (upcoming / open / closed / judging /
 finished) is never stored; it is computed from the dates, so it cannot drift out of sync with
 them. The only stored state is `is_published`, which an organizer sets deliberately.
 """
@@ -23,6 +28,9 @@ from accounts.roles import COMPETITOR_ROLES, Role
 class Phase(models.TextChoices):
     UPCOMING = "upcoming", "Upcoming"
     OPEN = "open", "Submissions open"
+    # Between the submission close and the judging start: nothing can be submitted, nothing is
+    # being scored yet (the organizer assigns judges here).
+    CLOSED = "closed", "Submissions closed"
     JUDGING = "judging", "Judging"
     FINISHED = "finished", "Finished"
 
@@ -58,7 +66,14 @@ class Event(models.Model):
     # The close time as first set, kept when an organizer extends the deadline for everyone,
     # so the pages can say "extended from ... to ...".
     original_submissions_close_at = models.DateTimeField(null=True, blank=True)
+    judging_starts_at = models.DateTimeField()
     judging_ends_at = models.DateTimeField()
+    # When results are announced. Empty = "to be announced"; it may change at any time, but once
+    # set it must come after the judging end.
+    results_at = models.DateTimeField(null=True, blank=True)
+    # The judging end as first set, kept when an organizer extends judging (an audited action),
+    # so the pages can say "extended from ... to ...".
+    original_judging_ends_at = models.DateTimeField(null=True, blank=True)
 
     min_team_size = models.PositiveSmallIntegerField(
         default=1, help_text="A team needs at least this many members to submit."
@@ -78,17 +93,27 @@ class Event(models.Model):
         ordering = ["-submissions_close_at"]
         constraints = [
             # The dates must describe a sensible timeline; the database refuses anything else.
+            # Each date strictly after the one before it:
+            # starts < open < close < judging starts < judging ends < results (when set).
+            models.CheckConstraint(
+                condition=Q(starts_at__lt=F("submissions_open_at")),
+                name="event_starts_before_submissions_open",
+            ),
             models.CheckConstraint(
                 condition=Q(submissions_open_at__lt=F("submissions_close_at")),
                 name="event_submissions_window_valid",
             ),
             models.CheckConstraint(
-                condition=Q(submissions_close_at__lte=F("judging_ends_at")),
-                name="event_judging_after_submissions",
+                condition=Q(submissions_close_at__lt=F("judging_starts_at")),
+                name="event_judging_starts_after_close",
             ),
             models.CheckConstraint(
-                condition=Q(starts_at__lte=F("submissions_close_at")),
-                name="event_starts_before_close",
+                condition=Q(judging_starts_at__lt=F("judging_ends_at")),
+                name="event_judging_window_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(results_at__isnull=True) | Q(judging_ends_at__lt=F("results_at")),
+                name="event_results_after_judging",
             ),
             models.CheckConstraint(
                 condition=Q(min_team_size__gte=1, max_team_size__lte=20)
@@ -105,6 +130,8 @@ class Event(models.Model):
             return Phase.UPCOMING
         if now < self.submissions_close_at:
             return Phase.OPEN
+        if now < self.judging_starts_at:
+            return Phase.CLOSED
         if now < self.judging_ends_at:
             return Phase.JUDGING
         return Phase.FINISHED
@@ -125,15 +152,17 @@ class Event(models.Model):
         return f"{self.min_team_size} to {self.max_team_size}"
 
     def timeline(self):
-        """[(label, when, passed)] for the four dates, in order."""
+        """[(label, when, passed)] for every date, in order. `when` is None for results TBD."""
         now = timezone.now()
         return [
-            (label, when, when <= now)
+            (label, when, when is not None and when <= now)
             for label, when in (
                 ("event starts", self.starts_at),
                 ("submissions open", self.submissions_open_at),
                 ("submissions close", self.submissions_close_at),
+                ("judging starts", self.judging_starts_at),
                 ("judging ends", self.judging_ends_at),
+                ("results", self.results_at),
             )
         ]
 
@@ -213,6 +242,58 @@ class JudgeTrack(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["membership", "track"], name="judge_track_unique"),
         ]
+
+
+class JudgeInviteQuerySet(models.QuerySet):
+    def open(self, now=None):
+        """Invites that can still be accepted."""
+        now = now or timezone.now()
+        return self.filter(accepted_at__isnull=True, revoked_at__isnull=True, expires_at__gt=now)
+
+
+class JudgeInvite(models.Model):
+    """A one-time link that makes whoever opens it (and signs up or logs in as `email`) a judge
+    of `event`, covering `tracks` (none = every track).
+
+    Only a SHA-256 digest of the token is stored, like API tokens: the raw link is shown to the
+    organizer once. Accepting, revoking and expiry are timestamps, never deletes, so the audit
+    trail can always say who was invited, by whom, and what became of it.
+    """
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="judge_invites")
+    email = models.EmailField(max_length=254)
+    tracks = models.ManyToManyField("Track", blank=True, related_name="+")
+    digest = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    objects = JudgeInviteQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            # One pending invite per person per event: re-inviting revokes the old link first.
+            models.UniqueConstraint(
+                fields=["event", "email"],
+                condition=Q(accepted_at__isnull=True, revoked_at__isnull=True),
+                name="judge_invite_one_pending_per_email",
+            ),
+            models.CheckConstraint(
+                condition=Q(accepted_at__isnull=True) | Q(revoked_at__isnull=True),
+                name="judge_invite_not_accepted_and_revoked",
+            ),
+        ]
+
+    def __str__(self):
+        return f"judge invite for {self.email} to {self.event.slug}"
 
 
 class Track(models.Model):

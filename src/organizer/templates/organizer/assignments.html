@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · assignments{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame" id="assign">
+    <header class="frame__bar">
+      <h1 class="frame__title">assign judges</h1>
+      <span class="frame__meta">{{ event.name }} &middot;
+        {% if window.is_closed %}<span class="badge badge--warn">judging ended</span>{% elif window.is_open %}<span class="badge badge--on">judging open</span>{% else %}<span class="badge">judging starts {{ event.judging_starts_at|utc }}</span>{% endif %}
+      </span>
+    </header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">submitted projects</th><td>{{ rows|length }}</td></tr>
+        <tr><th scope="row">judges</th><td>{{ judges|length }}</td></tr>
+        <tr><th scope="row">target</th><td>{{ target }} reviews per project</td></tr>
+        <tr><th scope="row">below target</th><td>{% if short_count %}<span class="bright">{{ short_count }}</span>{% else %}none{% endif %}</td></tr>
+        <tr><th scope="row">judge groups</th><td>{% if islands <= 1 %}one connected group{% else %}<span class="bright">{{ islands }} separate groups</span> <span class="faint">(normalization cannot compare judges across them)</span>{% endif %}</td></tr>
+      </table>
+      {% if warnings %}<ul class="msgs">{% for w in warnings %}<li class="msg msg--warning">{{ w }}</li>{% endfor %}</ul>{% endif %}
+      <p class="dim">each project gets reviews up to the target from judges who cover its track, never from someone competing in the event or who declined it. load is balanced, judges are chosen at random among equals, and the seed is kept so any round can be reproduced. running again only tops up what is missing.</p>
+      {% include "_form_errors.html" %}
+      <form class="form" method="post" novalidate>
+        {% csrf_token %}
+        <div class="grid-3">
+          {% include "_field.html" with field=form.target cmd="assign --reviews" short=1 %}
+          {% include "_field.html" with field=form.max_load cmd="--max-per-judge" short=1 %}
+          {% include "_field.html" with field=form.seed cmd="--seed" short=1 %}
+        </div>
+        <div class="actions"><button class="btn" type="submit"{% if window.is_closed %} disabled{% endif %}>assign</button>{% if window.is_closed %}<span class="faint">judging has ended: <a href="{% url 'organizer:event' event.slug %}#judging">extend judging</a> to change assignments.</span>{% endif %}</div>
+      </form>
+    </div>
+  </section>
+
+  {% if declined %}
+  <section class="frame" id="declined">
+    <header class="frame__bar"><h2 class="frame__title">declined: conflict of interest</h2><span class="frame__meta">only organizers see the reasons</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>project</th><th>judge</th><th>reason</th><th>when</th><th>now</th></tr></thead>
+        <tbody>
+        {% for a, covered in declined %}
+          <tr>
+            <td><a href="#project-{{ a.project_id }}">{{ a.project.name }}</a></td>
+            <td>{{ a.judge.user.name }}</td>
+            <td class="dim">{{ a.decline_reason }}</td>
+            <td class="faint">{{ a.status_changed_at|utc }}</td>
+            <td>{% if covered %}<span class="badge">reassigned</span>{% else %}<span class="badge badge--warn">needs a judge</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="frame__body"><p class="faint">press assign above to fill these gaps; the judge who declined is never given the project again.</p></div>
+  </section>
+  {% endif %}
+
+  <section class="frame" id="projects">
+    <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">below target first</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>project</th><th class="num">reviews</th><th>judges</th><th>add a judge</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr id="project-{{ r.project.pk }}">
+            <td>{{ r.project.name }}<br><span class="faint">{{ r.project.track.name|default:"no track" }}</span></td>
+            <td class="num{% if r.count < target %} bright{% endif %}">{{ r.count }}/{{ target }}<br><span class="faint">{{ r.submitted }} in</span></td>
+            <td>
+              {% for a in r.assignments %}
+              <div class="assignee">
+                <span>{{ a.judge.user.name }} <span class="badge{% if a.review == 'submitted' %} badge--on{% endif %}">{{ a.review }}</span>{% if a.source == 'import' %} <span class="faint">imported</span>{% endif %}</span>
+                {% if a.review == "not started" and not window.is_closed %}
+                <form class="inline-form" method="post" action="{% url 'organizer:assignment_move' event.slug a.pk %}">
+                  {% csrf_token %}
+                  <label class="visually-hidden" for="move-{{ a.pk }}">move to</label>
+                  <select id="move-{{ a.pk }}" name="judge" class="select--small">{% for j in r.eligible %}<option value="{{ j.pk }}">{{ j.user.name }} ({{ load|get_item:j.pk|default:0 }})</option>{% endfor %}</select>
+                  <button class="btn btn--small btn--ghost" type="submit"{% if not r.eligible %} disabled{% endif %}>move</button>
+                </form>
+                <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
+                {% endif %}
+              </div>
+              {% empty %}<span class="faint">nobody yet</span>{% endfor %}
+            </td>
+            <td>
+              {% if r.eligible and not window.is_closed %}
+              <form class="inline-form" method="post" action="{% url 'organizer:assignment_add' event.slug %}">
+                {% csrf_token %}
+                <input type="hidden" name="project" value="{{ r.project.pk }}">
+                <label class="visually-hidden" for="add-{{ r.project.pk }}">judge</label>
+                <select id="add-{{ r.project.pk }}" name="judge" class="select--small">{% for j in r.eligible %}<option value="{{ j.pk }}">{{ j.user.name }} ({{ load|get_item:j.pk|default:0 }})</option>{% endfor %}</select>
+                <button class="btn btn--small" type="submit">add</button>
+              </form>
+              {% else %}<span class="faint">{% if window.is_closed %}frozen{% else %}no other eligible judge{% endif %}</span>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="faint">no submitted projects yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="frame__body"><p class="faint">numbers in brackets are each judge's current load. a judge who has started a review keeps it: only unstarted reviews can be moved or withdrawn.</p></div>
+  </section>
+
+  {% if rounds %}
+  <section class="frame" id="rounds">
+    <header class="frame__bar"><h2 class="frame__title">rounds</h2><span class="frame__meta">latest first</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>round</th><th>kind</th><th class="num">target</th><th class="num">added</th><th class="num">still missing</th><th>seed</th><th>by</th></tr></thead>
+        <tbody>
+        {% for rd in rounds %}
+          <tr>
+            <td>#{{ rd.pk }} <span class="faint">{{ rd.created_at|utc }}</span></td>
+            <td class="dim">{{ rd.get_kind_display|lower }}</td>
+            <td class="num">{{ rd.target_reviews }}{% if rd.max_load %} <span class="faint">cap {{ rd.max_load }}</span>{% endif %}</td>
+            <td class="num">{{ rd.summary.added }}</td>
+            <td class="num">{{ rd.summary.short|length }}</td>
+            <td><code>{{ rd.seed }}</code></td>
+            <td class="dim">{{ rd.created_by.name|default:"--" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  <p class="actions">
+    <a class="btn btn--ghost" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
+    <a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to {{ event.name }}</a>
+  </p>
+</div>
+{% endblock %}

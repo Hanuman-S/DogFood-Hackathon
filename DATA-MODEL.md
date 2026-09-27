@@ -27,6 +27,11 @@ erDiagram
     EventMembership ||--o{ JudgeTrack : "covers"
     Track ||--o{ JudgeTrack : "is covered by"
     EventMembership ||--o{ Score : "gives (judge)"
+    EventMembership ||--o{ Assignment : "is asked (judge)"
+    Project ||--o{ Assignment : "is assigned in"
+    AssignmentRound ||--o{ Assignment : "created"
+    Event ||--o{ AssignmentRound : "runs"
+    Event ||--o{ JudgeInvite : "invites"
 
     Team ||--o{ TeamMember : "has"
     Team ||--o| TeamExtension : "may have"
@@ -82,14 +87,21 @@ role per account. The portals, URLs and refusals are unchanged; see [ARCHITECTUR
 
 | Table | Holds | Enforced by the database |
 |---|---|---|
-| `events_event` | slug, name, tagline, Markdown description, `starts_at`, `submissions_open_at`, `submissions_close_at`, `original_submissions_close_at`, `judging_ends_at`, min/max team size, `is_published` | `event_submissions_window_valid` (open < close), `event_judging_after_submissions`, `event_starts_before_close`, `event_team_size_range` (1 ≤ min ≤ max ≤ 20) |
+| `events_event` | slug, name, tagline, Markdown description, `starts_at`, `submissions_open_at`, `submissions_close_at`, `original_submissions_close_at`, `judging_starts_at`, `judging_ends_at`, `original_judging_ends_at`, `results_at` (null = to be announced), min/max team size, `is_published` | a strictly ordered timeline, one CHECK per step: `event_starts_before_submissions_open`, `event_submissions_window_valid` (open < close), `event_judging_starts_after_close`, `event_judging_window_valid`, `event_results_after_judging` (when set); `event_team_size_range` (1 ≤ min ≤ max ≤ 20) |
 | `events_eventmembership` | user, event, role, generated `side`, who added it | `membership_unique_user_event_role`, `membership_role_valid`, `membership_no_competitor_and_staff` **(pg)** |
 | `events_judgetrack` | which tracks a judge membership covers (none = every track) | `judge_track_unique` |
+| `events_judgeinvite` | a one-time judge link: email, tracks, SHA-256 **digest** of the token (never the token), expiry, accepted/revoked timestamps | `judge_invite_one_pending_per_email` (partial unique), `judge_invite_not_accepted_and_revoked` |
 | `events_track` | name, description, order, `is_hidden` | `track_name_unique_per_event` |
 | `events_prize` | title, value text, rank, optional track | |
 | `events_customquestion` | prompt, help, kind (short / long / url / choice / checkbox), choices, required, `is_hidden` | |
 
-The event's **phase** (upcoming, open, judging, finished) is never stored. It is computed from the
+The timeline is **strictly** ordered: event starts < submissions open < submissions close < judging
+starts < judging ends < results. Equal dates are refused too. Migration
+`events/0004_judging_start_results_strict_timeline` brought existing events into line: judging
+starts one hour after the close (or halfway to the judging end, if judging was shorter than two
+hours), and an event start that coincided with submissions opening moved one hour earlier.
+
+The event's **phase** (upcoming, open, closed, judging, finished) is never stored. It is computed from the
 dates, so it cannot disagree with them. Tracks and questions already in use are hidden, not deleted,
 so old submissions keep their data.
 
@@ -113,12 +125,14 @@ event" be a plain unique constraint instead of a trigger.
 | `projects_tag`, `projects_project_tags` | free-form tags, up to 50 per project | tag name unique |
 | `projects_answer` | a project's answer to one custom question | `one_answer_per_question` |
 
-### scoring: filled by the import, read only by the scoring engine
+### scoring: the rubric, the reviews, who reviews what, and the results
 
 | Table | Holds | Enforced by the database |
 |---|---|---|
-| `scoring_criterion` | one rubric line per event: key, label, **decimal `weight`**, min, max, order | `criterion_unique_key_per_event`, `criterion_min_below_max` |
-| `scoring_score` | one judge's review of one project: judge **membership**, project, comment | `score_unique_judge_project` |
+| `scoring_criterion` | one rubric line per event: key, label, **`weight` as a percentage** (decimal, three places; an event's weights add up to exactly 100), min, max, order, description, a written anchor per score level (`level_descriptions`) | `criterion_unique_key_per_event`, `criterion_min_below_max` |
+| `scoring_score` | one judge's review of one project: judge **membership**, project, comment, `submitted_at` (null = draft) | `score_unique_judge_project` |
+| `scoring_assignmentround` | one run of the automatic assignment: kind (initial / top-up / reassign), **random seed**, review target, load cap, summary of warnings | |
+| `scoring_assignment` | a judge membership asked to review a project: source (import / auto / manual), status (assigned / declined_conflict / withdrawn), queue position, decline reason | `assignment_one_live_per_judge_project` (partial unique over assigned + declined), status and source CHECKs |
 | `scoring_scoreitem` | the value for one criterion within one review | `scoreitem_unique_per_criterion` |
 | `scoring_eventscoringconfig` | one event's engine configuration overrides (JSON); written only by `set_engine_config`, which refuses once judging has closed | one per event |
 | `scoring_resultsnapshot` | one computed ranking, kept exactly as computed: kind (`preview` / `final`), method and version, the resolved engine config (seed and λ used), the rubric, the sha256 of the engine input, the result and comparison JSON, who computed it (user **PROTECT** + email) | `snapshot_kind_valid`; **(pg)** trigger `dogfood_snapshot_immutable` refuses every UPDATE |
@@ -130,6 +144,11 @@ database level. The user foreign keys are PROTECT, not SET_NULL, because SET_NUL
 triggers refuse. So an account named in a result cannot be deleted, and its email cannot later be
 removed from those rows. This is a deliberate audit trade-off: a result that could be rewritten,
 or lose the record of who produced it, would prove nothing. The full T2 write-up comes in S4.
+
+Assignments are never deleted: withdrawing or declining one changes its status, so "who was asked
+to review what, and what became of it" stays answerable. A declined assignment still blocks the
+same pair, because declining means a conflict of interest. The assignment round keeps its random
+seed, so any round can be reproduced exactly.
 
 A score points at the judge's `EventMembership`, not the `User`. "This judge, in this event" is then
 one column that cannot disagree with itself, and revoking someone's judge role takes their reviews
@@ -171,7 +190,7 @@ transaction). It prints a report on every boot.
 | `judges` | 30 | `accounts_user` + `events_eventmembership(judge)` + `events_judgetrack` from each judge's `tracks` |
 | `teams` | 40 | `teams_team` + `teams_teammember` + `events_eventmembership(participant)`; members are bare emails → 91 participant accounts |
 | `projects` | 41 | 40 `projects_project` (submitted) + 1 duplicate recorded in `imports_fixtureref` |
-| `scores` | 126 | 3 `scoring_criterion` + 123 `scoring_score` + 369 `scoring_scoreitem` (3 reviews reported, see below) |
+| `scores` | 126 | 3 `scoring_criterion` + 123 `scoring_score` (submitted) + 369 `scoring_scoreitem` + 123 `scoring_assignment` (source `import`); 3 reviews reported, see below |
 
 Edge cases, each reported rather than smoothed over:
 
@@ -188,8 +207,9 @@ Edge cases, each reported rather than smoothed over:
   but the importer checks: staff are kept as staff and left off the team (conflict of interest), and
   a second team is skipped. Both cases are reported.
 - **Missing dates.** The file gives only `submissions_close`. Submissions open 72 hours earlier (or
-  just before the first submission, if earlier), and judging ends 14 days after the close. The
-  report lists both as derived.
+  just before the first submission, if earlier), the event starts an hour before that, judging
+  starts an hour after the close and ends 14 days after it, and results stay to be announced. The
+  report lists each derived date.
 
 In demo mode the demo organizer is made an organizer of the fixture event, and both demo judges are
 made judges of it, so the `judge_a` and `judge_b` headers in `.dogfood.toml` name real judges.

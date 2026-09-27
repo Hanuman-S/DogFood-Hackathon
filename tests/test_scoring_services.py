@@ -59,7 +59,7 @@ def scored_event(make_event, make_user, make_team):
         judges.append(EventMembership.objects.create(user=user, event=event, role=Role.JUDGE))
     for j, judge in enumerate(judges):
         for i, project in enumerate(projects):
-            score = Score.objects.create(judge=judge, project=project)
+            score = Score.objects.create(judge=judge, project=project, submitted_at=now)
             for c, criterion in enumerate(criteria):
                 ScoreItem.objects.create(score=score, criterion=criterion, value=1 + (i + j + c) % 5)
     event.judges = judges
@@ -359,9 +359,10 @@ def test_build_input_uses_the_events_weights():
     event = fixture_event()
     Criterion.objects.filter(event=event, key="functionality").update(weight=2.5)
     weights = {c.id: c.weight for c in services.build_input(event).rubric.criteria}
-    assert weights == {"functionality": 2.5, "quality": 1.0, "innovation": 1.0}
+    # the importer's equal split, as percentages: 33.334 / 33.333 / 33.333 (functionality edited here)
+    assert weights == {"functionality": 2.5, "quality": 33.333, "innovation": 33.333}
     overridden = {c.id: c.weight for c in services.build_input(event, weights={"quality": 3}).rubric.criteria}
-    assert overridden == {"functionality": 2.5, "quality": 3.0, "innovation": 1.0}
+    assert overridden == {"functionality": 2.5, "quality": 3.0, "innovation": 33.333}
     with pytest.raises(InvalidConfig):
         services.build_input(event, weights={"speed": 1})
 
@@ -383,10 +384,52 @@ def test_reviews_of_a_withdrawn_project_are_listed_not_dropped():
 
 
 @pytest.mark.django_db
+def test_only_submitted_reviews_count_and_drafts_are_listed(scored_event):
+    draft = Score.objects.filter(project__event=scored_event).order_by("pk").first()
+    Score.objects.filter(pk=draft.pk).update(submitted_at=None)
+    empty = Score.objects.create(judge=scored_event.judges[0],
+                                 project=Project.objects.create(team=make_team_for(scored_event), event=scored_event,
+                                                                name="Empty", status=Status.SUBMITTED,
+                                                                submitted_at=timezone.now()),
+                                 submitted_at=timezone.now())
+    inp = services.build_input(scored_event)
+    assert len(inp.reviews) == 12 - 1
+    reasons = {e.id: e.reason for e in inp.excluded}
+    assert reasons[f"{draft.judge_id}:{draft.project_id}"] == "draft, not submitted"
+    assert reasons[f"{empty.judge_id}:{empty.project_id}"] == "no scores"
+
+
+def make_team_for(event):
+    from teams.models import Team
+    return Team.objects.create(event=event, name=f"Team {Team.objects.count() + 1}",
+                               captain=event.organizer)
+
+
+@TX
+def test_judging_cannot_be_extended_once_a_final_exists(scored_event, at, monkeypatch):
+    from events.models import Event
+    from events.services import EventRuleError, extend_judging
+
+    organizer = scored_event.organizer
+    monkeypatch.setattr("core.deadlines.db_now", lambda: scored_event.judging_ends_at - timedelta(hours=1))
+    services.compute_snapshot(scored_event, "preview", actor=organizer)  # previews don't block
+    extend_judging(None, scored_event, scored_event.judging_ends_at + timedelta(days=1), "wifi")
+    scored_event = Event.objects.get(pk=scored_event.pk)
+    at(scored_event.judging_ends_at)
+    services.compute_snapshot(scored_event, "final", actor=organizer)
+    with pytest.raises(EventRuleError, match="final result"):
+        extend_judging(None, scored_event, scored_event.judging_ends_at + timedelta(days=1), "again")
+    assert AuditLog.objects.filter(action=AuditAction.JUDGING_EXTENSION_REFUSED).count() == 1
+
+
+@pytest.mark.django_db
 def test_database_result_equals_the_file_result():
     event = fixture_event()
     db = pipeline.compare(services.build_input(event), ["m2", "raw_mean", "zscore"], config={"cv_seed": LAB_SEED})
-    file_input, _ = load_organizer_file(FIXTURES)
+    # The same weights on both sides: the database stores the fixture's equal split as percentages
+    # (33.334 / 33.333 / 33.333), which is not exactly equal thirds.
+    weights = {c.key: float(c.weight) for c in Criterion.objects.filter(event=event)}
+    file_input, _ = load_organizer_file(FIXTURES, weights=weights)
     fl = pipeline.compare(file_input, ["m2", "raw_mean", "zscore"], config={"cv_seed": LAB_SEED})
     project_id = {str(r.object_id): r.external_id
                   for r in FixtureRef.objects.filter(kind="project", duplicate_of="")}

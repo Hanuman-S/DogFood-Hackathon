@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from accounts.models import ApiToken
 from events.models import Event
+from judge import api as judge_api
 from projects import api as projects_api
 from public import views as public_views
 
@@ -33,6 +34,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / ".dogfood.toml"
 
 T1_ROUTES = ("gallery", "submit")
 T2_ROUTES = ("judge_scores", "peer_scores", "csv_export")
+UNIMPLEMENTED_ROUTES = ("csv_export",)
 
 
 @pytest.fixture(scope="module")
@@ -86,10 +88,14 @@ def test_the_gallery_answers_200_to_an_anonymous_get(config):
     assert response.status_code == 200
 
 
-@pytest.mark.parametrize("key", T2_ROUTES)
-def test_the_t2_routes_are_honestly_unimplemented(config, key):
-    """They must 404, not answer something that looks like success. When T2 lands, this test is
-    the reminder to also move `claimed` in `.dogfood.toml`."""
+def test_the_judge_scores_routes_resolve_with_no_redirect(config):
+    path = config["routes"]["judge_scores"]
+    assert resolve(path.split("?")[0]).func is judge_api.judge_scores
+
+
+@pytest.mark.parametrize("key", UNIMPLEMENTED_ROUTES)
+def test_the_unimplemented_routes_are_honestly_unimplemented(config, key):
+    """They must 404 until implemented."""
     with pytest.raises(Resolver404):
         resolve(config["routes"][key].split("?")[0])
 
@@ -103,8 +109,9 @@ def test_a_closed_event_refuses_the_checkers_post_to_the_advertised_path(config,
     now = timezone.now()
     Event.objects.create(
         slug=slug, name="Closed", is_published=True,
-        starts_at=now - timedelta(days=6), submissions_open_at=now - timedelta(days=6),
-        submissions_close_at=now - timedelta(days=3), judging_ends_at=now + timedelta(days=4),
+        starts_at=now - timedelta(days=6, hours=1), submissions_open_at=now - timedelta(days=6),
+        submissions_close_at=now - timedelta(days=3), judging_starts_at=now - timedelta(days=2),
+        judging_ends_at=now + timedelta(days=4),
     )
     _, raw = ApiToken.issue(make_user(), "checker-shaped")
     response = Client().post(
@@ -116,3 +123,77 @@ def test_a_closed_event_refuses_the_checkers_post_to_the_advertised_path(config,
     # The checker passes on any 4xx. The portal gives a 409 that says why.
     assert response.status_code == 409
     assert response.json()["error"] == "submissions_closed"
+
+
+@pytest.mark.django_db
+def test_judge_sees_own_scores_acceptance_contract(config, make_user):
+    """T2 check 1: judge sees own scores (200)."""
+    judge_a = make_user(email="judge_a@dogfood.local")
+    from accounts.roles import Role
+    from events.models import EventMembership
+    now = timezone.now()
+    event = Event.objects.create(
+        slug="test-event", name="Test Event", is_published=True,
+        starts_at=now - timedelta(days=2, hours=1), submissions_open_at=now - timedelta(days=2),
+        submissions_close_at=now - timedelta(hours=1), judging_starts_at=now - timedelta(minutes=30),
+        judging_ends_at=now + timedelta(days=2),
+    )
+    EventMembership.objects.create(event=event, user=judge_a, role=Role.JUDGE)
+    _, raw = ApiToken.issue(judge_a, "judge_a")
+    
+    path = config["routes"]["judge_scores"]
+    response = Client().get(
+        path,
+        HTTP_AUTHORIZATION=f"Bearer {raw}",
+    )
+    assert response.status_code == 200
+    assert "scores" in response.json()
+
+
+@pytest.mark.django_db
+def test_judge_cannot_see_peer_scores_acceptance_contract(config, make_user):
+    """T2 check 2: judge cannot see peer scores (403)."""
+    judge_b = make_user(email="judge_b@dogfood.local")
+    from accounts.roles import Role
+    from events.models import EventMembership
+    now = timezone.now()
+    event = Event.objects.create(
+        slug="test-event", name="Test Event", is_published=True,
+        starts_at=now - timedelta(days=2, hours=1), submissions_open_at=now - timedelta(days=2),
+        submissions_close_at=now - timedelta(hours=1), judging_starts_at=now - timedelta(minutes=30),
+        judging_ends_at=now + timedelta(days=2),
+    )
+    EventMembership.objects.create(event=event, user=judge_b, role=Role.JUDGE)
+    _, raw = ApiToken.issue(judge_b, "judge_b")
+    
+    probe = config["routes"]["peer_scores"]
+    response = Client().get(
+        probe,
+        HTTP_AUTHORIZATION=f"Bearer {raw}",
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_participant_blocked_from_judge_scores_acceptance_contract(config, make_user):
+    """T2 check 3: participant is blocked from judge scores (403)."""
+    participant = make_user(email="participant@dogfood.local")
+    from accounts.roles import Role
+    from events.models import EventMembership
+    now = timezone.now()
+    event = Event.objects.create(
+        slug="test-event", name="Test Event", is_published=True,
+        starts_at=now - timedelta(days=2, hours=1), submissions_open_at=now - timedelta(days=2),
+        submissions_close_at=now - timedelta(hours=1), judging_starts_at=now - timedelta(minutes=30),
+        judging_ends_at=now + timedelta(days=2),
+    )
+    EventMembership.objects.create(event=event, user=participant, role=Role.PARTICIPANT)
+    _, raw = ApiToken.issue(participant, "participant")
+    
+    path = config["routes"]["judge_scores"]
+    response = Client().get(
+        path,
+        HTTP_AUTHORIZATION=f"Bearer {raw}",
+    )
+    assert response.status_code == 403
+

@@ -54,7 +54,9 @@ def test_the_fixture_scores_are_imported_against_judge_memberships():
     event = Event.objects.get()
     keys = {k for s in data["scores"] for k in s["criteria"]}
     assert set(Criterion.objects.filter(event=event).values_list("key", flat=True)) == keys
-    assert all(c.weight == 1 for c in Criterion.objects.all())
+    # The file gives no weights, so they are equal percentages that add up to exactly 100.
+    weights = [str(c.weight) for c in Criterion.objects.order_by("order")]
+    assert weights == ["33.334", "33.333", "33.333"]
 
     # prj_41 is folded into prj_07, so a judge who reviewed both would have two reviews of one
     # project. The review of the kept submission wins; the other is reported, never dropped silently.

@@ -40,7 +40,9 @@ def event_json(event, detail=False):
         "starts_at": _dt(event.starts_at),
         "submissions_open_at": _dt(event.submissions_open_at),
         "submissions_close_at": _dt(event.submissions_close_at),
+        "judging_starts_at": _dt(event.judging_starts_at),
         "judging_ends_at": _dt(event.judging_ends_at),
+        "results_at": _dt(event.results_at),
         "min_team_size": event.min_team_size,
         "max_team_size": event.max_team_size,
     }

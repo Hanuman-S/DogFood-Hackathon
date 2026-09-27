@@ -111,14 +111,33 @@ def test_a_submitted_project_must_carry_a_submission_time(event, user):
 # --- event timeline ---------------------------------------------------------------------------
 
 
-def _event(**dates):
-    now = timezone.now()
+def _event(now=None, **dates):
+    """A valid, strictly ordered timeline, with `dates` overriding any of it."""
+    now = now or timezone.now()
     values = dict(
-        starts_at=now, submissions_open_at=now, submissions_close_at=now + timedelta(days=1),
+        starts_at=now - timedelta(hours=1), submissions_open_at=now,
+        submissions_close_at=now + timedelta(days=1), judging_starts_at=now + timedelta(days=1, hours=1),
         judging_ends_at=now + timedelta(days=2),
     )
     values.update(dates)
     return Event.objects.create(slug=f"e-{Event.objects.count()}", name="E", **values)
+
+
+def test_a_strictly_ordered_timeline_is_accepted_with_or_without_results():
+    now = timezone.now()
+    _event()
+    _event(results_at=now + timedelta(days=3))
+
+
+@pytest.mark.parametrize("field, offset", [
+    ("starts_at", timedelta(0)),  # event starts == submissions open
+    ("judging_starts_at", timedelta(days=1)),  # judging starts == submissions close
+    ("judging_ends_at", timedelta(days=1, hours=1)),  # judging ends == judging starts
+    ("results_at", timedelta(days=2)),  # results == judging ends
+])
+def test_each_date_must_be_strictly_after_the_one_before(field, offset):
+    now = timezone.now()
+    refused(lambda: _event(now=now, **{field: now + offset}))
 
 
 def test_submissions_cannot_close_before_they_open():
@@ -131,9 +150,9 @@ def test_a_zero_length_submission_window_is_refused():
     refused(lambda: _event(submissions_open_at=now, submissions_close_at=now))
 
 
-def test_judging_cannot_end_before_submissions_close():
+def test_judging_cannot_start_before_submissions_close():
     now = timezone.now()
-    refused(lambda: _event(submissions_close_at=now + timedelta(days=3)))
+    refused(lambda: _event(submissions_close_at=now + timedelta(days=1, hours=2)))
 
 
 def test_track_names_are_unique_within_an_event_but_not_across_events(make_event):

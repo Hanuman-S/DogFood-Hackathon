@@ -5,8 +5,16 @@
 <table class="kv">
   {% for m in judging %}
   <tr>
-    <th scope="row">{{ m.event.name }}</th>
-    <td>{% for jt in m.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="dim">every track</span>{% endfor %} <span class="faint">&middot; {{ m.event.get_phase_display|lower }}</span></td>
+    <th scope="row"><a href="{% url 'judge:event' m.event.slug %}">{{ m.event.name }}</a></th>
+    <td>
+      {% for jt in m.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="dim">every track</span>{% endfor %}
+      <span class="faint">&middot; {{ m.event.get_phase_display|lower }}</span>
+      &middot; <a class="btn btn--small" href="{% url 'judge:event' m.event.slug %}">judge &rarr;</a>
+    </td>
+  </tr>
+  {% empty %}
+  <tr>
+    <td colspan="2" class="dim">You have not been assigned as a judge for any event yet.</td>
   </tr>
   {% endfor %}
 </table>

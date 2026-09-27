@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ criterion.label }} · rubric{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar">
+    <h1 class="frame__title">{{ criterion.label }}</h1>
+    <span class="frame__meta">{{ event.name }} &middot; {{ criterion.weight|floatformat:"-3" }}% &middot; scale {{ criterion.min_value }}&ndash;{{ criterion.max_value }}</span>
+  </header>
+  <div class="frame__body">
+    <p class="dim">what judges read for this criterion. a written description for each level makes a 3 mean the same thing to every judge; leave a level empty to skip it.</p>
+    {% if locked %}<p class="faint">the rubric is locked, but wording can still change: it does not change anyone's score. this edit is logged.</p>{% endif %}
+  </div>
+  <div class="frame__body">
+    {% include "_form_errors.html" %}
+    <form class="form" method="post" novalidate>
+      {% csrf_token %}
+      {% include "_field.html" with field=form.label cmd="criterion --label" %}
+      {% include "_field.html" with field=form.description cmd="--description" %}
+      <p class="section-title">levels</p>
+      {% for field in form.level_fields %}
+        {% include "_field.html" with field=field cmd=field.label %}
+      {% endfor %}
+      <div class="actions">
+        <button class="btn" type="submit">save</button>
+        <a class="btn btn--ghost" href="{% url 'organizer:rubric' event.slug %}">back to the rubric</a>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock %}

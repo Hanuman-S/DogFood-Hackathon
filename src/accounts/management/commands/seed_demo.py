@@ -16,6 +16,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import ApiToken, User, digest_token
 from accounts.roles import Role
+from scoring.services import create_standard_rubric
 
 DEMO_EVENT_SLUG = "dogfood-live-demo"
 CLOSED_EVENT_SLUG = "dogfood-archive-2026"  # closed: .dogfood.toml's submit route points here
@@ -107,15 +108,17 @@ class Command(BaseCommand):
                     "3. Submit it before the deadline. You can still edit it until then.\n\n"
                     "All times are UTC."
                 ),
-                starts_at=now - timedelta(days=1),
+                starts_at=now - timedelta(days=1, hours=1),
                 submissions_open_at=now - timedelta(days=1),
                 submissions_close_at=now + timedelta(days=30),
+                judging_starts_at=now + timedelta(days=31),
                 judging_ends_at=now + timedelta(days=37),
                 max_team_size=4,
                 is_published=True,
                 created_by=organizer,
             )
             _staff(event, organizer)
+            create_standard_rubric(event)
             tools = Track.objects.create(event=event, name="Developer tools", order=1,
                                          description="Things that make building things faster.")
             Track.objects.create(event=event, name="Security", order=2,
@@ -168,14 +171,17 @@ class Command(BaseCommand):
                 name="Dogfood Archive 2026",
                 tagline="A finished event: submissions are closed, so everything is read-only.",
                 description="Kept so you can see what a closed event looks like.",
-                starts_at=now - timedelta(days=6),
+                starts_at=now - timedelta(days=6, hours=1),
                 submissions_open_at=now - timedelta(days=6),
                 submissions_close_at=now - timedelta(days=3),
+                # judging is under way, so the judge portal has something live to show
+                judging_starts_at=now - timedelta(days=2),
                 judging_ends_at=now + timedelta(days=4),
                 is_published=True,
                 created_by=organizer,
             )
             _staff(event, organizer)
+            create_standard_rubric(event)
             track = Track.objects.create(event=event, name="Open category", order=1)
             team = Team.objects.create(event=event, name="Night Owls", captain=participant)
             _compete(event, team, participant)

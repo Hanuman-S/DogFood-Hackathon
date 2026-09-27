@@ -11,10 +11,11 @@ def markdown_filter(text):
 
 
 @register.filter
-def utc(value):
-    """Every time the portal shows is UTC, and says so."""
+def utc(value, empty="--"):
+    """Every time the portal shows is UTC, and says so. `{{ when|utc:"to be announced" }}`
+    names what an empty date means."""
     if not value:
-        return "--"
+        return empty
     return value.strftime("%Y-%m-%d %H:%M UTC")
 
 
@@ -58,3 +59,12 @@ def initials(name):
 def gallery_url(filters, **overrides):
     query = filters.as_query(**overrides)
     return f"/projects?{query}" if query else "/projects"
+
+
+@register.filter
+def get_item(mapping, key):
+    """`{{ load|get_item:judge.pk }}`: a dict lookup by a variable key."""
+    try:
+        return mapping.get(key)
+    except AttributeError:
+        return None

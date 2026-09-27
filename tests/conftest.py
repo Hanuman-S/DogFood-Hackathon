@@ -22,9 +22,9 @@ def _staff_pool_event():
     event, _ = Event.objects.get_or_create(
         slug="test-judging-pool",
         defaults=dict(
-            name="Judging pool", starts_at=now - timedelta(days=1),
+            name="Judging pool", starts_at=now - timedelta(days=1, hours=1),
             submissions_open_at=now - timedelta(days=1), submissions_close_at=now + timedelta(days=2),
-            judging_ends_at=now + timedelta(days=5),
+            judging_starts_at=now + timedelta(days=2, hours=1), judging_ends_at=now + timedelta(days=5),
         ),
     )
     return event
@@ -85,15 +85,23 @@ def make_event(make_user):
     from events.models import Event, EventMembership
 
     def make(slug=None, organizer=None, published=True, max_team_size=4, **dates):
+        """Dates default to an event whose submissions are open; any may be overridden. Defaults
+        for the later dates follow the earlier ones, so the timeline stays strictly ordered."""
         now = timezone.now()
         organizer = organizer or make_user(role=Role.ORGANIZER)
+        opens = dates.get("submissions_open_at", now - timedelta(days=1))
+        closes = dates.get("submissions_close_at", now + timedelta(days=2))
+        judging_starts = dates.get("judging_starts_at", closes + timedelta(hours=1))
+        judging_ends = dates.get("judging_ends_at", max(now + timedelta(days=5), judging_starts + timedelta(days=1)))
         event = Event.objects.create(
             slug=slug or f"event-{Event.objects.count() + 1}",
             name="Test Hack",
-            starts_at=dates.get("starts_at", now - timedelta(days=1)),
-            submissions_open_at=dates.get("submissions_open_at", now - timedelta(days=1)),
-            submissions_close_at=dates.get("submissions_close_at", now + timedelta(days=2)),
-            judging_ends_at=dates.get("judging_ends_at", now + timedelta(days=5)),
+            starts_at=dates.get("starts_at", opens - timedelta(hours=1)),
+            submissions_open_at=opens,
+            submissions_close_at=closes,
+            judging_starts_at=judging_starts,
+            judging_ends_at=judging_ends,
+            results_at=dates.get("results_at"),
             max_team_size=max_team_size,
             is_published=published,
             created_by=organizer,

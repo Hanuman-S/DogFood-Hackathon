@@ -4,14 +4,18 @@ Permission rule: an event is managed by its organizers (the creator becomes one 
 and by any platform admin. `can_manage` is the only definition of that rule.
 """
 
+import secrets
+from datetime import timedelta
+
 from django.db import IntegrityError, transaction
 from django.http import Http404
+from django.utils import timezone
 
 from accounts.models import User
 from accounts.roles import Role, forget_cached_roles, is_organizer_of, roles_in
 from core import audit
 from core.models import AuditAction
-from events.models import Event, EventMembership, JudgeTrack
+from events.models import Event, EventMembership, JudgeInvite, JudgeTrack
 
 
 class EventRuleError(Exception):
@@ -66,9 +70,34 @@ def update_event(request, event, form):
     return event
 
 
+def publish_blockers(event):
+    """What must be fixed before `event` can be published, as sentences. Empty = ready.
+
+    Publishing opens the event to participants, so it must say what it is, and it must already
+    have a rubric: the rubric locks when submissions close, and an event that reached its close
+    without one could never be judged. Tracks and prizes stay optional (no tracks = one open
+    category).
+    """
+    blockers = []
+    if not event.tagline.strip():
+        blockers.append("add a tagline.")
+    if not event.description.strip():
+        blockers.append("add a description.")
+    criteria = list(event.criteria.all())
+    if not criteria:
+        blockers.append("set up the rubric (judges need it, and it locks when submissions close).")
+    elif sum(c.weight for c in criteria) != 100:
+        blockers.append("the rubric's weights must add up to 100%.")
+    return blockers
+
+
 def set_published(request, event, published):
     if event.is_published == published:
         return event
+    if published:
+        blockers = publish_blockers(event)
+        if blockers:
+            raise EventRuleError("not published yet: " + " ".join(blockers))
     event.is_published = published
     event.save(update_fields=["is_published", "updated_at"])
     action = AuditAction.EVENT_PUBLISHED if published else AuditAction.EVENT_UNPUBLISHED
@@ -134,7 +163,8 @@ def _staff_candidate(event, email, role):
     user = User.objects.filter(email=email.strip().lower()).first()
     if user is None:
         raise EventRuleError(
-            "No account has that email. They can sign up, or an admin can create the account."
+            "No account has that email. Use 'invite by link' instead: they create their account "
+            "from the link."
         )
     if user.is_platform_admin:
         raise EventRuleError("Platform admins can already manage every event.")
@@ -194,6 +224,152 @@ def add_judge(request, event, email, tracks=()):
     return membership
 
 
+# --- judge invite links ------------------------------------------------------------------------
+
+INVITE_TTL = timedelta(days=7)
+INVITE_PREFIX = "jinv_"
+
+
+def judge_invite_problem(event, user):
+    """Why `user` (an existing account) cannot become a judge of `event`, or ""."""
+    if user.is_platform_admin:
+        return "Platform admins can already manage every event."
+    held = roles_in(user, event)
+    if Role.JUDGE in held:
+        return f"{user.email} is already a judge in this event."
+    if Role.PARTICIPANT in held:
+        return (
+            f"{user.email} is competing in this event, so they cannot also judge it "
+            "(conflict of interest)."
+        )
+    return ""
+
+
+def create_judge_invite(request, event, email, tracks=()):
+    """A one-time link that makes whoever holds it -- signed in as `email` -- a judge of `event`.
+
+    Returns (invite, raw_token). Only the token's SHA-256 digest is stored, so the link can be
+    shown exactly once. Inviting the same email again revokes the pending link first.
+    """
+    from accounts.models import digest_token, normalize_email
+
+    email = normalize_email(email)
+    existing = User.objects.filter(email=email).first()
+    if existing is not None:
+        problem = judge_invite_problem(event, existing)
+        if problem:
+            raise EventRuleError(problem)
+    now = timezone.now()
+    raw = INVITE_PREFIX + secrets.token_urlsafe(32)
+    with transaction.atomic():
+        replaced = JudgeInvite.objects.filter(
+            event=event, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+        ).update(revoked_at=now)
+        invite = JudgeInvite.objects.create(
+            event=event, email=email, digest=digest_token(raw), created_by=request.user,
+            expires_at=now + INVITE_TTL,
+        )
+        invite.tracks.set(tracks)
+    audit.record(
+        AuditAction.JUDGE_INVITED, request=request, subject=event.slug, email=email,
+        tracks=[t.name for t in tracks], expires=invite.expires_at.isoformat(),
+        replaced_pending=replaced, has_account=existing is not None,
+    )
+    return invite, raw
+
+
+def find_judge_invite(raw):
+    """The invite behind a link, whatever its state, or None."""
+    from accounts.models import digest_token
+
+    if not raw or not raw.startswith(INVITE_PREFIX):
+        return None
+    return (
+        JudgeInvite.objects.select_related("event", "created_by")
+        .prefetch_related("tracks").filter(digest=digest_token(raw)).first()
+    )
+
+
+def judge_invite_state(invite, now=None):
+    """'open', 'accepted', 'revoked' or 'expired'."""
+    if invite.accepted_at:
+        return "accepted"
+    if invite.revoked_at:
+        return "revoked"
+    if invite.expires_at <= (now or timezone.now()):
+        return "expired"
+    return "open"
+
+
+class _InviteRefused(Exception):
+    """Carries a refusal out of the transaction, so its audit row is written after the rollback."""
+
+
+def accept_judge_invite(request, raw, user):
+    """Make `user` a judge of the invite's event, with its tracks, and use the link up.
+
+    Refused -- with an audit row -- unless the link is open, `user` is the invited email, and
+    `user` may judge this event. The invite row is locked, so one link is accepted at most once.
+    """
+    from accounts.models import digest_token
+
+    try:
+        with transaction.atomic():
+            invite = (
+                JudgeInvite.objects.select_for_update(of=("self",)).select_related("event", "created_by")
+                .filter(digest=digest_token(raw or "")).first()
+            )
+            if invite is None:
+                raise _InviteRefused(None, "This invite link is not valid.")
+            state = judge_invite_state(invite)
+            if state != "open":
+                raise _InviteRefused(invite, f"This invite link has been {state}.")
+            if user.email != invite.email:
+                raise _InviteRefused(
+                    invite, f"This invite is for {invite.email}. Log out, then open the link again."
+                )
+            problem = judge_invite_problem(invite.event, user)
+            if problem:
+                raise _InviteRefused(invite, problem)
+            try:
+                with transaction.atomic():
+                    membership = EventMembership.objects.create(
+                        event=invite.event, user=user, role=Role.JUDGE, added_by=invite.created_by
+                    )
+            except IntegrityError:
+                # The conflict-of-interest constraint beat the check above.
+                raise _InviteRefused(invite, "You cannot judge this event (conflict of interest).")
+            for track in invite.tracks.all():
+                JudgeTrack.objects.create(membership=membership, track=track)
+            invite.accepted_at, invite.accepted_by = timezone.now(), user
+            invite.save(update_fields=["accepted_at", "accepted_by"])
+    except _InviteRefused as refusal:
+        invite, reason = refusal.args
+        audit.record(
+            AuditAction.JUDGE_INVITE_REFUSED, request=request, actor=user,
+            subject=invite.event.slug if invite else "", email=user.email, reason=reason,
+        )
+        raise EventRuleError(reason) from None
+    forget_cached_roles(user)
+    audit.record(
+        AuditAction.JUDGE_INVITE_ACCEPTED, request=request, actor=user, subject=invite.event.slug,
+        email=user.email, invited_by=getattr(invite.created_by, "email", ""),
+    )
+    audit.record(
+        AuditAction.JUDGE_ADDED, request=request, actor=user, subject=invite.event.slug,
+        email=user.email, via="invite link",
+    )
+    return membership
+
+
+def revoke_judge_invite(request, event, invite):
+    if judge_invite_state(invite) != "open":
+        raise EventRuleError("That invite is no longer pending.")
+    invite.revoked_at = timezone.now()
+    invite.save(update_fields=["revoked_at"])
+    audit.record(AuditAction.JUDGE_INVITE_REVOKED, request=request, subject=event.slug, email=invite.email)
+
+
 def remove_judge(request, event, membership):
     """Take the judge role away. Their imported scores go with it (Score -> membership)."""
     email = membership.user.email
@@ -205,23 +381,71 @@ def remove_judge(request, event, membership):
 
 
 def extend_deadline(request, event, new_close, reason):
-    """Move the close later for everyone. Judging keeps its length: if the new close would pass
-    the judging end, the judging end moves by the same amount. The first close is kept in
+    """Move the close later for everyone. The timeline stays in order: if the new close reaches
+    the judging start, judging (start and end) and the results date, if set, all move later by
+    the same amount, so judging keeps its length. The first close is kept in
     `original_submissions_close_at` so pages can say what changed."""
     old_close = event.submissions_close_at
     if new_close <= old_close:
         raise EventRuleError("An extension must move the close later. To bring it earlier, edit the settings.")
     if event.original_submissions_close_at is None:
         event.original_submissions_close_at = old_close
-    if new_close > event.judging_ends_at:
-        event.judging_ends_at = event.judging_ends_at + (new_close - old_close)
+    moved = {}
+    if new_close >= event.judging_starts_at:
+        shift = new_close - old_close
+        for name in ("judging_starts_at", "judging_ends_at", "results_at"):
+            old = getattr(event, name)
+            if old is not None:
+                setattr(event, name, old + shift)
+                moved[name] = [old.isoformat(), getattr(event, name).isoformat()]
     event.submissions_close_at = new_close
     event.save(update_fields=[
-        "submissions_close_at", "original_submissions_close_at", "judging_ends_at", "updated_at",
+        "submissions_close_at", "original_submissions_close_at", "judging_starts_at",
+        "judging_ends_at", "results_at", "updated_at",
     ])
     audit.record(
         AuditAction.DEADLINE_EXTENDED, request=request, subject=event.slug,
-        old=old_close.isoformat(), new=new_close.isoformat(), reason=reason,
+        old=old_close.isoformat(), new=new_close.isoformat(), reason=reason, also_moved=moved,
+    )
+    return event
+
+
+def extend_judging(request, event, new_end, reason):
+    """Move the judging end later (judges may keep reviewing until then). The first end is kept
+    in `original_judging_ends_at`. If a results date is set and the new end reaches it, results
+    move by the same amount, so the timeline stays in order."""
+    old_end = event.judging_ends_at
+    from scoring.models import ResultSnapshot, SnapshotKind
+
+    if ResultSnapshot.objects.filter(event=event, kind=SnapshotKind.FINAL).exists():
+        # A final result is a record of judging as it closed; reopening judging under it would
+        # make that record describe a judging that never finished.
+        audit.record(
+            AuditAction.JUDGING_EXTENSION_REFUSED, request=request, subject=event.slug,
+            requested=new_end.isoformat(), reason="a final result exists",
+        )
+        raise EventRuleError(
+            "A final result has already been computed for this event, so judging can no longer "
+            "be extended."
+        )
+    if new_end <= old_end:
+        raise EventRuleError("An extension must move the judging end later.")
+    from core.deadlines import db_now
+
+    if new_end <= db_now():
+        raise EventRuleError("The new judging end must be in the future.")
+    if event.original_judging_ends_at is None:
+        event.original_judging_ends_at = old_end
+    moved = {}
+    if event.results_at is not None and new_end >= event.results_at:
+        old_results = event.results_at
+        event.results_at = old_results + (new_end - old_end)
+        moved["results_at"] = [old_results.isoformat(), event.results_at.isoformat()]
+    event.judging_ends_at = new_end
+    event.save(update_fields=["judging_ends_at", "original_judging_ends_at", "results_at", "updated_at"])
+    audit.record(
+        AuditAction.JUDGING_EXTENDED, request=request, subject=event.slug,
+        old=old_end.isoformat(), new=new_end.isoformat(), reason=reason, also_moved=moved,
     )
     return event
 
@@ -237,8 +461,11 @@ def grant_extension(request, event, team, until, reason):
 
     if until <= db_now():
         raise EventRuleError("An extension must end in the future.")
-    if until > event.judging_ends_at:
-        raise EventRuleError("An extension cannot run past the end of judging.")
+    if until >= event.judging_starts_at:
+        raise EventRuleError(
+            "An extension must end before judging starts "
+            f"({event.judging_starts_at:%Y-%m-%d %H:%M} UTC), so judges never see a moving target."
+        )
     TeamExtension.objects.update_or_create(
         team=team, defaults={"until": until, "reason": reason, "granted_by": request.user},
     )

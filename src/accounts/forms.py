@@ -96,6 +96,19 @@ class AccountCreateForm(SignupForm):
         self.fields["name"].widget.attrs.pop("autofocus", None)
 
 
+class InviteAccountForm(SignupForm):
+    """Account creation from a judge invite link: the email is the invited one and cannot be
+    changed, so the link can only ever create the account it was issued for."""
+
+    duplicate_email_message = "An account with this email already exists. Log in instead."
+
+    def __init__(self, *args, email, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["email"].initial = email
+        self.fields["email"].disabled = True
+        self.fields["name"].widget.attrs["placeholder"] = "your name as organizers should see it"
+
+
 class PasswordChangeForm(DjangoPasswordChangeForm):
     """Django's form (checks the old password, runs the validators), relabelled for the UI."""
 

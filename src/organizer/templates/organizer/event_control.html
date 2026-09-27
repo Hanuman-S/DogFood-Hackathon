@@ -17,7 +17,7 @@
       <div>
         <p class="dim">{{ event.tagline|default:"no tagline yet." }}</p>
         <ul class="timeline">
-          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc }}</span></li>{% endfor %}
+          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc:"to be announced" }}</span></li>{% endfor %}
         </ul>
       </div>
       <div class="stack">
@@ -27,10 +27,16 @@
             <input type="hidden" name="publish" value="0"><button class="btn btn--ghost" type="submit">unpublish</button>
             <span class="faint">public at <a href="{% url 'public:event_detail' event.slug %}">/events/{{ event.slug }}</a></span>
           {% else %}
-            <input type="hidden" name="publish" value="1"><button class="btn" type="submit">publish</button>
+            <input type="hidden" name="publish" value="1"><button class="btn" type="submit"{% if publish_blockers %} disabled aria-describedby="publish-blockers"{% endif %}>publish</button>
             <span class="faint">only organizers can see it until then. <a href="{% url 'public:event_detail' event.slug %}">preview</a></span>
           {% endif %}
         </form>
+        {% if not event.is_published and publish_blockers %}
+        <div id="publish-blockers">
+          <p class="section-title">before publishing</p>
+          <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
         <table class="kv">
           <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
           <tr><th scope="row">projects</th><td>{{ projects|length }}</td></tr>
@@ -87,6 +93,36 @@
       </table>
     </div>
     {% endif %}
+  </section>
+
+  {# --- judging ----------------------------------------------------------- #}
+  <section class="frame" id="judging">
+    <header class="frame__bar">
+      <h2 class="frame__title">judging</h2>
+      <span class="frame__meta">{% if judging_window.is_open %}<span class="badge badge--on">open</span>{% elif judging_window.not_started %}<span class="badge">not started</span>{% else %}<span class="badge">closed</span>{% endif %}</span>
+    </header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">judging starts</th><td>{{ event.judging_starts_at|utc }}</td></tr>
+        <tr><th scope="row">judging ends</th><td>{{ event.judging_ends_at|utc }}</td></tr>
+        {% if event.original_judging_ends_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_judging_ends_at|utc }}</td></tr>{% endif %}
+        <tr><th scope="row">results</th><td>{{ event.results_at|utc:"to be announced" }}</td></tr>
+      </table>
+      <div class="actions">
+        <a class="btn btn--small" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
+        <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
+      </div>
+      <form class="form" method="post" action="{% url 'organizer:judging_extend' event.slug %}" novalidate>
+        {% csrf_token %}
+        <p class="section-title">extend judging</p>
+        {% include "_form_errors.html" with form=judging_form %}
+        <div class="grid-2">
+          {% include "_field.html" with field=judging_form.new_end cmd="judging --extend-to" %}
+          {% include "_field.html" with field=judging_form.reason cmd="--reason" %}
+        </div>
+        <div class="actions"><button class="btn btn--small" type="submit">extend judging</button><span class="faint">reopens judging if it has ended. a results date that would fall inside judging moves with it.</span></div>
+      </form>
+    </div>
   </section>
 
   {# --- settings ---------------------------------------------------------- #}
@@ -254,6 +290,24 @@
   </div>
 
 
+  {# --- rubric ------------------------------------------------------------ #}
+  <section class="frame" id="rubric">
+    <header class="frame__bar">
+      <h2 class="frame__title">rubric</h2>
+      <span class="frame__meta">{% if rubric_locked %}<span class="badge badge--warn">locked</span>{% else %}editable until submissions close{% endif %}</span>
+    </header>
+    <div class="frame__body stack">
+      {% if criteria %}
+      <table class="kv">
+        {% for c in criteria %}<tr><th scope="row">{{ c.label }}</th><td><span class="bright">{{ c.weight|floatformat:"-3" }}%</span> <span class="faint">&middot; scored {{ c.min_value }}&ndash;{{ c.max_value }}</span></td></tr>{% endfor %}
+      </table>
+      {% else %}
+      <p class="faint">no rubric yet. judges need one before they can score.</p>
+      {% endif %}
+      <div class="actions"><a class="btn btn--small" href="{% url 'organizer:rubric' event.slug %}">{% if rubric_locked %}view rubric{% elif criteria %}edit rubric{% else %}set up the rubric{% endif %}</a></div>
+    </div>
+  </section>
+
   {# --- judges ------------------------------------------------------------ #}
   <section class="frame" id="judges">
     <header class="frame__bar"><h2 class="frame__title">judges</h2><span class="frame__meta">{{ judges|length }} &middot; a judge here cannot compete here</span></header>
@@ -286,9 +340,31 @@
           {% for error in judge_form.tracks.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
         </div>
         {% endif %}
-        <div class="actions"><button class="btn" type="submit">add judge</button></div>
+        <div class="actions">
+          <button class="btn" type="submit">add judge</button>
+          <button class="btn btn--ghost" type="submit" formaction="{% url 'organizer:judge_invite_create' event.slug %}">invite by link</button>
+          <span class="faint">add judge: the email already has an account. invite by link: a one-time link, valid 7 days, that also lets them create the account.</span>
+        </div>
       </form>
     </div>
+    {% if judge_invites %}
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th>invite link for</th><th>tracks</th><th>status</th><th>by</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+        <tbody>
+        {% for inv, state in judge_invites %}
+          <tr>
+            <td>{{ inv.email }}</td>
+            <td class="dim">{% for t in inv.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td>
+            <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span> <span class="faint">{{ inv.accepted_at|utc }}</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
+            <td class="dim">{{ inv.created_by.name|default:"--" }}</td>
+            <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
   </section>
 
   {% if duplicates or import_duplicates %}

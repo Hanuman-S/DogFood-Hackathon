@@ -1,0 +1,2 @@
+{% comment %}A date box and a time box, side by side (events.forms.UTCDateTimeWidget).{% endcomment %}
+<div class="datetime">{% for widget in widget.subwidgets %}{% include widget.template_name %}{% endfor %}<span class="datetime__zone">UTC</span></div>

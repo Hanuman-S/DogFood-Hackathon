@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · judging progress{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">judging progress</h1>
+      <span class="frame__meta">{{ event.name }} &middot;
+        {% if window.is_open %}<span class="badge badge--on">judging open</span> <span class="faint">until {{ event.judging_ends_at|utc }}</span>{% elif window.not_started %}<span class="badge">starts {{ event.judging_starts_at|utc }}</span>{% else %}<span class="badge">judging ended</span>{% endif %}
+      </span>
+    </header>
+    <div class="frame__body">
+      <p class="faint">refreshes itself every 30 seconds<span data-refresh-status></span>. reviews count only once submitted. reassign gives a judge's unstarted reviews to other judges; started ones stay theirs.</p>
+    </div>
+  </section>
+  <div data-refresh-url="{% url 'organizer:progress' event.slug %}?partial=1" data-refresh-every="30" aria-live="polite">
+    {% include "organizer/_progress_tables.html" %}
+  </div>
+  <p class="actions">
+    <a class="btn btn--ghost" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
+    <a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to {{ event.name }}</a>
+  </p>
+</div>
+{% endblock %}

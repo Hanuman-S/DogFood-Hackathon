@@ -56,9 +56,9 @@ build step. `docker compose up --build` is the product; it must stay one command
   `compute_snapshot` must be `@transaction.non_atomic_requests`. Tests that call it use
   `@pytest.mark.django_db(transaction=True)`; never weaken that check to suit a test.
   `ResultSnapshot` is immutable and `Publication` append-only (Postgres triggers, in
-  `scoring/migrations/0003`).
-- **Honest claims.** `.dogfood.toml` claims only what `acceptance/run.py` verifies. The T2 routes
-  must 404 until T2 is real (`tests/test_acceptance_contract.py`). `acceptance/` is the
+  `scoring/migrations/0005`).
+- **Honest claims.** `.dogfood.toml` claims only what `acceptance/run.py` verifies. A T2 route
+  must 404 until it is real (`tests/test_acceptance_contract.py`; today only the CSV export). `acceptance/` is the
   organizers' and is read-only.
 
 ## Commands

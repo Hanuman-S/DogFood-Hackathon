@@ -3,6 +3,7 @@
 from django.http import Http404
 from django.shortcuts import get_object_or_404, render
 
+from accounts.roles import is_judge_of
 from events.models import Event
 from events.services import can_manage, get_visible_event
 from projects import gallery as gallery_query
@@ -28,6 +29,7 @@ def event_detail(request, slug):
             "tracks": event.visible_tracks(),
             "prizes": event.prizes.select_related("track"),
             "can_manage": can_manage(request.user, event),
+            "is_judge": is_judge_of(request.user, event),
             "submitted_count": event.projects.filter(status="submitted").count(),
             "team_count": event.teams.count(),
         },

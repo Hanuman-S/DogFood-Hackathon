@@ -99,6 +99,16 @@ rows are exactly as designed. Only "who may enter" became a question about membe
 - **judge / co-organizer:** an organizer of the event adds the account by email on the event's
   control page (judges optionally for chosen tracks). The service refuses anyone competing in that
   event, and the constraint backs it up.
+- **judges' work, per event:** the organizer assigns projects to judges on the assignment page
+  (constrained random, balanced, seeded and reproducible; see JUDGING.md) and follows progress on
+  a dashboard that refreshes itself. Both are organizer-only pages of that event.
+- **judge, by invite link:** for someone without an account (or to avoid typing one in), the
+  organizer creates a one-time link for an email, optionally for chosen tracks. It is shown once
+  (only its SHA-256 digest is stored, like API tokens), expires after 7 days, and works only for
+  that email: the invitee logs in as it, or creates the account from the link, even when public
+  sign-up is closed. Inviting the same email again cancels the old link; organizers can revoke a
+  pending one. Conflict of interest is checked when the link is made and again when it is
+  accepted, and every step (created, accepted, refused, revoked) is in the audit log.
 - **organizer of a new event:** create it, which needs `can_create_events`. A platform admin sets
   that flag when creating the account, or with `manage.py create_account --can-create-events`.
 - **platform admin:** another admin, or `manage.py create_account --admin` for the very first one
@@ -204,9 +214,14 @@ enforce the same rules.
 
 ### Events
 
-- Organizers can create any number of events. Each has a `slug` (`/events/<slug>`), UTC dates
-  (start, submissions open, submissions close, judging end), a minimum and maximum team size
-  (1–20), tracks, prizes and custom questions.
+- Organizers can create any number of events. Each has a `slug` (`/events/<slug>`), a tagline
+  and a description (both required), UTC dates (event start, submissions open, submissions close,
+  judging start, judging end, and an optional results date that may stay "to be announced"), a
+  minimum and maximum team size (1–20), tracks, prizes and custom questions.
+- **Dates are entered as a date box plus a time box**, not one combined datetime box: some
+  browsers' pickers set only the day of a combined box, leaving the month and year to be typed.
+  A date without a time is refused with "pick a time as well as the date" rather than guessed.
+  Autofill is off on date fields, so a new event starts with every date empty.
 - **All times are UTC**, stored and shown, and every date field is labelled so. We chose this
   over a per-event display timezone for simplicity.
 - **Who manages an event:** its organizers, meaning accounts holding the `organizer` role in
@@ -214,13 +229,17 @@ enforce the same rules.
   admin. Judges are added the same way, optionally for chosen tracks. For anyone else the event's
   management URLs return **404, not 403**, so nobody can probe which events exist.
 - **Visibility:** `is_published` is the only stored state. An unpublished event is invisible
-  (404) to everyone but its managers.
-- **Phase** (upcoming, submissions open, judging, finished) is computed from the dates on
-  every read, so it can never drift from them.
-- The database refuses impossible timelines with CHECK constraints: submissions must close
-  after they open, judging can't end before submissions close, and the event must start
-  before submissions close. The form checks the same things first, so organizers get a
-  readable error instead of a crash.
+  (404) to everyone but its managers. **Publishing is refused** until the event has a tagline, a
+  description and a rubric whose weights add up to 100%; the control page lists what is missing
+  and disables the button until then. The rubric is required because it locks when submissions
+  close: an event published without one could reach its close and never be judged.
+- **Phase** (upcoming, submissions open, submissions closed, judging, finished) is computed from
+  the dates on every read, so it can never drift from them. "Submissions closed" is the gap
+  between the close and the judging start, when organizers assign judges.
+- The database refuses impossible timelines with CHECK constraints: each date must come
+  strictly after the one before it (event starts < submissions open < submissions close <
+  judging starts < judging ends < results, when set). The form checks the same things first, so
+  organizers get a readable error on the right field instead of a crash.
 - **Nothing silently disappears.** A track that projects use, or a question that has answers,
   can be hidden but not deleted. An answered question's kind can't change, because that would
   change the meaning of every stored answer. The team-size limit can't drop below the size of
@@ -341,8 +360,8 @@ leak into another request, and it writes a `deadline_bypassed` audit row.
 
 | | What it does | Rules |
 | --- | --- | --- |
-| Extend for everyone | moves `submissions_close_at` later | must be later than the current close; the first close is kept in `original_submissions_close_at`; if the new close passes the judging end, the judging end moves by the same amount |
-| Extend for one team | a `TeamExtension(team, until, reason, granted_by)` row | must end after the event close, in the future, and before judging ends; can be revoked |
+| Extend for everyone | moves `submissions_close_at` later | must be later than the current close; the first close is kept in `original_submissions_close_at`; if the new close reaches the judging start, the judging start, judging end and results date (if set) all move by the same amount, so the timeline stays in order |
+| Extend for one team | a `TeamExtension(team, until, reason, granted_by)` row | must end after the event close, in the future, and before judging starts; can be revoked |
 
 Both are audited with their reason, and both are honoured by the service check and the
 trigger alike. The team sees a banner: "your team has an extension until …".
@@ -401,9 +420,10 @@ boot when `SEED_FIXTURES=1` (the default under compose), and by hand with
   - A judge who is also listed as a team member: kept as a judge, left off the team, and
     reported as a conflict of interest. The real file has none, but a test covers it.
   - A person on two teams in one event: kept on the first team, and reported.
-- **Derived dates.** The file gives only the close time, so the importer derives the open time
-  (72 hours before the close, or before the earliest submission) and the judging end (14 days
-  after the close), and reports both.
+- **Derived dates.** The file gives only the close time, so the importer derives the rest and
+  reports each: submissions open 72 hours before the close (or before the earliest submission),
+  the event starts an hour before that, judging starts an hour after the close and ends 14 days
+  after it. Results stay "to be announced".
 - **Past the deadline, on purpose.** The fixture event closed in March 2026, so the import runs
   inside the audited `deadline_bypass()`, the same path organizer tools use.
 - **Accounts.** Imported accounts use the demo password in demo mode. Otherwise they have no

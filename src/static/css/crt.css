@@ -540,3 +540,223 @@ a.tag-chip:hover, .tag-chip--on { color: var(--fg-bright); border-color: var(--a
 @media (prefers-reduced-motion: reduce) {
   .cursor { animation: none; }
 }
+
+/* --- rubric ---------------------------------------------------------------- */
+/* The live weight total turns red while it is not exactly 100 (app.js). */
+.weight-total--off { color: var(--err); text-shadow: 0 0 6px rgba(255, 143, 191, 0.3); }
+/* A key-value list whose values are prose (level descriptions) reads left-aligned. */
+.kv--prose td { text-align: left; }
+
+/* --- date + time (events.forms.UTCDateTimeWidget) -------------------------- */
+.datetime { display: grid; grid-template-columns: minmax(0, 1fr) 8.5em auto; gap: 6px; align-items: center; }
+.datetime__zone { font-size: 11px; color: var(--fg-faint); }
+input[type="date"], input[type="time"] {
+  width: 100%;
+  padding: 10px 12px;
+  font: 14px/1.4 var(--font-mono);
+  color: var(--fg-bright);
+  background: var(--bg-input);
+  caret-color: var(--accent);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  text-shadow: var(--glow);
+  color-scheme: dark;
+}
+/* A button that cannot be used yet (e.g. publish, until the checklist below it is done). */
+.btn:disabled, .btn[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+
+/* --- assignments ----------------------------------------------------------- */
+.assignee { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 3px 0; }
+.assignee + .assignee { border-top: 1px dashed var(--line-soft); }
+select.select--small { width: auto; max-width: 16em; padding: 4px 8px; font-size: 12px; }
+
+/* --- progress -------------------------------------------------------------- */
+progress.meter { appearance: none; width: 100%; height: 14px; border: 1px dashed var(--line); border-radius: var(--radius); background: var(--bg-input); color: var(--accent); }
+progress.meter::-webkit-progress-bar { background: var(--bg-input); }
+progress.meter::-webkit-progress-value { background: var(--accent); box-shadow: 0 0 10px rgba(180, 167, 255, 0.35); }
+progress.meter::-moz-progress-bar { background: var(--accent); }
+.secret code.pre { white-space: pre-wrap; }
+/* --- modern progress circle & rating controls ---------------------------- */
+
+.progress-circle-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 12px auto 20px;
+  position: relative;
+}
+
+.progress-circle {
+  position: relative;
+  width: 130px;
+  height: 130px;
+}
+
+.progress-circle svg {
+  transform: rotate(-90deg);
+  width: 130px;
+  height: 130px;
+}
+
+.progress-circle__bg {
+  fill: none;
+  stroke: var(--line-soft);
+  stroke-width: 8;
+}
+
+.progress-circle__meter {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 400ms ease;
+  filter: drop-shadow(0 0 8px rgba(180, 167, 255, 0.65));
+}
+
+.progress-circle__value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.progress-circle__pct {
+  font-family: var(--font-pixel);
+  font-size: 32px;
+  line-height: 1;
+  color: var(--fg-bright);
+  letter-spacing: 1px;
+}
+
+.progress-circle__label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.rating-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 6px 0 2px;
+}
+
+.rating-btn {
+  position: relative;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  height: 38px;
+  padding: 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  font: 14px/1 var(--font-mono);
+  transition: all 120ms ease;
+  user-select: none;
+}
+
+.rating-btn:hover {
+  border-color: var(--accent);
+  color: var(--fg-bright);
+  background: rgba(180, 167, 255, 0.1);
+}
+
+.rating-btn input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rating-btn:has(input[type="radio"]:checked),
+.rating-btn.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(180, 167, 255, 0.4);
+}
+
+.progress-bar-wrap {
+  padding: 12px 14px;
+  background: var(--bg-input);
+  border: 1px dashed var(--line);
+  margin-bottom: 18px;
+}
+
+.progress-bar-text {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--fg-bright);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0 0 4px;
+  text-shadow: var(--glow);
+  letter-spacing: 0.5px;
+}
+
+/* --- judging layout & sticky rating sidebar ------------------------------ */
+
+.judge-layout {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  align-items: start;
+}
+
+.judge-sticky-sidebar {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-soft) transparent;
+}
+
+.judge-sticky-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.judge-sticky-sidebar::-webkit-scrollbar-thumb {
+  background: var(--line-soft);
+  border-radius: 3px;
+}
+
+.judge-sticky-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.judge-project-header {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: start;
+}
+
+.judge-project-thumb {
+  width: 100%;
+}
+
+@media (max-width: 960px) {
+  .judge-layout {
+    grid-template-columns: 1fr;
+  }
+  .judge-sticky-sidebar {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+  .judge-project-header {
+    grid-template-columns: 1fr;
+  }
+}
+

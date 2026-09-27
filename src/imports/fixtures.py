@@ -33,6 +33,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from django.utils.text import slugify
 
 from accounts.models import User, normalize_email
@@ -43,7 +44,8 @@ from core.models import AuditAction
 from events.models import Event, EventMembership, JudgeTrack, Track
 from imports.models import FixtureRef
 from projects.models import Project, Status
-from scoring.models import Criterion, Score, ScoreItem
+from scoring.services import split_equally
+from scoring.models import Assignment, AssignmentSource, Criterion, Score, ScoreItem
 from teams.models import Team, TeamMember
 
 SOURCE = "dogfood-fixtures"
@@ -138,9 +140,13 @@ class Importer:
         close = parse_time(raw["submissions_close"])
         submitted = [parse_time(p["submitted_at"]) for p in self.data["projects"] if p.get("submitted_at")]
         opens = min([close - timedelta(hours=72)] + [t - timedelta(hours=1) for t in submitted])
+        starts = opens - timedelta(hours=1)
+        judging_starts = close + timedelta(hours=1)
         judging_ends = close + timedelta(days=14)
         self.report.derived += [
+            f"event starts {starts:%Y-%m-%d %H:%M} UTC (1 h before submissions open)",
             f"submissions open {opens:%Y-%m-%d %H:%M} UTC (72 h before the close, or before the first submission)",
+            f"judging starts {judging_starts:%Y-%m-%d %H:%M} UTC (1 h after the close)",
             f"judging ends {judging_ends:%Y-%m-%d %H:%M} UTC (14 days after the close)",
         ]
         slug = base = slugify(raw.get("name") or raw["id"])[:50] or "imported-event"
@@ -152,9 +158,16 @@ class Importer:
             slug=slug,
             name=raw.get("name") or raw["id"],
             tagline="Imported from the organizers' shared dataset.",
-            starts_at=opens,
+            description=(
+                "The DOGFOOD organizers' shared fixture data (`acceptance/fixtures.json`), imported "
+                "at boot so every portal is compared on the same projects, judges and reviews.\n\n"
+                "The file gives only the submission close; the other dates are derived and listed "
+                "in the import report."
+            ),
+            starts_at=starts,
             submissions_open_at=opens,
             submissions_close_at=close,
+            judging_starts_at=judging_starts,
             judging_ends_at=judging_ends,
             min_team_size=1,
             max_team_size=min(20, max(sizes)),
@@ -296,9 +309,8 @@ class Importer:
 
 
     def import_scores(self, event, judges):
-        """Criteria from the score keys (weight 1: the file gives none), then one Score per review.
-
-        Nothing reads these yet -- they are here so T2 starts from the organizers' real data.
+        """Criteria from the score keys (equal weights: the file gives none), then one submitted Score
+        per review, each with the Assignment it implies.
         """
         rows = self.data.get("scores") or []
         keys = []
@@ -307,10 +319,13 @@ class Importer:
                 if key not in keys:
                     keys.append(key)
         criteria = {}
-        for order, key in enumerate(keys, start=1):
+        # The file gives no weights, so every criterion counts equally: weights are percentages
+        # that add up to 100, and three decimals make that 33.334 / 33.333 / 33.333.
+        weights = split_equally(len(keys))
+        for order, (key, weight) in enumerate(zip(keys, weights), start=1):
             criterion, created = Criterion.objects.get_or_create(
                 event=event, key=key,
-                defaults={"label": key.replace("_", " ").capitalize(), "weight": 1, "order": order},
+                defaults={"label": key.replace("_", " ").capitalize(), "weight": weight, "order": order},
             )
             self.report.count("created" if created else "existing", "criterion")
             criteria[key] = criterion
@@ -340,7 +355,17 @@ class Importer:
                     f"that judge already reviewed {ref.duplicate_of}, whose review is kept"
                 )
                 continue
-            score = Score.objects.create(judge=membership, project=project, comment=raw.get("comment") or "")
+            # A review in the file is a finished one, and it implies the judge was asked to do
+            # it: so it is imported as submitted, together with the assignment behind it (in
+            # file order within each judge's queue). T2's progress counts then start from truth.
+            score = Score.objects.create(
+                judge=membership, project=project, comment=raw.get("comment") or "",
+                submitted_at=timezone.now(),
+            )
+            Assignment.objects.create(
+                judge=membership, project=project, source=AssignmentSource.IMPORT,
+                position=membership.assignments.count(),
+            )
             for key, value in (raw.get("criteria") or {}).items():
                 item = ScoreItem(score=score, criterion=criteria[key], value=value)
                 item.full_clean()

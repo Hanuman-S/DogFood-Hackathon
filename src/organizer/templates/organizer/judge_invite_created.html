@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}judge invite · {{ event.name }}{% endblock %}
+{% block content %}
+<section class="frame">
+  <header class="frame__bar"><h1 class="frame__title">judge invite link</h1><span class="frame__meta">{{ event.name }}</span></header>
+  <div class="frame__body stack">
+    <div class="secret" role="status">
+      <code id="judge-invite-link">{{ link }}</code>
+      <button class="btn btn--small" type="button" data-copy="#judge-invite-link" hidden>copy</button>
+    </div>
+    <p class="msg msg--warning">copy it now: this is the only time the link is shown. only a hash of it is stored.</p>
+    <table class="kv">
+      <tr><th scope="row">for</th><td>{{ invite.email }}</td></tr>
+      <tr><th scope="row">tracks</th><td>{% for t in invite.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>
+      <tr><th scope="row">valid until</th><td>{{ invite.expires_at|utc }}</td></tr>
+    </table>
+    <p class="dim">send it to them however you like. it works once, only for {{ invite.email }}: they log in as that email, or create the account from the link. inviting the same email again cancels this link.</p>
+    <div class="actions"><a class="btn" href="{% url 'organizer:event' event.slug %}#judges">back to {{ event.name }}</a></div>
+  </div>
+</section>
+{% endblock %}
