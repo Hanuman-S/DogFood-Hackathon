@@ -99,6 +99,38 @@ def to_csv(header, rows) -> bytes:
     return ("﻿" + buffer.getvalue()).encode("utf-8")
 
 
+def describe_detail(detail, project_names=None):
+    """An audit row's detail as a line a person can read: "old: ... -> new: ...; email: ...".
+    The reason has a column of its own, and the event is implied by the file."""
+    project_names = project_names or {}
+
+    def show(key, value):
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if key == "project" and isinstance(value, int):
+            return project_names.get(value, f"#{value}")
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value) if value else "none"
+        if isinstance(value, dict):
+            parts = []
+            for k, v in value.items():
+                if isinstance(v, list) and len(v) == 2:
+                    parts.append(f"{k.replace('_', ' ')} {v[0]} -> {v[1]}")
+                else:
+                    parts.append(f"{k.replace('_', ' ')} {v}")
+            return "; ".join(parts) if parts else "none"
+        return str(value).replace("+00:00", "Z")
+
+    parts = []
+    if "old" in detail and "new" in detail:
+        parts.append(f"{show('old', detail['old'])} -> {show('new', detail['new'])}")
+    for key, value in detail.items():
+        if key in ("event", "reason", "old", "new") or value in ("", None, [], {}):
+            continue
+        parts.append(f"{key.replace('_', ' ')}: {show(key, value)}")
+    return "; ".join(parts)
+
+
 # --- the sheets -----------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -480,8 +512,10 @@ class EventExport:
         # another event's rows (names are unique per event, not across events).
         slug = self.event.slug
         entries = AuditLog.objects.filter(Q(subject=slug) | Q(detail__event=slug)).order_by("created_at", "pk")
-        return (["at", "who", "action", "action code", "subject", "detail", "ip"],
-                [(e.created_at, e.actor_email, e.get_action_display(), e.action, e.subject, e.detail, e.ip)
+        names = {p.pk: p.name for p in self.projects}
+        return (["at", "who", "action", "reason", "what", "subject", "action code", "detail (raw)", "ip"],
+                [(e.created_at, e.actor_email, e.get_action_display(), (e.detail or {}).get("reason", ""),
+                  describe_detail(e.detail or {}, names), e.subject, e.action, e.detail, e.ip)
                  for e in entries])
 
     # --- output -----------------------------------------------------------------------------------

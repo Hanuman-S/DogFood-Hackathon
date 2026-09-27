@@ -6,7 +6,9 @@ and organizes the demo events, two accounts that judge them, and one that compet
     python manage.py seed_demo
 
 Runs on every container boot when DEMO_MODE=1, so it is create-only: an account or token that
-already exists is left exactly as it is (a password someone changed is not reset). It refuses
+already exists is left exactly as it is (a password someone changed is not reset). The one
+exception is a fixed demo token someone revoked on the account page: it is reactivated, because
+.dogfood.toml and the acceptance checker depend on those exact tokens. It refuses
 to run at all unless DEMO_MODE=1 -- the guard lives here, not in the entrypoint, so calling the
 command by hand cannot bypass it.
 """
@@ -95,8 +97,13 @@ class Command(BaseCommand):
                 state = "exists"
 
             raw = settings.DEMO_TOKENS.get(key) or ""
-            if raw and not ApiToken.objects.filter(digest=digest_token(raw)).exists():
-                ApiToken.issue(user, name="demo token", raw=raw)
+            if raw:
+                existing = ApiToken.objects.filter(digest=digest_token(raw)).first()
+                if existing is None:
+                    ApiToken.issue(user, name="demo token", raw=raw)
+                elif existing.revoked_at is not None:
+                    existing.revoked_at = None
+                    existing.save(update_fields=["revoked_at"])
             rows.append((key, role, email, raw, state))
 
         event_state = self._seed_event()

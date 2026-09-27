@@ -56,9 +56,16 @@ def create_event(request, form):
     return event
 
 
+def _audit_value(value):
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value if isinstance(value, (bool, int, float, type(None))) else str(value)
+
+
 def update_event(request, event, form):
     changed = form.changed_data
     old_close = Event.objects.values_list("submissions_close_at", flat=True).get(pk=event.pk)
+    before = Event.objects.filter(pk=event.pk).values(*[f for f in changed if hasattr(Event, f)]).first() or {}
     event = form.save()
     if "submissions_close_at" in changed and event.submissions_close_at != old_close:
         audit.record(
@@ -66,7 +73,10 @@ def update_event(request, event, form):
             old=old_close.isoformat(), new=event.submissions_close_at.isoformat(),
         )
     if changed:
-        audit.record(AuditAction.EVENT_UPDATED, request=request, subject=event.slug, fields=changed)
+        # What changed, from what to what (so the audit trail reads without a database client).
+        values = {f: [_audit_value(before.get(f)), _audit_value(getattr(event, f, None))] for f in before}
+        audit.record(AuditAction.EVENT_UPDATED, request=request, subject=event.slug, fields=changed,
+                     changes=values)
     return event
 
 
@@ -114,7 +124,8 @@ def save_part(request, event, form, kind):
     part.save()
     audit.record(
         AuditAction.EVENT_PART_CHANGED, request=request, subject=event.slug,
-        kind=kind, id=part.pk, change="created" if created else "edited",
+        kind=kind, id=part.pk, name=str(part), change="created" if created else "edited",
+        fields=[] if created else form.changed_data,
     )
     return part
 
@@ -124,7 +135,7 @@ def set_part_hidden(request, event, part, kind, hidden):
     part.save(update_fields=["is_hidden"])
     audit.record(
         AuditAction.EVENT_PART_CHANGED, request=request, subject=event.slug,
-        kind=kind, id=part.pk, change="hidden" if hidden else "shown",
+        kind=kind, id=part.pk, name=str(part), change="hidden" if hidden else "shown",
     )
 
 
@@ -140,11 +151,11 @@ def delete_part(request, event, part, kind):
         )
     if kind == "question" and part.answers.exists():
         raise EventRuleError("This question already has answers, so it can only be hidden.")
-    pk = part.pk
+    pk, name = part.pk, str(part)
     part.delete()
     audit.record(
         AuditAction.EVENT_PART_CHANGED, request=request, subject=event.slug,
-        kind=kind, id=pk, change="deleted",
+        kind=kind, id=pk, name=name, change="deleted",
     )
 
 

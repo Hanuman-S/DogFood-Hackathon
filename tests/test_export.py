@@ -241,7 +241,7 @@ def test_the_audit_sheet_has_this_events_rows_only(judged, make_event, client_fo
     AuditLog.objects.create(action=AuditAction.PROJECT_SUBMITTED, subject="P0", detail={"event": other.slug})
     audit = as_dicts(sheet(client_for(judged.organizer), judged, "audit"))
     submitted = [r for r in audit if r["action code"] == "project_submitted"]
-    assert len(submitted) == 1 and judged.slug in submitted[0]["detail"]
+    assert len(submitted) == 1 and judged.slug in submitted[0]["detail (raw)"]
 
 
 # --- who may export ---------------------------------------------------------------------------

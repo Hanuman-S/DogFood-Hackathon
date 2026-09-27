@@ -5,6 +5,8 @@ event (or may create one), then `get_managed_event` narrows that to the organize
 event* and platform admins (404 for anyone else, so slugs cannot be probed).
 """
 
+from datetime import timedelta
+
 from django.contrib import messages
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
@@ -75,8 +77,12 @@ def _control(request, event, status=200, **forms):
         "question_form": forms.get("question_form") or QuestionForm(event=event),
         "organizer_form": forms.get("organizer_form") or AddOrganizerForm(),
         "judge_form": forms.get("judge_form") or AddJudgeForm(event=event),
-        "extend_form": forms.get("extend_form") or ExtendDeadlineForm(),
-        "judging_form": forms.get("judging_form") or ExtendJudgingForm(),
+        # Pre-filled one day past the current date, time included: the date and time are separate
+        # inputs, and picking only a date used to be refused ("pick a time as well").
+        "extend_form": forms.get("extend_form") or ExtendDeadlineForm(
+            initial={"new_close": event.submissions_close_at + timedelta(days=1)}),
+        "judging_form": forms.get("judging_form") or ExtendJudgingForm(
+            initial={"new_end": event.judging_ends_at + timedelta(days=1)}),
         "judging_window": judging_window(event),
         "extension_form": forms.get("extension_form") or TeamExtensionForm(event=event),
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),

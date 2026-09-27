@@ -90,7 +90,20 @@
         <code id="new-token">{{ new_token.raw }}</code>
         <button class="btn btn--small" type="button" data-copy="#new-token" hidden>copy</button>
       </div>
+      <p class="dim">try it:</p>
+      <div class="secret"><code id="token-example" class="pre">curl -H "Authorization: Bearer {{ new_token.raw }}" {{ request.scheme }}://{{ request.get_host }}/api/me</code><button class="btn btn--small" type="button" data-copy="#token-example" hidden>copy</button></div>
       {% endif %}
+      <details class="more">
+        <summary>how to use a token</summary>
+        <p class="dim">a token lets a script act as you, with exactly your access: send it in the <code>Authorization: Bearer &lt;token&gt;</code> header of each request (it does not work in a browser address bar). no cookies or CSRF token are needed. revoke it here the moment you stop using it or it leaks; a revoked token gets 401 at once.</p>
+        <dl class="code-row">
+          <dt>GET /api/me</dt><dd>who you are, and your role in each event</dd>
+          <dt>GET /api/events, /api/projects</dt><dd>events and the gallery</dd>
+          <dt>POST /api/events/&lt;slug&gt;/projects<br>PATCH /api/projects/&lt;id&gt;<br>POST /api/projects/&lt;id&gt;/submit</dt><dd>participants: your team's project</dd>
+          <dt>GET, POST /api/judge/scores</dt><dd>judges: your own reviews</dd>
+          <dt>GET /api/export.csv?event=&lt;slug&gt;&amp;sheet=&lt;name&gt;<br>GET /api/export.zip?event=&lt;slug&gt;</dt><dd>organizers: the event's export</dd>
+        </dl>
+      </details>
       <form class="form form--inline" method="post" action="{% url 'accounts:token_create' %}" novalidate>
         {% csrf_token %}
         {% include "_field.html" with field=token_form.name cmd="token create --name" %}

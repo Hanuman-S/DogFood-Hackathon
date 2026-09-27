@@ -23,6 +23,14 @@
   document.addEventListener("input", function (e) { if (e.target.form) dirty = true; });
   document.addEventListener("change", function (e) { if (e.target.form) dirty = true; });
   document.addEventListener("submit", function () { dirty = false; });
+  // A page with a big form (the project editor) asks before leaving with unsaved changes.
+  if (document.querySelector("form[data-guard-unsaved]")) {
+    window.addEventListener("beforeunload", function (e) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    });
+  }
 
   // Countdowns: <span data-countdown="<close ISO>" data-now="<server now ISO>">.
   // Time left is computed against the server's clock (offset from the page's render time),
