@@ -645,7 +645,15 @@ go-ahead.
     flags are not used
 - DATA-MODEL.md tables for `EventScoringConfig`, `ResultSnapshot` and `Publication`, with their
   triggers.
+- *(Added after S3.)* **The exact-tie policy.** An ordinal rank breaks exact ties by input order.
+  In the database, input order is creation order: the earliest submission first. That is the
+  stated tie-break for ordinal ranks, and the ordinal rank is internal. Public results must show
+  **shared** ranks for exact ties, competition style: =12, =12, 14.
+- *(Added after S3.)* **Operator note.** An account referenced by a snapshot or a publication
+  cannot be deleted (PROTECT). Deactivate it instead (`is_active=False`).
 - No change to `.dogfood.toml`.
+- *(Deferred after S3.)* S4 is written once, in the final docs pass, against the complete T2
+  system. It is not started with the engine phases.
 
 ## Future work (not in T2's engine phases)
 

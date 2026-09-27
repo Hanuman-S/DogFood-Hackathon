@@ -272,4 +272,20 @@ score entry, no results pages, no publishing service or UI, no CSV export, no se
 - The plan: R17, R18 and R21 amendments, and `docs/t2-scoring-plan.md` refreshed.
 
 **Verification:** see the S3 summary.
-## S4: docs (not started)
+
+### After S3
+- `score_event` names every project "name (fixture id)" where the importer recorded one, else
+  "name (#pk)". The folded duplicate is "kept name, duplicate (prj_41)". Judges are shown by
+  email and tracks by name, including in the exclusion, flag and mover lines. No bare database id
+  is printed. The engine CLI, which reads files, is unchanged because its ids are the file's own.
+- For the final docs pass (also in the plan's S4 list):
+  - **The exact-tie policy.** An ordinal rank breaks exact ties by input order; in the database
+    that is creation order, the earliest submission first. That is the stated tie-break, and the
+    ordinal rank is internal. Public results must show **shared** ranks for exact ties,
+    competition style: =12, =12, 14.
+  - **Operator note.** Accounts referenced by snapshots or publications cannot be deleted
+    (PROTECT). Deactivate them instead (`is_active=False`).
+
+## S4: docs (deferred)
+Deferred by the user. The docs are written once, in the final docs pass, against the complete T2
+system. See the S4 list in `docs/t2-scoring-plan.md`.

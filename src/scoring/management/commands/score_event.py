@@ -65,7 +65,7 @@ class Command(BaseCommand):
                 raise CommandError(f"permission_denied (403): {error}") from error
             except ScoringError as error:
                 raise CommandError(f"{error.code} ({error.status}): {error.detail}") from error
-            self._print(snapshot.comparison_result)
+            self._print(event, snapshot.comparison_result, services.build_input(event))
             self.stdout.write(f"# saved {snapshot.kind} snapshot {snapshot.pk} (input sha256 {snapshot.input_hash})")
             for key, value in snapshot.diagnostics.items():
                 self.stdout.write(f"# {key}: {value}")
@@ -78,10 +78,11 @@ class Command(BaseCommand):
             result = pipeline.compare(inp, [primary, *cfg.compare], config=cfg)
         except (EngineError, ScoringError) as error:
             raise CommandError(str(error)) from error
-        self._print(result)
+        self._print(event, result, inp)
         self.stdout.write("# not saved (use --save preview|final --as <email> to store a snapshot)")
 
-    def _print(self, comparison):
+    def _print(self, event, comparison, inp):
+        """Projects as "name (fixture id)" or "name (#pk)", judges by email, tracks by name."""
         buffer = io.StringIO()
-        print_comparison(comparison, buffer)
+        print_comparison(comparison, buffer, labels=services.display_labels(event, inp))
         self.stdout.write(buffer.getvalue(), ending="")

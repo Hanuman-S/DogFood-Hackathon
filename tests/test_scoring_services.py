@@ -7,6 +7,7 @@ suit a test.
 
 import io
 import json
+import re
 from datetime import timedelta
 
 import pytest
@@ -512,6 +513,36 @@ def test_score_event_without_save_writes_nothing(scored_event):
     assert "method m2 v1 | baseline raw_mean" in out.getvalue()
     assert "raw_rank" in out.getvalue() and "not saved" in out.getvalue()
     assert (ResultSnapshot.objects.count(), AuditLog.objects.count()) == before
+
+
+@pytest.mark.django_db
+def test_score_event_names_projects_never_bare_ids():
+    """Fixture projects show as "name (fixture id)", the folded duplicate as "..., duplicate
+    (prj_41)", judges by email, tracks by name; no bare database id anywhere in the table."""
+    event = fixture_event()
+    out = io.StringIO()
+    call_command("score_event", event.slug, stdout=out)
+    text = out.getvalue()
+    kept = Project.objects.get(pk=FixtureRef.objects.get(kind="project", external_id="prj_07").object_id)
+    assert f"{kept.name} (prj_07)" in text
+    assert f"{kept.name}, duplicate (prj_41)" in text
+    table = [line for line in text.splitlines() if line[:4].strip().isdigit()]
+    assert len(table) == 40
+    assert all("(prj_" in line for line in table)
+    track = event.tracks.first()
+    assert track.name in text
+    assert "@" in text.split("# excluded judge ")[1].split(":")[0]   # the flat judge, by email
+    excluded = [line for line in text.splitlines() if line.startswith("# excluded")]
+    assert excluded and all(not re.search(r"(kept: |submission of |flat judge )\d", line) for line in excluded)
+    assert f"(kept: {kept.name} (prj_07))" in text
+
+
+@pytest.mark.django_db
+def test_project_without_a_fixture_id_is_named_with_its_pk(scored_event):
+    out = io.StringIO()
+    call_command("score_event", scored_event.slug, stdout=out)
+    project = scored_event.projects_list[0]
+    assert f"{project.name} (#{project.pk})" in out.getvalue()
 
 
 @TX

@@ -117,6 +117,28 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
                        duplicates=duplicates, excluded=tuple(excluded))
 
 
+def display_labels(event, inp: EngineInput) -> dict:
+    """Readable names for the ids in an engine input, for printed output (never bare database
+    ids): a project is "name (fixture id)" where the importer recorded one, else "name (#pk)"; a
+    duplicate the importer folded in is "kept name, duplicate (fixture id)"; a judge is their
+    email; a track its name."""
+    from events.models import EventMembership, Track
+
+    rows = {str(p.pk): p for p in Project.objects.filter(event=event)}
+    fixture_ids = {
+        str(ref.object_id): ref.external_id
+        for ref in FixtureRef.objects.filter(source=FIXTURE_SOURCE, kind=FixtureRef.Kind.PROJECT,
+                                             duplicate_of="", object_id__in=[p.pk for p in rows.values()])
+    }
+    projects = {pk: f"{p.name} ({fixture_ids.get(pk, f'#{pk}')})" for pk, p in rows.items()}
+    for dup_id, kept in inp.duplicates.items():
+        kept_name = rows[kept].name if kept in rows else f"#{kept}"
+        projects[dup_id] = f"{kept_name}, duplicate ({dup_id.removeprefix('dup:')})"
+    judges = {str(m.pk): m.user.email for m in EventMembership.objects.filter(event=event).select_related("user")}
+    tracks = {str(t.pk): t.name for t in Track.objects.filter(event=event)}
+    return {"projects": projects, "judges": judges, "tracks": tracks}
+
+
 def input_hash(inp: EngineInput) -> str:
     return hashlib.sha256(dumps(inp).encode("utf-8")).hexdigest()
 

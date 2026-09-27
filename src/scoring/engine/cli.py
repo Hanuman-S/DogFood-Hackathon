@@ -20,6 +20,7 @@ for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 
 import argparse  # noqa: E402
 import json  # noqa: E402
+import re  # noqa: E402
 import sys  # noqa: E402
 from collections import Counter  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -64,16 +65,33 @@ def print_methods(out):
         print(f"{m['name']:<16} v{m['version']:<6} {caps}", file=out)
 
 
-def print_comparison(result, out):
-    """The primary method's ranking, with the baseline's rank and every other method's rank."""
+def print_comparison(result, out, labels=None):
+    """The primary method's ranking, with the baseline's rank and every other method's rank.
+
+    `labels` ({"projects": {id: text}, "judges": {...}, "tracks": {...}}) replaces ids in the
+    output with readable names; the portal passes it so no bare database id is ever shown."""
+    labels = labels or {}
+    project = _labeller(labels.get("projects"))
+    judge = _labeller(labels.get("judges"))
+    track = _labeller(labels.get("tracks"))
+
+    def review(review_id):
+        judge_id, _, project_id = review_id.partition(":")  # judge ids never contain ':'
+        return f"{judge(judge_id)} on {project(project_id)}"
+
+    def excluded(ex):
+        return {"project": project, "judge": judge, "review": review}.get(ex.kind, str)(ex.id)
+
     primary = result.results[result.primary]
     base = result.baseline
     others = [m for m in result.methods if m != result.primary]
     group_size = Counter((p.component, p.tie_group) for p in primary.projects)
     several = len(primary.components) > 1
     rows = primary.by_project()
+    width = max([14] + [len(project(p.project_id)) for p in primary.projects])
+    track_width = max([10] + [len(track(p.track_id)) for p in primary.projects if p.track_id])
     print(f"method {primary.method} v{primary.method_version} | baseline {base}", file=out)
-    header = f"{'rank':>5} {'tie':>4}  {'project':<14} {'track':<10} {'n':>2} {'score':>16}"
+    header = f"{'rank':>5} {'tie':>4}  {'project':<{width}} {'track':<{track_width}} {'n':>2} {'score':>16}"
     header += "".join(f" {rank_column(m):>10}" for m in others) + f" {'chg':>4}  flags"
     if several:
         header = "comp " + header
@@ -84,7 +102,8 @@ def print_comparison(result, out):
             continue
         tied = "=" if group_size[(p.component, p.tie_group)] > 1 else " "
         score = f"{p.score:.3f}" + (f" +-{p.se:.3f}" if p.se is not None else "")
-        line = f"{p.rank:>4}{tied} {p.tie_group:>4}  {p.project_id:<14} {str(p.track_id or '-'):<10} {p.n_reviews:>2} {score:>16}"
+        where = track(p.track_id) if p.track_id else "-"
+        line = f"{p.rank:>4}{tied} {p.tie_group:>4}  {project(p.project_id):<{width}} {where:<{track_width}} {p.n_reviews:>2} {score:>16}"
         line += "".join(f" {_fmt(row.ranks[m]):>10}" for m in others)
         line += f" {_signed(row.change_vs_baseline[result.primary]):>4}  {','.join(p.flags)}"
         print((f"{p.component:>4} " if several else "") + line, file=out)
@@ -106,11 +125,11 @@ def print_comparison(result, out):
         if "lambda_reason" in component:
             print(f"# component {component['component']}: {component['lambda_reason']}", file=out)
     for ex in primary.excluded:
-        print(f"# excluded {ex.kind} {ex.id}: {ex.reason}", file=out)
+        print(f"# excluded {ex.kind} {excluded(ex)}: {_label_reason(ex.reason, project, judge)}", file=out)
     for flag in primary.flags["reviews"]:
-        print(f"# flagged review {flag['judge']}:{flag['project']}: {flag['flag']} "
+        print(f"# flagged review {judge(flag['judge'])} on {project(flag['project'])}: {flag['flag']} "
               f"(y {flag['y']:.2f}, fitted {flag['fitted']:.2f}, studentized {flag['studentized']:+.2f})", file=out)
-    flagged_judges = [(j.judge_id, ",".join(j.flags)) for j in primary.judges if j.flags]
+    flagged_judges = [(judge(j.judge_id), ",".join(j.flags)) for j in primary.judges if j.flags]
     if flagged_judges:
         print("# flagged judges: " + "; ".join(f"{j} ({f})" for j, f in flagged_judges), file=out)
     for note in primary.flags["notes"]:
@@ -124,8 +143,34 @@ def print_comparison(result, out):
     if result.movers:
         print(f"# biggest moves vs {base} (raw - corrected = judges' lean + shrinkage):", file=out)
         for m in result.movers:
-            print(f"#   {m['project_id']:<10} raw {m['raw_rank']:>3} -> {m['rank']:>3} ({m['change']:+d}); "
+            print(f"#   {project(m['project_id'])}: raw {m['raw_rank']} -> {m['rank']} ({m['change']:+d}); "
                   f"{m['explanation']}", file=out)
+
+
+# Where the engine's exclusion reasons name a project or judge id (see engine/filters.py).
+_REASON_IDS = (
+    (re.compile(r"(review of duplicate submission )(\S+)( \(kept: )([^)]+)(\))"), ("project", "project")),
+    (re.compile(r"(duplicate submission of )(\S+?)(;)"), ("project",)),
+    (re.compile(r"(judge also reviewed )(\S+?)(, the kept)"), ("project",)),
+    (re.compile(r"(by flat judge )(\S+)()$"), ("judge",)),
+)
+
+
+def _label_reason(reason, project, judge):
+    for pattern, kinds in _REASON_IDS:
+        def swap(match, kinds=kinds):
+            parts = list(match.groups())
+            for n, kind in enumerate(kinds):          # ids sit at groups 2, 4, ...
+                i = 1 + 2 * n
+                parts[i] = (project if kind == "project" else judge)(parts[i])
+            return "".join(parts)
+        reason = pattern.sub(swap, reason)
+    return reason
+
+
+def _labeller(mapping):
+    mapping = mapping or {}
+    return lambda value: mapping.get(value, str(value))
 
 
 RANK_COLUMNS = {"raw_mean": "raw_rank", "zscore": "z_rank"}
