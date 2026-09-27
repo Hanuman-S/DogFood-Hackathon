@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from django import forms
 
-from scoring.services import SCALE_MAX, SCALE_MIN, RubricRow
+from scoring.services import RubricRow
 
 
 class CriterionRowForm(forms.Form):
@@ -21,21 +21,11 @@ class CriterionRowForm(forms.Form):
         max_digits=6, decimal_places=3, min_value=Decimal("0.001"),
         widget=forms.NumberInput(attrs={"step": "0.001", "min": "0.001", "data-weight": ""}),
     )
-    min_value = forms.IntegerField(
-        min_value=SCALE_MIN, max_value=SCALE_MAX, initial=1,
-        widget=forms.NumberInput(attrs={"min": SCALE_MIN, "max": SCALE_MAX}),
-    )
-    max_value = forms.IntegerField(
-        min_value=SCALE_MIN, max_value=SCALE_MAX, initial=5,
-        widget=forms.NumberInput(attrs={"min": SCALE_MIN, "max": SCALE_MAX}),
-    )
-
     def to_row(self, order):
         data = self.cleaned_data
         return RubricRow(
             id=data.get("id"), key=data.get("key") or "", label=data.get("label") or "",
-            weight=data.get("weight"), min_value=data.get("min_value"),
-            max_value=data.get("max_value"), order=order, delete=bool(data.get("DELETE")),
+            weight=data.get("weight"), order=order, delete=bool(data.get("DELETE")),
         )
 
 
@@ -62,8 +52,7 @@ RubricFormSet = forms.formset_factory(
 
 def rubric_initial(criteria):
     return [
-        {"id": c.pk, "label": c.label, "key": c.key, "weight": c.weight.normalize(),
-         "min_value": c.min_value, "max_value": c.max_value}
+        {"id": c.pk, "label": c.label, "key": c.key, "weight": c.weight.normalize()}
         for c in criteria
     ]
 
@@ -84,7 +73,7 @@ class CriterionTextForm(forms.Form):
             self.fields[f"level_{level}"] = forms.CharField(
                 label=f"level {level}", required=False, max_length=300,
                 initial=criterion.level_descriptions.get(str(level), ""),
-                widget=forms.TextInput(attrs={"placeholder": f"what a {level} looks like (optional)"}),
+                widget=forms.TextInput(attrs={"placeholder": f"what a {level} looks like (optional, leave empty to skip)"}),
             )
 
     def level_fields(self):

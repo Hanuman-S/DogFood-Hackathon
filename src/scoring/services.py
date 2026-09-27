@@ -9,6 +9,9 @@ The rubric rules
   normalises the same way. Nothing has to add up to 100, so equal weights stay exactly equal --
   a rounded 33.334 / 33.333 / 33.333 would quietly favour the first criterion. The whole rubric
   is saved in one go (`save_rubric`).
+* **Every criterion is scored 1-5** (`SCALE_MIN`/`SCALE_MAX`, and a CHECK constraint): the scoring
+  engine's constants are tuned for that scale. Organizers may describe any of the five levels and
+  leave the rest empty.
 * **Locked from the submission close.** From `submissions_close_at` on (by the database clock,
   like the deadline), anything that changes the ranking is refused: weights, the scale's min and
   max, and adding or removing criteria. An extension for everyone moves the close, and the lock
@@ -75,7 +78,7 @@ FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
 WEIGHT_STEP = Decimal("0.001")  # Criterion.weight has three decimal places
 WEIGHT_MAX = Decimal("999.999")  # Criterion.weight: max_digits=6, decimal_places=3
-SCALE_MIN, SCALE_MAX = 0, 10  # a written anchor per level stays readable up to 11 levels
+SCALE_MIN, SCALE_MAX = 1, 5  # every criterion; the engine is tuned for this scale
 
 
 class RubricError(Exception):
@@ -101,7 +104,7 @@ def _refuse_if_locked(request, event, what):
             locked_since=event.submissions_close_at.isoformat(),
         )
         raise RubricLocked(
-            "the rubric is locked: submissions closed, so weights, scales and the set of "
+            "the rubric is locked: submissions closed, so weights and the set of "
             "criteria can no longer change. labels and level descriptions can still be edited."
         )
 
@@ -204,9 +207,9 @@ class RubricRow:
     key: str
     label: str
     weight: Decimal
-    min_value: int
-    max_value: int
-    order: int
+    min_value: int = SCALE_MIN
+    max_value: int = SCALE_MAX
+    order: int = 1
     delete: bool = False
 
 
@@ -236,10 +239,9 @@ def validate_rows(rows):
         if row.weight != row.weight.quantize(WEIGHT_STEP):
             raise RubricError(f"'{row.label}': weights have at most three decimal places.")
         row.weight = row.weight.quantize(WEIGHT_STEP)  # as stored: 60 -> 60.000
-        if not (SCALE_MIN <= row.min_value < row.max_value <= SCALE_MAX):
+        if (row.min_value, row.max_value) != (SCALE_MIN, SCALE_MAX):
             raise RubricError(
-                f"'{row.label}': the scale must run from a lower to a higher whole number, "
-                f"within {SCALE_MIN}-{SCALE_MAX}."
+                f"'{row.label}': every criterion is scored on the scale {SCALE_MIN}-{SCALE_MAX}."
             )
     return kept
 

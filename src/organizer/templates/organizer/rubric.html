@@ -12,9 +12,9 @@
       </span>
     </header>
     <div class="frame__body stack">
-      <p class="dim">weights are relative: each is a number above 0, and a criterion's share of the score is its weight over the sum (1 / 1 / 1 is three exact thirds; 2 / 1 / 1 is a half and two quarters). the share is shown as a percentage. judges score every criterion on its scale; the weighted average is what the results use.</p>
+      <p class="dim">weights are relative: each is a number above 0, and a criterion's share of the score is its weight over the sum (1 / 1 / 1 is three exact thirds; 2 / 1 / 1 is a half and two quarters). the share is shown as a percentage. judges score every criterion from 1 to 5; the weighted average is what the results use. use "levels" on a criterion to write what any of 1&ndash;5 means (optional, leave the rest empty).</p>
       {% if locked %}
-        <p class="dim">locked since submissions closed ({{ event.submissions_close_at|utc }}): weights, scales and the set of criteria are fixed for judging. labels, descriptions and level descriptions can still be edited, and every edit is logged.</p>
+        <p class="dim">locked since submissions closed ({{ event.submissions_close_at|utc }}): weights and the set of criteria are fixed for judging. labels, descriptions and level descriptions can still be edited, and every edit is logged.</p>
       {% else %}
         <p class="faint">editable until submissions close ({{ event.submissions_close_at|utc }}). after that it locks, so nobody can reweight the rubric once scores exist.</p>
       {% endif %}
@@ -24,14 +24,13 @@
     {% if locked %}
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th>criterion</th><th>key</th><th class="num">weight</th><th class="num">scale</th><th class="num">levels described</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+        <thead><tr><th>criterion</th><th>key</th><th class="num">weight</th><th class="num">levels described</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
         <tbody>
         {% for c in criteria %}
           <tr>
             <td>{{ c.label }}</td>
             <td class="dim">{{ c.key }}</td>
             <td class="num bright">{{ c.weight|floatformat:"-3" }} <span class="faint">({{ c.share }}%)</span></td>
-            <td class="num">{{ c.min_value }}&ndash;{{ c.max_value }}</td>
             <td class="num dim">{{ c.level_descriptions|length }}/{{ c.levels_total }}</td>
             <td class="num"><a class="btn btn--small btn--ghost" href="{% url 'organizer:criterion_text' event.slug c.pk %}">edit text</a></td>
           </tr>
@@ -48,7 +47,7 @@
       <form method="post" action="{% url 'organizer:rubric_standard' event.slug %}" class="actions">
         {% csrf_token %}
         <button class="btn" type="submit">use the standard rubric</button>
-        <span class="faint">functionality, quality and innovation on 1&ndash;5, weighted equally, with a written description for every level. the same criteria as the organizers' shared data.</span>
+        <span class="faint">functionality, quality and innovation, weighted equally, with a written description for every level. the same criteria as the organizers' shared data.</span>
       </form>
       <p class="faint">or build your own below.</p>
     </div>
@@ -59,7 +58,7 @@
       {% for e in formset.non_form_errors %}<p class="field__error">{{ e }}</p>{% endfor %}
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table">
-          <thead><tr><th>label</th><th>key</th><th class="num">weight</th><th class="num">share</th><th class="num">min</th><th class="num">max</th><th class="num">remove</th><th class="num"><span class="visually-hidden">text</span></th></tr></thead>
+          <thead><tr><th>label</th><th>key</th><th class="num">weight</th><th class="num">share</th><th class="num">remove</th><th class="num"><span class="visually-hidden">text</span></th></tr></thead>
           <tbody>
           {% for form in formset %}
             <tr{% if form.errors %} class="field--invalid"{% endif %}>
@@ -67,8 +66,6 @@
               <td><label class="visually-hidden" for="{{ form.key.id_for_label }}">key</label>{{ form.key }}{% for e in form.key.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td class="num"><label class="visually-hidden" for="{{ form.weight.id_for_label }}">relative weight</label>{{ form.weight }}{% for e in form.weight.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td class="num dim"><span data-weight-share>&ndash;</span></td>
-              <td class="num"><label class="visually-hidden" for="{{ form.min_value.id_for_label }}">lowest score</label>{{ form.min_value }}{% for e in form.min_value.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
-              <td class="num"><label class="visually-hidden" for="{{ form.max_value.id_for_label }}">highest score</label>{{ form.max_value }}{% for e in form.max_value.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td class="num"><label class="check" for="{{ form.DELETE.id_for_label }}">{{ form.DELETE }}<span class="visually-hidden">remove</span></label></td>
               <td class="num">{% if form.id.value %}<a class="btn btn--small btn--ghost" href="{% url 'organizer:criterion_text' event.slug form.id.value %}">levels</a>{% else %}<span class="faint">new</span>{% endif %}</td>
             </tr>

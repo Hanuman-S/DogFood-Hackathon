@@ -92,6 +92,8 @@ def test_a_rubric_of_relative_weights_saves_whatever_they_add_up_to(open_event):
     ([row("A", 50), row("A", 50)], "share the key"),
     ([row("A", 100, lo=5, hi=5)], "scale"),
     ([row("A", 100, lo=0, hi=11)], "scale"),
+    ([row("A", 100, lo=0, hi=10)], "scale"),
+    ([row("A", 100, lo=1, hi=10)], "scale"),
     ([row("A", "99.9995"), row("B", "0.0005")], "three decimal places"),
     ([row("A", 100, delete=True)], "at least one criterion"),
     ([], "at least one criterion"),
@@ -148,7 +150,7 @@ def test_scored_criteria_are_never_rewritten(open_event, make_team, make_user):
     _score(open_event, a, 5, make_team, make_user)
     with pytest.raises(RubricError, match="already has scores"):
         services.save_rubric(req(open_event), open_event, [row("A", 50, id=a.pk, key="a", delete=True), row("B", 100, id=b.pk, key="b")])
-    with pytest.raises(RubricError, match="outside 1-4"):
+    with pytest.raises(RubricError, match="scale 1-5"):
         services.save_rubric(req(open_event), open_event, [row("A", 50, id=a.pk, key="a", hi=4), row("B", 50, id=b.pk, key="b")])
     assert open_event.criteria.count() == 2
 
@@ -241,12 +243,12 @@ def formset_post(rows, action="save", initial=0):
     return data
 
 
-# The empty "add a criterion" row, as a browser submits it: only the scale's initial values.
-BLANK_ROW = {"min_value": "1", "max_value": "5"}
+# The empty "add a criterion" row, as a browser submits it.
+BLANK_ROW = {"label": ""}
 
 
 def line(label, weight, **extra):
-    return {"label": label, "weight": str(weight), "min_value": "1", "max_value": "5", **extra}
+    return {"label": label, "weight": str(weight), **extra}
 
 
 def test_only_this_events_organizers_reach_the_rubric(open_event, client_for, make_user):
@@ -318,3 +320,29 @@ def test_the_event_page_summarises_the_rubric(open_event, client_for):
     services.use_standard_rubric(req(open_event), open_event)
     page = client_for(open_event.organizer).get(f"/organizer/events/{open_event.slug}/")
     assert b"33.3%" in page.content and b"edit rubric" in page.content
+
+
+def test_every_criterion_is_scored_1_to_5_and_the_page_has_no_scale_fields(open_event, client_for):
+    client = client_for(open_event.organizer)
+    url = f"/organizer/events/{open_event.slug}/rubric"
+    page = client.get(url).content.decode()
+    assert "min_value" not in page and "max_value" not in page and "from 1 to 5" in page
+    # a hand-crafted post with another scale is ignored: the form has no such fields
+    data = formset_post([line("A", 1, min_value="0", max_value="10")])
+    assert client.post(url, data).status_code == 302
+    assert list(open_event.criteria.values_list("min_value", "max_value")) == [(1, 5)]
+
+
+def test_any_levels_may_be_described_and_the_rest_left_empty(open_event, client_for):
+    criterion = Criterion.objects.create(event=open_event, key="a", label="A", weight=1)
+    client = client_for(open_event.organizer)
+    url = f"/organizer/events/{open_event.slug}/rubric/{criterion.pk}"
+    form = client.get(url).content.decode()
+    assert all(f'name="level_{n}"' in form for n in range(1, 6)) and 'name="level_6"' not in form
+    response = client.post(url, {"label": "A", "description": "", "level_2": "barely runs", "level_5": "polished"})
+    assert response.status_code == 302
+    criterion.refresh_from_db()
+    assert criterion.level_descriptions == {"2": "barely runs", "5": "polished"}
+    assert client.post(url, {"label": "A", "description": ""}).status_code == 302
+    criterion.refresh_from_db()
+    assert criterion.level_descriptions == {}

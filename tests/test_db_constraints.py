@@ -176,3 +176,4 @@ def test_a_criterion_key_is_unique_per_event_and_min_is_below_max(event):
     Criterion.objects.create(event=event, key="quality", label="Quality")
     refused(lambda: Criterion.objects.create(event=event, key="quality", label="Again"))
     refused(lambda: Criterion.objects.create(event=event, key="odd", label="Odd", min_value=5, max_value=5))
+    refused(lambda: Criterion.objects.create(event=event, key="wide", label="Wide", min_value=0, max_value=10))

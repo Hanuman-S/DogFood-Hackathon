@@ -68,6 +68,8 @@ class Criterion(models.Model):
         "the sum of the event's weights (1 / 1 / 1 = exact thirds). Decimal, not float, so what "
         "the organizer typed is exactly what is stored.",
     )
+    # Always 1 and 5 (a CHECK constraint). Kept as columns because the judge portal, the
+    # engine input and the audit log read the scale from the criterion.
     min_value = models.SmallIntegerField(default=1)
     max_value = models.SmallIntegerField(default=5)
     order = models.PositiveSmallIntegerField(default=0)
@@ -85,9 +87,11 @@ class Criterion(models.Model):
         ordering = ["event", "order", "key"]
         constraints = [
             models.UniqueConstraint(fields=["event", "key"], name="criterion_unique_key_per_event"),
+            # Every criterion is scored 1-5: the scoring engine's tuning (ridge lambdas, variance
+            # floor, near-flat threshold) is in score units sized for that scale.
             models.CheckConstraint(
-                condition=Q(min_value__lt=models.F("max_value")),
-                name="criterion_min_below_max",
+                condition=Q(min_value=1, max_value=5),
+                name="criterion_scale_is_1_to_5",
             ),
             models.CheckConstraint(condition=Q(weight__gt=0), name="criterion_weight_positive"),
         ]

@@ -7,7 +7,7 @@
     <span class="frame__meta">{{ event.name }} &middot; weight {{ criterion.weight|floatformat:"-3" }} ({{ criterion.share }}% of the score) &middot; scale {{ criterion.min_value }}&ndash;{{ criterion.max_value }}</span>
   </header>
   <div class="frame__body">
-    <p class="dim">what judges read for this criterion. a written description for each level makes a 3 mean the same thing to every judge; leave a level empty to skip it.</p>
+    <p class="dim">what judges read for this criterion. judges score 1&ndash;5. describe any levels you like so a 3 means the same thing to every judge; leave the others empty and judges just see the number.</p>
     {% if locked %}<p class="faint">the rubric is locked, but wording can still change: it does not change anyone's score. this edit is logged.</p>{% endif %}
   </div>
   <div class="frame__body">
