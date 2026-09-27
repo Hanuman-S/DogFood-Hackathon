@@ -652,6 +652,12 @@ go-ahead.
 - *(Added after S3.)* **Operator note.** An account referenced by a snapshot or a publication
   cannot be deleted (PROTECT). Deactivate it instead (`is_active=False`).
 - No change to `.dogfood.toml`.
+- *(Added at the PR #1/#2 merge.)* **No judging extension after a final result**: refused, audited,
+  and the organizer is told why. **Weights are relative** (each above 0; share = weight / sum, shown
+  as a percentage); explain why 33.334 / 33.333 / 33.333 was wrong (a hidden functionality
+  tie-break). **`?judge=` resolution** (email, account id or fixture judge id; the caller, or an
+  organizer of that judge's event). **The archive demo event** (judging at boot, five projects, one
+  fixed-seed round).
 - *(Deferred after S3.)* S4 is written once, in the final docs pass, against the complete T2
   system. It is not started with the engine phases.
 

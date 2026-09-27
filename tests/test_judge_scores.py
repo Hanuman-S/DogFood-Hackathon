@@ -239,3 +239,152 @@ def test_pages_404_for_an_event_you_do_not_judge(world, make_event, make_user, c
     other = make_event()
     client = client_for(world["judge"])
     assert client.get(f"/judge/events/{other.slug}/").status_code == 404
+
+
+# --- ?judge= resolution ------------------------------------------------------------------------------------
+
+@pytest.fixture
+def judged(world, clock):
+    """world, with a submitted review by judge.one and a fixture judge id recorded for them."""
+    from imports.models import FixtureRef
+
+    clock(during(world["event"]))
+    services.save_review(None, world["membership"], world["projects"][0], FULL, "mine", submit=True)
+    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_99", object_id=world["membership"].pk)
+    return world
+
+
+@pytest.mark.parametrize("name", ["judge.one@example.org", "JUDGE.ONE@EXAMPLE.ORG", "{pk}", "jdg_99", " jdg_99 "])
+def test_a_judge_naming_themselves_is_answered(judged, name):
+    response = api(judged["judge"]).get("/api/judge/scores", {"judge": name.format(pk=judged["judge"].pk)})
+    assert response.status_code == 200
+    assert response.json()["judge"] == "judge.one@example.org" and response.json()["count"] == 1
+
+
+@pytest.mark.parametrize("name", ["judge.two@example.org", "{other_pk}", "jdg_98", "judge_a", "judge.one",
+                                  "Judge One", "", "*", "jdg_%"])
+def test_a_judge_naming_anyone_else_is_refused_and_audited(judged, make_user, name):
+    from imports.models import FixtureRef
+
+    other = make_user(role=Role.JUDGE, email="judge.two@example.org")
+    other_membership = EventMembership.objects.create(user=other, event=judged["event"], role=Role.JUDGE)
+    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_98", object_id=other_membership.pk)
+    before = AuditLog.objects.filter(action=AuditAction.ACCESS_DENIED).count()
+    response = api(judged["judge"]).get("/api/judge/scores", {"judge": name.format(other_pk=other.pk)})
+    assert response.status_code == 403
+    assert AuditLog.objects.filter(action=AuditAction.ACCESS_DENIED).count() == before + 1
+
+
+@pytest.mark.parametrize("name", ["judge.one@example.org", "{pk}", "jdg_99"])
+def test_an_organizer_of_the_event_may_name_any_of_its_judges(judged, name):
+    organizer = judged["event"].organizer
+    response = api(organizer).get("/api/judge/scores", {"judge": name.format(pk=judged["judge"].pk)})
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["judge"], body["read_as"], body["count"]) == ("judge.one@example.org", "organizer", 1)
+    assert body["scores"][0]["event"] == judged["event"].slug
+
+
+def test_an_organizer_sees_only_their_own_events_reviews_of_that_judge(judged, make_event, make_team, clock):
+    other_event = make_event()
+    project = Project.objects.create(team=make_team(other_event), event=other_event, name="Elsewhere",
+                                     status=Status.SUBMITTED, submitted_at=timezone.now())
+    elsewhere = EventMembership.objects.create(user=judged["judge"], event=other_event, role=Role.JUDGE)
+    Assignment.objects.create(judge=elsewhere, project=project, source=AssignmentSource.MANUAL)
+    services.create_standard_rubric(other_event)
+    clock(during(other_event))
+    services.save_review(None, elsewhere, project, FULL, submit=True)
+    body = api(judged["event"].organizer).get("/api/judge/scores", {"judge": str(judged["judge"].pk)}).json()
+    assert {s["event"] for s in body["scores"]} == {judged["event"].slug}
+
+
+def test_an_organizer_of_another_event_is_refused(judged, make_event):
+    stranger = make_event().organizer
+    for name in ("judge.one@example.org", str(judged["judge"].pk), "jdg_99"):
+        assert api(stranger).get("/api/judge/scores", {"judge": name}).status_code == 403
+
+
+# --- IDOR: one judge's reviews are never reachable by another -----------------------------------------------
+
+@pytest.fixture
+def two_judges(world, clock, make_user, make_team):
+    """judge A (world's judge) and judge B. B alone is assigned `b_only`; both share project 0."""
+    event = world["event"]
+    b_user = make_user(role=Role.JUDGE, email="judge.b2@example.org")
+    b = EventMembership.objects.create(user=b_user, event=event, role=Role.JUDGE)
+    b_only = Project.objects.create(team=make_team(event), event=event, name="B only",
+                                    status=Status.SUBMITTED, submitted_at=timezone.now())
+    shared = world["projects"][0]
+    for project in (b_only, shared):
+        Assignment.objects.create(judge=b, project=project, source=AssignmentSource.MANUAL)
+    clock(during(event))
+    b_review = services.save_review(None, b, b_only, FULL, "B secret notes", submit=True)
+    b_shared = services.save_review(None, b, shared, {"functionality": 1, "quality": 1, "innovation": 1},
+                                    "B on the shared project", submit=True)
+    return {**world, "b": b, "b_user": b_user, "b_only": b_only, "shared": shared,
+            "b_review": b_review, "b_shared": b_shared}
+
+
+def snapshot_of(score):
+    score.refresh_from_db()
+    return (score.comment, score.submitted_at,
+            sorted((i.criterion.key, str(i.value)) for i in score.items.select_related("criterion")))
+
+
+def test_api_get_never_returns_another_judges_review_whatever_the_parameters(two_judges):
+    client = api(two_judges["judge"])
+    for params in ({}, {"id": two_judges["b_review"].pk}, {"score": two_judges["b_review"].pk},
+                   {"project_id": two_judges["b_only"].pk}, {"event": two_judges["event"].slug}):
+        response = client.get("/api/judge/scores", params)
+        assert response.status_code == 200, params
+        ids = {s["id"] for s in response.json()["scores"]}
+        assert two_judges["b_review"].pk not in ids and two_judges["b_shared"].pk not in ids, params
+        assert b"B secret notes" not in response.content
+
+
+@pytest.mark.parametrize("method", ["patch", "put", "delete"])
+def test_api_has_no_edit_by_id_route(two_judges, method):
+    client = api(two_judges["judge"])
+    body = json.dumps({"id": two_judges["b_review"].pk, "comment": "hijacked"})
+    response = getattr(client, method)("/api/judge/scores", body, content_type="application/json")
+    assert response.status_code == 405
+    assert snapshot_of(two_judges["b_review"])[0] == "B secret notes"
+
+
+def test_api_post_cannot_write_another_judges_review(two_judges):
+    before = snapshot_of(two_judges["b_review"])
+    client = api(two_judges["judge"])
+    event = two_judges["event"].slug
+    # B's project, not assigned to A: refused, whatever id is attached
+    for extra in ({}, {"id": two_judges["b_review"].pk}, {"score_id": two_judges["b_review"].pk}):
+        response = post(client, {"event": event, "project_id": two_judges["b_only"].pk,
+                                 "scores": {"functionality": 1}, "comment": "hijacked", "submit": False, **extra})
+        assert response.status_code == 403
+    assert snapshot_of(two_judges["b_review"]) == before
+    # the shared project: A writes A's own review; B's review of it is untouched
+    b_shared_before = snapshot_of(two_judges["b_shared"])
+    response = post(client, {"event": event, "project_id": two_judges["shared"].pk, "id": two_judges["b_shared"].pk,
+                             "scores": FULL, "comment": "A own", "submit": True})
+    assert response.status_code == 200 and response.json()["score_id"] != two_judges["b_shared"].pk
+    assert snapshot_of(two_judges["b_shared"]) == b_shared_before
+    assert Score.objects.get(judge=two_judges["membership"], project=two_judges["shared"]).comment == "A own"
+
+
+def test_portal_cannot_open_or_post_another_judges_project(two_judges, client_for):
+    client = client_for(two_judges["judge"])
+    url = f"/judge/events/{two_judges['event'].slug}/projects/{two_judges['b_only'].pk}/"
+    before = snapshot_of(two_judges["b_review"])
+    assert client.get(url).status_code == 404
+    response = client.post(url, {"action": "submit", "criterion_functionality": "1", "criterion_quality": "1",
+                                 "criterion_innovation": "1", "comment": "hijacked"})
+    assert response.status_code == 404
+    assert snapshot_of(two_judges["b_review"]) == before
+
+
+def test_portal_shows_only_your_own_review_of_a_shared_project(two_judges, client_for):
+    client = client_for(two_judges["judge"])
+    page = client.get(f"/judge/events/{two_judges['event'].slug}/projects/{two_judges['shared'].pk}/")
+    assert page.status_code == 200
+    assert b"B on the shared project" not in page.content
+    console = client.get(f"/judge/events/{two_judges['event'].slug}/")
+    assert b"B only" not in console.content

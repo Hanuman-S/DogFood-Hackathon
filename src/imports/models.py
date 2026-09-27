@@ -18,6 +18,8 @@ class FixtureRef(models.Model):
         TEAM = "team"
         PROJECT = "project"
         SCORE = "score"
+        # a fixture judge id -> that judge's EventMembership in the imported event
+        JUDGE = "judge"
 
     source = models.CharField(max_length=60, default="dogfood-fixtures")
     kind = models.CharField(max_length=10, choices=Kind.choices)

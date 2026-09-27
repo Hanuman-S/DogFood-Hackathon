@@ -42,6 +42,34 @@ def _staff(event, organizer):
         EventMembership.objects.create(event=event, user=judge, role=Role.JUDGE, added_by=organizer)
 
 
+# The archive's demo teams: (email, name, team, project, tagline, repo). The first is the demo
+# participant; the others are seed-only accounts that cannot log in (no password).
+ARCHIVE_PROJECTS = [
+    ("participant@dogfood.local", "Demo Participant", "Night Owls", "Sleep Debt",
+     "Tells you how many hackathons you can afford.", "https://example.org/sleep-debt"),
+    ("team.lanterns@dogfood.local", "Lantern Team", "Lanterns", "Quiet Map",
+     "Finds the quietest table in the venue.", "https://example.org/quiet-map"),
+    ("team.foxes@dogfood.local", "Fox Team", "Night Foxes", "Stand-up Bot",
+     "Collects the team's stand-up so nobody has to stand up.", "https://example.org/standup-bot"),
+    ("team.moths@dogfood.local", "Moth Team", "Moths", "Lamp Post",
+     "A status page for the venue's Wi-Fi, fed by everyone's laptops.", "https://example.org/lamp-post"),
+    ("team.owlets@dogfood.local", "Owlet Team", "Owlets", "Pairing Hat",
+     "Suggests who to pair with, from the skills people list.", "https://example.org/pairing-hat"),
+]
+ARCHIVE_ASSIGNMENT_SEED = 20260926  # fixed: the same round on every boot
+
+
+def _as(user):
+    """A request as `user`, for calling services at boot (there is no HTTP request)."""
+    from django.http import HttpRequest
+
+    request = HttpRequest()
+    request.user = user
+    request.META["REMOTE_ADDR"] = "127.0.0.1"
+    request.META["HTTP_USER_AGENT"] = "seed_demo"
+    return request
+
+
 def _compete(event, team, user):
     from events.models import EventMembership
     from teams.models import TeamMember
@@ -144,38 +172,49 @@ class Command(BaseCommand):
         return "created"
 
     def _seed_closed_event(self):
-        """An event whose submissions closed three days ago, with one submitted project.
+        """Dogfood Archive 2026: submissions closed three days ago and judging is under way (it
+        started two days ago and ends in four), so every page shows its read-only state, the
+        acceptance checker's "closed event refuses submissions" test has a real closed event to
+        hit, and the judge portal has live work: five submitted projects from demo teams and one
+        assignment round that gives judge.a and judge.b a queue each.
 
-        It gives the acceptance checker's "closed event refuses submissions" test a real closed
-        event to hit, and shows every page in its read-only state. Its rows are written after the
-        close, so the database trigger must be bypassed explicitly -- exactly the path organizer
-        tools use, minus the audit row (there is no request at boot).
+        Everything but the event row goes through the real services. Participant services only
+        write while submissions are open, so the event is created with its window open, the teams
+        build and submit their projects through the team and project services, and only then is
+        the event's timeline moved into the past (one update; the projects' submission times move
+        with it, under the audited deadline bypass the organizer tools use). The assignment round
+        is `scoring.services.run_assignment` with a fixed seed, so it is the same on every boot.
+
+        Create-only and idempotent: if the event exists nothing is created again; it only gets its
+        assignment round if it has none yet (an archive seeded by an older version).
         """
         from datetime import timedelta
 
+        from django.db import transaction
         from django.utils import timezone
 
         from core.deadlines import deadline_bypass
         from events.models import Event, Track
-        from projects.models import Project, Status
-        from teams.models import Team
+        from projects.models import Project
 
-        if Event.objects.filter(slug=CLOSED_EVENT_SLUG).exists():
-            return "exists"
+        event = Event.objects.filter(slug=CLOSED_EVENT_SLUG).first()
+        if event is not None:
+            return "exists" + self._ensure_archive_round(event)
         organizer = User.objects.get(email=DEMO_ACCOUNTS["organizer"][0])
-        participant = User.objects.get(email=DEMO_ACCOUNTS["participant"][0])
         now = timezone.now().replace(second=0, microsecond=0)
-        with deadline_bypass(None, "seeding a closed demo event"):
+        with transaction.atomic():
             event = Event.objects.create(
                 slug=CLOSED_EVENT_SLUG,
                 name="Dogfood Archive 2026",
-                tagline="A finished event: submissions are closed, so everything is read-only.",
-                description="Kept so you can see what a closed event looks like.",
+                tagline="Submissions are closed and judging is under way: everything is read-only.",
+                description="Kept so you can see what a closed event looks like, and so the demo judges "
+                "have a live queue to work through.",
+                # Created with the submission window open, for the participant services below;
+                # moved into the past once the projects are in.
                 starts_at=now - timedelta(days=6, hours=1),
                 submissions_open_at=now - timedelta(days=6),
-                submissions_close_at=now - timedelta(days=3),
-                # judging is under way, so the judge portal has something live to show
-                judging_starts_at=now - timedelta(days=2),
+                submissions_close_at=now + timedelta(hours=1),
+                judging_starts_at=now + timedelta(hours=2),
                 judging_ends_at=now + timedelta(days=4),
                 is_published=True,
                 created_by=organizer,
@@ -183,15 +222,49 @@ class Command(BaseCommand):
             _staff(event, organizer)
             create_standard_rubric(event)
             track = Track.objects.create(event=event, name="Open category", order=1)
-            team = Team.objects.create(event=event, name="Night Owls", captain=participant)
-            _compete(event, team, participant)
-            Project.objects.create(
-                team=team, name="Sleep Debt", tagline="Tells you how many hackathons you can afford.",
-                description="## What it does\n\nCounts the hours.", repo_url="https://example.org/sleep-debt",
-                track=track, status=Status.SUBMITTED, submitted_at=now - timedelta(days=3, hours=2),
-                last_edited_by=participant,
+            projects = [self._demo_project(event, track, *spec) for spec in ARCHIVE_PROJECTS]
+
+        # The real timeline: closed three days ago, judging since two days ago, ends in four.
+        closed = now - timedelta(days=3)
+        with deadline_bypass(None, "seeding the archive demo event"):
+            for i, project in enumerate(projects):
+                Project.objects.filter(pk=project.pk).update(submitted_at=closed - timedelta(hours=2 + i))
+            Event.objects.filter(pk=event.pk).update(
+                submissions_close_at=closed, judging_starts_at=now - timedelta(days=2),
             )
-        return "created"
+        event.refresh_from_db()
+        return "created" + self._ensure_archive_round(event)
+
+    def _demo_project(self, event, track, email, name, team_name, project_name, tagline, repo):
+        """One demo team and its submitted project, through the participant services."""
+        from projects.forms import ProjectForm
+        from projects.services import start_project, submit_project, update_project
+        from teams.services import create_team
+
+        user = User.objects.filter(email=email).first() or User.objects.create_user(email, None, name=name)
+        request = _as(user)
+        create_team(request, event, team_name)
+        project = start_project(request, event, project_name)
+        form = ProjectForm({
+            "name": project_name, "tagline": tagline, "track": track.pk, "repo_url": repo,
+            "description": f"## What it does\n\n{tagline}\n\n## Status\n\nA demo project.",
+            "demo_video_url": "", "live_url": "", "tags": "demo",
+        }, instance=project, event=event)
+        if not form.is_valid():
+            raise CommandError(f"demo project {project_name}: {form.errors.as_text()}")
+        project = update_project(request, project, form)
+        return submit_project(request, project)
+
+    def _ensure_archive_round(self, event):
+        """One assignment round for the archive (fixed seed), if it has none and judging is on."""
+        from core.deadlines import db_now
+        from core.judging import judging_closed
+        from scoring.services import run_assignment
+
+        if event.assignment_rounds.exists() or judging_closed(event, db_now()):
+            return ""
+        run_assignment(None, event, target=2, seed=ARCHIVE_ASSIGNMENT_SEED)
+        return ", assignment round run"
 
     def _print(self, rows):
         out = self.stdout.write

@@ -230,6 +230,11 @@ class Importer:
                     if track_id in tracks:
                         JudgeTrack.objects.create(membership=membership, track=tracks[track_id])
             self.report.count("created" if created else "existing", "judge")
+            # The fixture's judge id (e.g. "jdg_02") -> this judge membership, so the id can name
+            # the judge later (/api/judge/scores?judge=jdg_02). Create-only: an older import gets
+            # the refs on its next run.
+            if self.ref("judge", raw["id"]) is None:
+                self.remember("judge", raw["id"], membership)
             judges[raw["id"]] = membership
         return judges
 

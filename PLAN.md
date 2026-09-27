@@ -286,6 +286,22 @@ score entry, no results pages, no publishing service or UI, no CSV export, no se
   - **Operator note.** Accounts referenced by snapshots or publications cannot be deleted
     (PROTECT). Deactivate them instead (`is_active=False`).
 
+## PR #1 and PR #2 integration (for the final docs pass)
+- **No judging extension after a final result.** `events.services.extend_judging` is refused,
+  with an audit row (`judging_extension_refused`), once the event has any final snapshot. The
+  organizer sees why on the event page: "A final result has already been computed for this event,
+  so judging can no longer be extended."
+- **Weights are relative.** Each weight is above 0 (a CHECK constraint); a criterion's share is
+  weight / sum, shown as a percentage on every page, and the engine normalises the same way.
+  Percentages that must add up to 100 are wrong for equal weights: 33.334 / 33.333 / 33.333
+  makes functionality the hidden tie-break between reviews whose scores are a permutation of each
+  other.
+- **`?judge=` on /api/judge/scores** resolves only an email, an account id or a fixture judge id
+  (FixtureRef kind "judge"). It is answered for the caller, or for an organizer of an event that
+  judge judges (those events only); everything else is 403 and audited.
+- **The archive demo event** is in its judging phase at boot, with five submitted projects and one
+  fixed-seed assignment round (both demo judges have a queue).
+
 ## S4: docs (deferred)
 Deferred by the user. The docs are written once, in the final docs pass, against the complete T2
 system. See the S4 list in `docs/t2-scoring-plan.md`.

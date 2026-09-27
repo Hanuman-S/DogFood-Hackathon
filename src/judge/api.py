@@ -1,10 +1,16 @@
 """JSON API for judges: /api/judge/scores (sessions and Bearer tokens alike).
 
-GET   the caller's own reviews, in every event they judge.
-      401 if not logged in; 403 (audited) if the caller judges no event.
-      `?judge=<x>` is an explicit "read as another judge" request: it is answered only when <x>
-      is the caller themself (their email or account id); anything else is refused with 403 and
-      an audit row. There is no other way to read someone else's reviews here.
+GET   the caller's own reviews, in every event they judge. 401 if not logged in; 403 (audited) if
+      the caller judges no event.
+      `?judge=<x>` is an explicit "read this judge's reviews" request. <x> resolves to one account
+      in exactly three ways -- an email address (case-insensitive), an account id (digits), or a
+      fixture judge id recorded by the importer (FixtureRef kind "judge", e.g. "jdg_02" -> that
+      judge's membership in the imported event) -- and nothing else resolves. It is answered when
+        * <x> is the caller (their own reviews), or
+        * the caller organizes an event that <x> judges (then <x>'s reviews in the events the
+          caller organizes; a platform admin organizes every event).
+      Everything else -- an unknown <x>, another judge, an organizer of a different event -- is
+      403 and an audit row.
 POST  save or submit a review: {"event": slug, "project_id": id, "scores": {key: value},
       "comment": "...", "submit": true|false}, or declare a conflict of interest:
       {"event": slug, "project_id": id, "decline": "reason"}.
@@ -15,20 +21,38 @@ POST  save or submit a review: {"event": slug, "project_id": id, "scores": {key:
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
-from accounts.roles import Role, event_roles
+from accounts.models import User
+from accounts.roles import Role, event_roles, is_organizer_of
 from core import audit
 from core.api import BadRequest, error, read_json
 from core.judging import JudgingNotOpen, check_judging_window, refusal_response
 from core.models import AuditAction
-from events.models import Event
+from events.models import Event, EventMembership
+from imports.models import FixtureRef
 from projects.models import Project
 from scoring import services as scoring
 
 
-def _names_caller(user, target):
-    """Whether the `judge` parameter names the caller: their email or their account id, exactly."""
+def resolve_judge(target):
+    """The account `target` names, or None. Only three forms resolve; there is no fuzzy match."""
     target = (target or "").strip()
-    return target.lower() == user.email.lower() or (target.isdigit() and int(target) == user.pk)
+    if not target:
+        return None
+    if "@" in target:
+        return User.objects.filter(email__iexact=target).first()
+    if target.isdigit():
+        return User.objects.filter(pk=int(target)).first()
+    ref = FixtureRef.objects.filter(kind=FixtureRef.Kind.JUDGE, external_id=target).first()
+    if ref is not None:
+        membership = EventMembership.objects.filter(pk=ref.object_id, role=Role.JUDGE).select_related("user").first()
+        return membership.user if membership else None
+    return None
+
+
+def _organized_events_judged_by(caller, judge):
+    """Events `judge` judges that `caller` organizes (all of them for a platform admin)."""
+    judged = Event.objects.filter(memberships__user=judge, memberships__role=Role.JUDGE)
+    return [e for e in judged.distinct() if is_organizer_of(caller, e)]
 
 
 def _review_json(score):
@@ -52,21 +76,37 @@ def judge_scores(request):
         response = error(401, "unauthenticated", "Log in or send a Bearer token.")
         response["WWW-Authenticate"] = "Bearer"
         return response
-    if Role.JUDGE not in event_roles(user):
+    if Role.JUDGE not in event_roles(user) and not (request.GET.get("judge") and request.method == "GET"):
         audit.record(AuditAction.ACCESS_DENIED, request=request, subject="api:judge_scores",
                      reason="not a judge of any event")
         return error(403, "forbidden", "Only judges can read or write reviews here.")
 
     target = request.GET.get("judge")
-    if target is not None and not _names_caller(user, target):
-        audit.record(AuditAction.ACCESS_DENIED, request=request, subject=f"peer_scores:{target}"[:254],
-                     reason="read another judge's reviews")
-        return error(403, "forbidden", "A judge can only read their own reviews.")
+    if target is None:
+        if request.method == "GET":
+            return _own(user)
+        return _write(request)
+    if request.method != "GET":
+        return error(400, "bad_request", "'judge' applies to reading reviews only.")
 
-    if request.method == "GET":
-        reviews = [_review_json(s) for s in scoring.reviews_of(user)]
-        return JsonResponse({"judge": user.email, "count": len(reviews), "scores": reviews})
-    return _write(request)
+    named = resolve_judge(target)
+    if named is not None and named.pk == user.pk:
+        return _own(user)
+    events = _organized_events_judged_by(user, named) if named is not None else []
+    if not events:
+        audit.record(AuditAction.ACCESS_DENIED, request=request, subject=f"peer_scores:{target}"[:254],
+                     reason="read another judge's reviews", resolved=named.pk if named else None)
+        return error(403, "forbidden", "A judge can only read their own reviews; an organizer, those of "
+                                       "their own event's judges.")
+    reviews = [_review_json(s) for s in scoring.reviews_of(named).filter(judge__event__in=events)]
+    return JsonResponse({"judge": named.email, "read_as": "organizer", "count": len(reviews), "scores": reviews})
+
+
+def _own(user):
+    if Role.JUDGE not in event_roles(user):
+        return error(403, "forbidden", "Only judges can read or write reviews here.")
+    reviews = [_review_json(s) for s in scoring.reviews_of(user)]
+    return JsonResponse({"judge": user.email, "count": len(reviews), "scores": reviews})
 
 
 def _write(request):

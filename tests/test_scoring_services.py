@@ -592,3 +592,17 @@ def test_score_event_saves_a_final_as_an_organizer(scored_event, at):
     assert "saved final snapshot" in out.getvalue()
     with pytest.raises(CommandError, match="--as"):
         call_command("score_event", scored_event.slug, "--save", "preview", stdout=io.StringIO())
+
+
+@pytest.mark.django_db
+def test_the_organizer_page_says_why_judging_cannot_be_extended(scored_event, client_for):
+    from _dates import dt_fields
+
+    make_snapshot(scored_event, scored_event.organizer, kind="final")
+    response = client_for(scored_event.organizer).post(
+        f"/organizer/events/{scored_event.slug}/judging/extend",
+        {**dt_fields("new_end", scored_event.judging_ends_at + timedelta(days=2)), "reason": "wifi"},
+    )
+    assert response.status_code == 400
+    assert b"A final result has already been computed for this event" in response.content
+    assert AuditLog.objects.filter(action=AuditAction.JUDGING_EXTENSION_REFUSED).count() == 1
