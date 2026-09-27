@@ -42,7 +42,7 @@ from teams.models import TeamExtension, TeamMember
 
 from . import links
 from .errors import (AccountTooNew, AlreadyVoided, InvalidAllowlist, InvalidBallot, InvalidVoid, InvalidVotingConfig,
-                     LinkRevoked, NoSuchBallot, NoSuchLink, NoVoting, OverBudget, OwnProject, RateLimited,
+                     LinkRevoked, NoSuchBallot, NoSuchLink, NotVoided, NoVoting, OverBudget, OwnProject, RateLimited,
                      StaffCannotVote, VotingClosed, VotingConfigLocked, VotingNotOpen, WrongAccessMode)
 from .models import CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VoterLink, VotingConfig
 
@@ -768,6 +768,42 @@ def void_ballot(event, ballot_id, *, actor, reason, origin=None) -> Ballot:
     credits = {str(pk): c for pk, c in ballot.lines.filter(credits__gt=0).values_list("project_id", "credits")}
     audit.record(AuditAction.BALLOT_VOIDED, origin=origin, actor=actor, subject=event.slug, ballot=ballot.pk,
                  voter=ballot_label(ballot), reason=reason, credits=credits)
+    return ballot
+
+
+def restore_ballot(event, ballot_id, *, actor, reason, origin=None) -> Ballot:
+    """Undo a void: the ballot counts again from the next tally (a frozen tally is never changed; the
+    next freeze includes it). Same gates and rules as `void_ballot`: organizers of the event and
+    admins, a reason required, at any time, audited with the void it undoes. The void's who, when and
+    why stay in the audit log; the row's void fields are cleared."""
+
+    def refuse(error, why):
+        audit.record(AuditAction.BALLOT_RESTORE_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     ballot=ballot_id, reason=why)
+        raise error
+
+    if not is_organizer_of(actor, event):
+        refuse(PermissionDenied("Only the event's organizers can restore ballots."), "not an organizer")
+    reason = (reason or "").strip()
+    if len(reason) < 3 or len(reason) > VOID_REASON_MAX:
+        refuse(InvalidVoid(f"Give a reason (3 to {VOID_REASON_MAX} characters); it is kept in the audit log."),
+               "invalid reason")
+    problem = None
+    with transaction.atomic():
+        ballot = Ballot.objects.select_for_update().filter(event=event, pk=ballot_id).first()
+        if ballot is None:
+            problem = (NoSuchBallot("This event has no such ballot."), "no such ballot")
+        elif ballot.voided_at is None:
+            problem = (NotVoided(f"Ballot #{ballot.pk} is not voided."), "not voided")
+        else:
+            undone = {"voided_at": ballot.voided_at.isoformat(), "voided_by": ballot.voided_by.email,
+                      "void_reason": ballot.void_reason}
+            ballot.voided_at, ballot.voided_by, ballot.void_reason = None, None, ""
+            ballot.save(update_fields=["voided_at", "voided_by", "void_reason"])
+    if problem:
+        refuse(*problem)
+    audit.record(AuditAction.BALLOT_RESTORED, origin=origin, actor=actor, subject=event.slug, ballot=ballot.pk,
+                 voter=ballot_label(ballot), reason=reason, undid=undone)
     return ballot
 
 

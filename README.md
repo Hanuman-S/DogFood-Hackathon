@@ -154,13 +154,16 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 - Email and password login backed by server-side sessions in Postgres. Passwords are hashed
   with Argon2id and the session key rotates on login.
 - "Remember this terminal": 14 days, or until the browser closes.
-- An account page listing every live session (device, IP, last seen). Each session can be
+- An account page listing every live session (device, network, last seen). Each session can be
   revoked, or all the others signed out at once. Changing the password signs out every other
   session.
 - Personal API tokens (`Authorization: Bearer …`), shown once at creation and stored only as
   a SHA-256 digest. Tokens can be revoked.
 - A login throttle: 5 failures per email and IP, or 30 per IP, within 15 minutes. It is
   counted in Postgres, so it survives restarts and is shared by every worker.
+- **No IP address is stored anywhere.** The audit log, sessions and ballots keep only a keyed hash
+  of it (HMAC under a key derived from the install's own secret key), enough to count and to
+  cluster, not to say where anyone was. The account page says "this network" for the current one.
 - Five roles (visitor, participant, judge, organizer and admin), each with its own portal and
   URL prefix. Access is checked by the server on every request. Participant, judge and organizer
   are held **per event**, and every event page checks the role in *that* event. A person can
@@ -202,12 +205,30 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
   - Each project has a public page at `/projects/<id>`, and the same data is available as JSON.
 - **Possible duplicates** are flagged for organizers: the same project name or repository within
   an event, plus duplicates caught during import. Nothing is removed automatically.
+- **Results** (organizer portal, `/organizer/events/<slug>/results`): compute a preview or the final
+  result, publish or unpublish it, and choose who sees it: the full ranking, the winners only, or
+  organizers only. The public page is `/events/<slug>/results`: shared ranks for exact ties, tie
+  groups, "no separable winner", track winners, the plain-mean rank beside the M2 rank, and no
+  per-judge data. `winners.csv` gives organizers the winners' names and emails in every mode.
+- **Community voting** (T3, in progress; see PLAN.md):
+  - Organizers set a window (at or after the submission close; it may overlap judging), one person
+    one vote or quadratic (a project's influence from one ballot is the square root of the credits
+    placed on it), and who votes: logged-in accounts, an email allowlist (one personal link each;
+    there is no outbound mail, so organizers download `voter-links.csv`), or an open link (the
+    weakest: each browser is a voter).
+  - The event's judges and organizers and platform admins cannot vote, nobody votes for their own
+    team, and each ballot shows the projects in its own shuffled order.
+  - The window is enforced by the server and a Postgres trigger; once voting opens, no vote can be
+    deleted, only voided (with a reason, and restorable). Tallies are visible to organizers only.
+  - Rate limits per voter and per network (429), and an integrity page with flags, voided ballots,
+    credits by shown position and the voting audit trail. Nothing is removed automatically.
 
 ## What it does not do yet
 
-- Judging (T2): the organizer's side works (rubric, judge invites, judging window, assignment,
-  progress dashboard) and the CSV export work; see [JUDGING.md](JUDGING.md) for the rest of T2
-  and what is still missing.
+- Judging (T2): see [JUDGING.md](JUDGING.md) for what is built and what is still missing.
+- Community voting (T3) is not finished: the combined judges-and-community score, People's Choice,
+  comments, the demo seed and `t3-report.txt` are still to come (PLAN.md, "T3"). T3 is not claimed
+  in `.dogfood.toml`.
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.

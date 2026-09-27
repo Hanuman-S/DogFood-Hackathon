@@ -10,7 +10,8 @@ Django 5.2 LTS + Postgres 16, server-rendered templates, plain CSS (`src/static/
 build step. `docker compose up --build` is the product; it must stay one command, seeded, offline.
 
 - Shared domain apps hold **models and rules only**: `accounts`, `events`, `teams`, `projects`,
-  `scoring`, `imports`, `core`.
+  `scoring`, `voting`, `imports`, `core`. Shared templates (used by several portals) go in
+  `src/templates/` (e.g. `_results.html`, `vote.html`), not in a domain app.
 - One app per audience holds the pages: `public`, `participant`, `judge`, `organizer`,
   `platform_admin`.
 
@@ -29,7 +30,19 @@ build step. `docker compose up --build` is the product; it must stay one command
   one event then checks the caller's role *in that event* (`events.services.get_managed_event`,
   `can_compete_in`). A hidden button is never the check.
 - **Every write goes through a `services.py` function.** Pages and the JSON API must not enforce
-  different rules. Services write the audit row.
+  different rules. Services write the audit row. New services take the actor and an
+  `audit.Origin` (`audit.origin_of(request)`: ip_hash + user agent), **never the request**; the view
+  extracts them. Refusals are audited too, and each carries `status` and `code` (see
+  `scoring/errors.py`, `voting/errors.py`) so pages and API answer the same.
+- **No IP address is stored.** `core.net.hash_ip` (HMAC under a derived key) is the only form an
+  address takes in the database: `AuditLog.ip_hash`, `UserSession.ip_hash`, `Ballot.ip_hash`.
+- **Keys.** SECRET_KEY comes from `DJANGO_SECRET_KEY` or the file the entrypoint generates in the
+  `secrets` volume (`config/secret_key.py`); a known key is refused outside DEMO_MODE. Anything
+  keyed from it uses `core.keys.derived_key(purpose)` ("ip-hash", "voter-links", "open-link"), never
+  SECRET_KEY directly.
+- **Rate limits** are counted from audit rows (`core/ratelimit.py`, the login throttle's pattern):
+  a limited write must leave one audit row per attempt, carrying the ip_hash it is limited by.
+- **CSV** is written only by `core.csvfile.to_csv` (formula-escaped); downloads are audited.
 - **Deadline first.** Participant writes call `core.deadlines.check_submission_window` before
   permission checks and validation, so a late write is a 409 `submissions_closed`, never a 403 or
   400. The Postgres trigger is the backstop; code that must write after the close uses the
@@ -38,7 +51,9 @@ build step. `docker compose up --build` is the product; it must stay one command
   `membership_no_competitor_and_staff`. Joining or leaving a team must keep the participant
   membership in step (`teams/services.py::_register` / `_unregister`).
 - **Postgres-only SQL** (trigger, exclusion constraint) lives in `RunPython` migrations that
-  no-op on SQLite. Keep that pattern.
+  no-op on SQLite. Keep that pattern. A migration that updates rows and then ALTERs the same table
+  must be split in two (Postgres refuses the ALTER while deferred FK checks are pending); test data
+  migrations against a database that has rows, not only the empty test one.
 - **Offline.** No template, stylesheet or script may reference another host
   (`tests/test_platform.py` checks). Vendor assets under `src/static/`.
 - **Design.** Use the tokens and components in `crt.css` (`.frame`, `.kv`, `.table`, `.check`,
@@ -61,6 +76,18 @@ build step. `docker compose up --build` is the product; it must stay one command
   must 404 until it is real (`tests/test_acceptance_contract.py`; none is left unimplemented). A
   probe must test what it names: `peer_scores` asks for judge_a's real account. `acceptance/` is
   the organizers' and is read-only.
+- **Results.** `scoring/services.py` also holds `publish_results` / `unpublish_results` /
+  `set_result_settings`; `scoring/results.py` is the read side (who sees what, shared ranks, tie
+  groups, winners). The public page 404s unless a publication exists with a public visibility, or
+  the caller organizes the event. No per-judge data on any public page.
+- **Voting** (`voting/`): every write is `voting/services.py`. Order on a vote write: no vote 404,
+  window 409 (`voting_not_open` / `voting_closed`), rate limit 429, access mode / link 403, voter
+  rules 403 (`staff_cannot_vote`, `account_too_new`, `own_project`), then 400. The window trigger
+  (`voting/migrations/0002`, `0004`) refuses ballot writes outside the window and any DELETE once
+  voting opened, and guards the config row; the only way past it is the audited
+  `voting.services.voting_bypass`. Voiding (an update of the void columns only) is allowed at any
+  time. FKs into ballots are PROTECT (pinned by a test). Tallies are organizers and admins only;
+  a GET never writes (a ballot is created by a POST).
 
 ## Commands
 

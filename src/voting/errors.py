@@ -84,6 +84,11 @@ class AlreadyVoided(VotingError):
     code = "already_voided"
 
 
+class NotVoided(VotingError):
+    status = 409
+    code = "not_voided"
+
+
 class NoSuchBallot(VotingError):
     status = 404
     code = "no_such_ballot"

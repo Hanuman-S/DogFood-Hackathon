@@ -11,7 +11,7 @@
         <tr><th scope="row">opened, nothing placed</th><td>{{ counts.empty }} <span class="faint">(counted apart: every empty ballot is identical to every other, so they are left out of the flags)</span></td></tr>
         <tr><th scope="row">voided</th><td>{{ counts.voided }}</td></tr>
       </table>
-      <p class="faint">flags are reasons to look, not verdicts: nothing is removed automatically. voiding keeps the ballot, records who, when and why, and leaves it out of every tally from then on. it works before and after voting closes.</p>
+      <p class="faint">flags are reasons to look, not verdicts: nothing is removed automatically. voiding keeps the ballot, records who, when and why, and leaves it out of every tally from then on; restoring (also with a reason) brings it back. both work before and after voting closes.</p>
     </div>
   </section>
 
@@ -31,11 +31,12 @@
     <header class="frame__bar"><h2 class="frame__title">voided ballots</h2><span class="frame__meta">{{ voided|length }}</span></header>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th scope="col" class="num">#</th><th scope="col">voter</th><th scope="col">credits</th><th scope="col">voided</th><th scope="col">by</th><th scope="col">reason</th></tr></thead>
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">voter</th><th scope="col">credits</th><th scope="col">voided</th><th scope="col">by</th><th scope="col">reason</th><th scope="col">restore</th></tr></thead>
         <tbody>
         {% for b, who, credits in voided %}
-          <tr><td class="num">{{ b.pk }}</td><td>{{ who }}</td><td class="dim">{{ credits|default:"--" }}</td><td class="dim">{{ b.voided_at|utc }}</td><td class="dim">{{ b.voided_by.email }}</td><td>{{ b.void_reason }}</td></tr>
-        {% empty %}<tr><td colspan="6" class="faint">none.</td></tr>{% endfor %}
+          <tr><td class="num">{{ b.pk }}</td><td>{{ who }}</td><td class="dim">{{ credits|default:"--" }}</td><td class="dim">{{ b.voided_at|utc }}</td><td class="dim">{{ b.voided_by.email }}</td><td>{{ b.void_reason }}</td>
+          <td><form method="post" action="{% url 'organizer:ballot_restore' event.slug b.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="restore-{{ b.pk }}">reason for restoring ballot {{ b.pk }}</label><input id="restore-{{ b.pk }}" name="reason" required minlength="3" maxlength="300" placeholder="reason"><button class="btn btn--small btn--ghost" type="submit">restore</button></form></td></tr>
+        {% empty %}<tr><td colspan="7" class="faint">none.</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>

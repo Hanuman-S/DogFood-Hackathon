@@ -326,6 +326,38 @@ leave-and-delete confirm). Caveats, to carry into JUDGING.md:
    rubric, project edit, account).
 3. Deferred auto-refresh partials: the participant team block and the organizer event overview.
 
+## T3: public voting and the T2 results flow (phase log)
+
+Stages from the T3 brief (2026-09-27), each committed and reviewed before the next. Claim stays
+`["T1", "T2"]`: `acceptance/run.py` has no T3 check, so a claimed T3 prints "claimed but not
+verified"; T3's evidence will be `t3-report.txt` (Stage 7).
+
+| stage | commits | what |
+|---|---|---|
+| 1 results flow | `f5326b4`, `7f2e5c2` | compute/publish/unpublish pages, `EventResultSettings` (visibility, winners top N), `/events/<slug>/results`, winners.csv; "end judging now"; one CSV writer (`core/csvfile.py`) |
+| 2 voting core | `001b6ba`, `93ad2b1` | `voting` app, window trigger, per-ballot order, hidden tallies, publish refused while voting is open |
+| 3 access modes | `55df4ca`, `4984c78`, `9e78e54` | email links, open link; votes undeletable once voting opens (trigger + PROTECT); per-install SECRET_KEY and derived keys |
+| 4 anti-abuse | `5bbbbd0` + restore | IP hashes only, rate limits, flags, void/restore, integrity page |
+
+### Caveats for the docs (JUDGING.md / README, Stage 7)
+- **one_person_one_vote: the identical-ballots flag cannot fire.** It only looks at ballots spread
+  over two or more projects, and a one-vote ballot has one. In that mode only the network-burst and
+  new-account flags apply.
+- **Flags are prompts, not verdicts.** A venue's shared network can trip the burst flag honestly;
+  nothing is removed automatically, and a void can be restored (reason required, audited).
+- **The IP migrations were split** (`core/0010` convert, `0011` drop; `accounts/0002`, `0003`):
+  Postgres refuses to ALTER a table in the transaction that updated its rows while deferred FK
+  checks are pending. The empty test database could not show this; a real one did.
+- **A hand-faked migration on the developer's database.** During that fix, one dev database had
+  the first (unsplit) `accounts/0002` applied, which already dropped `UserSession.ip`; the new
+  `accounts/0003` was then marked applied there with `migrate accounts 0003 --fake`. Only that
+  database is affected. **A fresh boot (`docker compose down -v && docker compose up --build`) is
+  authoritative**, and is what the demo and the reports must run on.
+- **Rotating SECRET_KEY** invalidates voter links, open-link cookies and sessions, and resets
+  IP-based limits and clustering (README, "The secret key").
+- **Tests move the voting window** through the audited `voting_bypass`, like a real repair: once
+  voting has opened, the trigger guards the config row too.
+
 ## S4: docs (deferred)
 Deferred by the user. The docs are written once, in the final docs pass, against the complete T2
 system. See the S4 list in `docs/t2-scoring-plan.md`.

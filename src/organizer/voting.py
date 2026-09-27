@@ -250,3 +250,17 @@ def ballot_void(request, slug, ballot_id):
     else:
         messages.success(request, f"ballot #{ballot_id} voided. it is kept, and left out of every tally from now on.")
     return redirect("organizer:voting_integrity", slug=event.slug)
+
+
+@require_POST
+@portal_required("organizer")
+def ballot_restore(request, slug, ballot_id):
+    event = get_managed_event(request.user, slug)
+    try:
+        services.restore_ballot(event, ballot_id, actor=request.user, reason=request.POST.get("reason", ""),
+                                origin=audit.origin_of(request))
+    except VotingError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, f"ballot #{ballot_id} restored. it counts again from the next tally.")
+    return redirect("organizer:voting_integrity", slug=event.slug)

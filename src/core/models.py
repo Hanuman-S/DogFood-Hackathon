@@ -122,6 +122,8 @@ class AuditAction(models.TextChoices):
     VOTE_THROTTLED = "vote_throttled", "Refused a vote write (rate limit)"
     BALLOT_VOIDED = "ballot_voided", "Voided a ballot"
     BALLOT_VOID_REFUSED = "ballot_void_refused", "Refused to void a ballot"
+    BALLOT_RESTORED = "ballot_restored", "Restored a voided ballot"
+    BALLOT_RESTORE_REFUSED = "ballot_restore_refused", "Refused to restore a ballot"
 
 
 class AuditLog(models.Model):

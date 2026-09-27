@@ -231,3 +231,46 @@ def test_position_bias_is_the_average_credits_per_shown_position(vote_event, old
     services.open_ballot(vote_event, services.Voter(old_user()), ip_hash="")  # empty: left out
     by_position = {line.shown_position + 1: line.credits for line in ballot.lines.all()}
     assert integrity.position_bias(vote_event) == [(pos, float(c), 1) for pos, c in sorted(by_position.items())]
+
+
+# --- restoring ------------------------------------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_void_then_restore_returns_the_tally_to_its_prior_value(vote_event, client_for, make_event):
+    from voting.errors import NotVoided
+
+    p = vote_event.projects_list
+    ballot = cast_from(vote_event, vote_event.outsider, {p[1].pk: 9, p[2].pk: 7}, "10.0.0.1")
+    cast_from(vote_event, vote_event.voter, {p[1].pk: 4}, "10.0.0.2")
+
+    def snapshot():
+        return [(r.project.pk, r.influence, r.ballots, r.credits) for r in services.tally(vote_event, vote_event.organizer)]
+
+    before = snapshot()
+    services.void_ballot(vote_event, ballot.pk, actor=vote_event.organizer, reason="looked odd")
+    assert snapshot() != before
+    url = f"/organizer/events/{vote_event.slug}/voting/ballots/{ballot.pk}/restore"
+    assert client_for(vote_event.voter).post(url, {"reason": "nope"}).status_code == 403
+    assert client_for(make_event().organizer).post(url, {"reason": "nope"}).status_code == 404
+    organizer = client_for(vote_event.organizer)
+    assert organizer.post(url, {"reason": "x"}).status_code == 302  # too short: refused, still voided
+    assert Ballot.objects.get(pk=ballot.pk).voided_at is not None
+    assert organizer.post(url, {"reason": "checked, genuine"}).status_code == 302
+    assert snapshot() == before
+    restored = Ballot.objects.get(pk=ballot.pk)
+    assert restored.voided_at is None and restored.voided_by is None and restored.void_reason == ""
+    entry = AuditLog.objects.get(action=AuditAction.BALLOT_RESTORED)
+    assert entry.detail["undid"]["void_reason"] == "looked odd" and entry.detail["reason"] == "checked, genuine"
+    with pytest.raises(NotVoided):
+        services.restore_ballot(vote_event, ballot.pk, actor=vote_event.organizer, reason="again")
+    assert AuditLog.objects.filter(action=AuditAction.BALLOT_RESTORE_REFUSED).count() == 2
+    assert "checked, genuine" in organizer.get(f"/organizer/events/{vote_event.slug}/voting/integrity").content.decode()
+
+
+@pytest.mark.django_db
+def test_restore_works_after_voting_closes(vote_event):
+    ballot = cast_from(vote_event, vote_event.outsider, {vote_event.projects_list[1].pk: 4}, "10.0.0.1")
+    services.void_ballot(vote_event, ballot.pk, actor=vote_event.organizer, reason="looked odd")
+    shift_voting(vote_event, closes_at=-timedelta(seconds=1))
+    services.restore_ballot(vote_event, ballot.pk, actor=vote_event.organizer, reason="genuine after all")
+    assert Ballot.objects.get(pk=ballot.pk).voided_at is None

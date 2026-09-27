@@ -36,7 +36,8 @@ from .services import ballot_label
 AUDIT_ACTIONS = (
     AuditAction.BALLOT_OPENED, AuditAction.VOTE_CAST, AuditAction.VOTE_CHANGED, AuditAction.VOTE_REFUSED,
     AuditAction.VOTE_LATE_REFUSED, AuditAction.VOTE_THROTTLED, AuditAction.BALLOT_VOIDED,
-    AuditAction.BALLOT_VOID_REFUSED, AuditAction.VOTING_CONFIG_CHANGED, AuditAction.VOTING_CONFIG_REFUSED,
+    AuditAction.BALLOT_VOID_REFUSED, AuditAction.BALLOT_RESTORED, AuditAction.BALLOT_RESTORE_REFUSED,
+    AuditAction.VOTING_CONFIG_CHANGED, AuditAction.VOTING_CONFIG_REFUSED,
     AuditAction.VOTING_ENDED_EARLY, AuditAction.VOTING_END_REFUSED, AuditAction.VOTING_REMOVED,
     AuditAction.VOTER_LINKS_ADDED, AuditAction.VOTER_LINK_REVOKED, AuditAction.VOTER_LINKS_EXPORTED,
     AuditAction.OPEN_LINK_ROTATED, AuditAction.TALLY_EXPORTED, AuditAction.VOTING_BYPASSED,
@@ -172,6 +173,10 @@ def trail(event, limit=200):
         elif e.action == AuditAction.BALLOT_VOIDED:
             who = e.actor_email
             summary = f"ballot #{d.get('ballot')} of {d.get('voter')}: {d.get('reason')} (had {_credits_text(d.get('credits'), names)})"
+        elif e.action == AuditAction.BALLOT_RESTORED:
+            who = e.actor_email
+            was = (d.get("undid") or {}).get("void_reason")
+            summary = f"ballot #{d.get('ballot')} of {d.get('voter')}: {d.get('reason')} (voided for: {was})"
         elif e.action == AuditAction.BALLOT_OPENED:
             summary = f"ballot #{d.get('ballot')}"
         else:

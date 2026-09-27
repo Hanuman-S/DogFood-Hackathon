@@ -61,6 +61,7 @@ urlpatterns = [
     path("events/<slug:slug>/voting/open-link", voting.open_link_rotate, name="open_link_rotate"),
     path("events/<slug:slug>/voting/integrity", voting.integrity, name="voting_integrity"),
     path("events/<slug:slug>/voting/ballots/<int:ballot_id>/void", voting.ballot_void, name="ballot_void"),
+    path("events/<slug:slug>/voting/ballots/<int:ballot_id>/restore", voting.ballot_restore, name="ballot_restore"),
     path("events/<slug:slug>/progress/nudge/<int:membership_id>", progress.nudge, name="judge_nudge"),
     path("events/<slug:slug>/deadline/teams/<int:extension_id>/revoke", views.extension_revoke, name="extension_revoke"),
     path("events/<slug:slug>/organizers/<int:link_id>/remove", views.organizer_remove, name="organizer_remove"),
