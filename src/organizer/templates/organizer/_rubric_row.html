@@ -1,0 +1,9 @@
+{% comment %}One rubric editor row. Also rendered from formset.empty_form inside the template element that app.js clones (replacing __prefix__) when the organizer presses "add criterion".{% endcomment %}
+<tr data-rubric-row{% if form.errors %} class="field--invalid"{% endif %}>
+  <td>{{ form.id }}<label class="visually-hidden" for="{{ form.label.id_for_label }}">label</label>{{ form.label }}{% for e in form.label.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+  <td><label class="visually-hidden" for="{{ form.key.id_for_label }}">key</label>{{ form.key }}{% for e in form.key.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+  <td class="num"><label class="visually-hidden" for="{{ form.weight.id_for_label }}">relative weight</label>{{ form.weight }}{% for e in form.weight.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+  <td class="num dim"><span data-weight-share>&ndash;</span></td>
+  <td class="num"><label class="check" for="{{ form.DELETE.id_for_label }}">{{ form.DELETE }} <span class="faint">remove</span></label></td>
+  <td class="num">{% if form.id.value %}<a class="btn btn--small btn--ghost" href="{% url 'organizer:criterion_text' event.slug form.id.value %}">levels</a>{% else %}<span class="faint">new</span>{% endif %}</td>
+</tr>
