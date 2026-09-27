@@ -63,19 +63,21 @@ def test_a_declined_project_with_no_judge_left_says_how_to_fix_it(two_judge_even
     assert f"/organizer/events/{event.slug}/#judges" in html and "add or invite" in html
 
 
-def test_with_a_third_judge_the_gap_can_be_filled_and_moves_work(two_judge_event, client_for, make_user):
+def test_with_a_third_judge_the_gap_can_be_filled_and_reassigned(two_judge_event, client_for, make_user):
     event, judges, projects = two_judge_event
     assignment = Assignment.objects.get(judge=judges[0], project=projects[0])
     services.decline_assignment(FakeRequest(judges[0].user), assignment, "conflict")
     cara = EventMembership.objects.create(event=event, user=make_user(name="Cara"), role=Role.JUDGE)
     client = client_for(event.organizer)
     html = page(client, event)
-    assert "press assign" in html and "Cara" in html  # Cara is offered in add / move to
+    assert "press assign" in html and "Cara" in html  # Cara is offered in "add"
+    assert "move</button>" not in html  # only withdraw and add
     client.post(f"/organizer/events/{event.slug}/assignments", {"target": "2", "max_load": "", "seed": ""})
     assert Assignment.objects.filter(judge=cara, project=projects[0], status=AssignmentStatus.ASSIGNED).exists()
-    # move Ben's unstarted review of P1 to Cara
+    # take Ben's unstarted review of P1 back; assign gives it to Cara, never back to Ben
     ben_p1 = Assignment.objects.get(judge=judges[1], project=projects[1], status=AssignmentStatus.ASSIGNED)
-    client.post(f"/organizer/events/{event.slug}/assignments/{ben_p1.pk}/move", {"judge": cara.pk})
+    client.post(f"/organizer/events/{event.slug}/assignments/{ben_p1.pk}/withdraw")
+    client.post(f"/organizer/events/{event.slug}/assignments", {"target": "2", "max_load": "", "seed": ""})
     assert Assignment.objects.filter(judge=cara, project=projects[1], status=AssignmentStatus.ASSIGNED).exists()
     assert "reassigned" in page(client, event)
 

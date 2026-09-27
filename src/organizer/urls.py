@@ -41,7 +41,6 @@ urlpatterns = [
     path("events/<slug:slug>/assignments", assignments.assignments, name="assignments"),
     path("events/<slug:slug>/assignments/add", assignments.assignment_add, name="assignment_add"),
     path("events/<slug:slug>/assignments/<int:assignment_id>/withdraw", assignments.assignment_withdraw, name="assignment_withdraw"),
-    path("events/<slug:slug>/assignments/<int:assignment_id>/move", assignments.assignment_move, name="assignment_move"),
     path("events/<slug:slug>/judges/<int:membership_id>/reassign", assignments.judge_reassign, name="judge_reassign"),
     path("events/<slug:slug>/progress", progress.progress, name="progress"),
     path("events/<slug:slug>/progress/nudge/<int:membership_id>", progress.nudge, name="judge_nudge"),

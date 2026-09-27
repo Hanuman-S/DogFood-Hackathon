@@ -140,9 +140,12 @@ by `scoring.services.run_assignment`; both are deterministic for a given seed an
 
 1. **Hard rules.** A judge reviews only projects in tracks they cover (no tracks = every track).
    No judge-project pair twice. A judge who **declined** a project (conflict of interest) never
-   gets it back. Competitors cannot be judges at all (the database's exclusion constraint).
+   gets it back, and an automatic round never gives a project back to a judge an organizer
+   **withdrew** it from (an organizer may still add them back by hand). Competitors cannot be judges at all (the database's exclusion constraint).
    Only submitted projects are assigned.
-2. **Balance.** Projects are filled to the **review target** (default 3) one review at a time, in
+2. **Balance.** Projects are filled to the **review target** (default 3; changeable until judging
+   starts, fixed after -- lowering it before judging releases the extra reviews from the busiest
+   judges first) one review at a time, in
    round-robin order starting with the projects that have the fewest eligible judges, so a
    shortage is spread thinly instead of leaving some projects with none. Each review goes to the
    eligible judge with the **lowest load**, never past the optional **load cap**; a final pass
@@ -166,13 +169,16 @@ by `scoring.services.run_assignment`; both are deterministic for a given seed an
 Running again **tops up** only what is missing, which is how the fixture event is handled: its 123
 imported reviews become `import` assignments, and a top-up to 3 adds exactly the 8 reviews its
 two-review projects lack (tested). By hand, an organizer can **add** a judge to a project, and
-**move** or **withdraw** an assignment the judge has not started: a started review is never
-taken away. **Reassign** (on the progress page or per judge) withdraws everything a stalled judge
+**withdraw** an assignment the judge has not started: a started review is never taken away. To move
+one, withdraw it and press assign (it goes to someone else) or add a judge by hand. **Reshuffle
+unstarted** releases every review nobody has started and draws them again at random with a new
+seed. **Reassign** (on the progress page or per judge) withdraws everything a stalled judge
 has not started and tops up without them. **Declined** projects are listed with the reason (only
 organizers see it) until they are covered again.
 
-Every change is audited: `assignments_generated` (with seed, target, cap, counts),
-`assignment_added`, `assignment_moved`, `assignment_withdrawn`, `assignment_declined`. Assignments
+Every change is audited: `assignments_generated` (with seed, target, cap, counts, and how many
+were released by a lower target), `assignments_reshuffled`, `assignment_added`,
+`assignment_withdrawn`, `assignment_declined`. Assignments
 are never deleted; their status changes.
 
 ## The progress dashboard (built)

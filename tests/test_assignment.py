@@ -279,11 +279,60 @@ def test_manual_changes_from_the_page(build, client_for):
     client = client_for(event.organizer)
     client.post(f"/organizer/events/{event.slug}/assignments/add", {"project": projects[0].pk, "judge": judges[0].pk})
     assignment = Assignment.objects.get()
-    client.post(f"/organizer/events/{event.slug}/assignments/{assignment.pk}/move", {"judge": judges[1].pk})
-    assert live_pairs(event) == {(judges[1].pk, projects[0].pk)}
-    moved = Assignment.objects.get(status=AssignmentStatus.ASSIGNED)
-    client.post(f"/organizer/events/{event.slug}/assignments/{moved.pk}/withdraw")
+    assert live_pairs(event) == {(judges[0].pk, projects[0].pk)}
+    client.post(f"/organizer/events/{event.slug}/assignments/{assignment.pk}/withdraw")
     assert live_pairs(event) == set()
+    # there is no "move" any more: withdraw, then assign or add by hand
+    assert client.post(f"/organizer/events/{event.slug}/assignments/{assignment.pk}/move",
+                       {"judge": judges[1].pk}).status_code == 404
+
+
+def test_assign_never_gives_a_withdrawn_review_back_to_that_judge(build, client_for):
+    event, judges, projects = build({"A": 2}, [[]] * 3)
+    run(event, target=1)
+    client = client_for(event.organizer)
+    live = lambda: set(Assignment.objects.filter(project=projects[0], status=AssignmentStatus.ASSIGNED)
+                       .values_list("judge_id", flat=True))
+    for pk in Assignment.objects.filter(project=projects[0], status=AssignmentStatus.ASSIGNED).values_list("pk", flat=True):
+        client.post(f"/organizer/events/{event.slug}/assignments/{pk}/withdraw")
+    gone = set(Assignment.objects.filter(project=projects[0], status=AssignmentStatus.WITHDRAWN)
+               .values_list("judge_id", flat=True))
+    assert gone and not live()
+    client.post(f"/organizer/events/{event.slug}/assignments", {"target": "1", "max_load": "", "seed": ""})
+    assert live() and not (live() & gone)  # it went to another judge, never back
+    # adding one of them back by hand is still allowed
+    back = next(iter(gone))
+    client.post(f"/organizer/events/{event.slug}/assignments/add", {"project": projects[0].pk, "judge": back})
+    assert back in live()
+
+
+def test_reshuffle_draws_unstarted_reviews_again_and_keeps_started_ones(build, client_for):
+    event, judges, projects = build({"A": 4}, [[]] * 6)
+    run(event, target=2)
+    started = Assignment.objects.filter(status=AssignmentStatus.ASSIGNED).first()
+    Score.objects.create(judge_id=started.judge_id, project_id=started.project_id)  # a draft
+    before = live_pairs(event)
+    client = client_for(event.organizer)
+    response = client.post(f"/organizer/events/{event.slug}/assignments",
+                           {"target": "2", "max_load": "", "seed": "7", "action": "reshuffle"})
+    assert response.status_code == 302
+    after = live_pairs(event)
+    assert (started.judge_id, started.project_id) in after  # started: stays
+    per_project = Counter(p for _, p in after)
+    assert len(per_project) == 4 and min(per_project.values()) >= 2  # every project has its 2
+    released = Assignment.objects.filter(status=AssignmentStatus.RELEASED).count()
+    assert released == len(before) - 1  # everything but the started one
+    entry = AuditLog.objects.get(action=AuditAction.ASSIGNMENTS_RESHUFFLED)
+    assert entry.detail["released"] == released and entry.detail["seed"] == 7
+
+
+def test_pressing_assign_when_everything_is_assigned_says_so(build, client_for):
+    event, _, _ = build({"A": 2}, [[]] * 2)
+    run(event, target=2)
+    client = client_for(event.organizer)
+    page = client.post(f"/organizer/events/{event.slug}/assignments", {"target": "2", "max_load": "", "seed": ""},
+                       follow=True).content.decode()
+    assert "nothing to add" in page and "reshuffle" in page
 
 
 def test_the_reassign_button_only_returns_to_this_events_pages(build, client_for):
@@ -315,3 +364,26 @@ def test_the_fixture_is_topped_up_to_three_reviews_without_touching_the_imported
     assert round_.summary["islands_after"] == 1
     assert before <= live_pairs(event)
     assert set(Counter(p for _, p in live_pairs(event)).values()) >= {3}
+
+
+def test_reviews_per_project_can_be_lowered_before_judging_and_is_fixed_during(build, client_for):
+    event, judges, projects = build({"A": 3}, [[]] * 4)
+    client = client_for(event.organizer)
+    url = f"/organizer/events/{event.slug}/assignments"
+    client.post(url, {"target": "3", "max_load": "", "seed": "1"})
+    assert all(n >= 3 for n in Counter(p for _, p in live_pairs(event)).values())
+    # before judging: lower to 2 -> the extra reviews are released
+    client.post(url, {"target": "2", "max_load": "", "seed": "2"})
+    per = Counter(p for _, p in live_pairs(event))
+    assert set(per.values()) <= {2, 3} and min(per.values()) == 2
+    assert Assignment.objects.filter(status=AssignmentStatus.RELEASED).exists()
+    assert services.review_target(event) == 2
+    # judging starts: the number is fixed, the field is disabled, and the service refuses a change
+    Event.objects.filter(pk=event.pk).update(judging_starts_at=timezone.now() - timedelta(minutes=1))
+    event.refresh_from_db()
+    page = client.get(url).content.decode()
+    assert "fixed once judging has started" in page
+    with pytest.raises(services.AssignmentError, match="fixed once judging has started"):
+        services.run_assignment(FakeRequest(event.organizer), event, target=3)
+    client.post(url, {"target": "5", "max_load": "", "seed": ""})  # a disabled field: the posted 5 is ignored
+    assert services.review_target(event) == 2
