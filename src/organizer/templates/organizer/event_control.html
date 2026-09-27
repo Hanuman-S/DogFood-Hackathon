@@ -120,6 +120,12 @@
         <a class="btn btn--small" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
         <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
       </div>
+      {% if judging_window.is_open %}
+      <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">
+        {% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end judging now</button>
+        <span class="faint">closes judging at this moment (it only moves the end earlier). reviews still in draft stop counting; final results can then be computed.</span>
+      </form>
+      {% endif %}
       <form class="form" method="post" action="{% url 'organizer:judging_extend' event.slug %}" novalidate>
         {% csrf_token %}
         <p class="section-title">extend judging</p>

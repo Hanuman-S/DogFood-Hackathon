@@ -334,3 +334,137 @@ def test_unscored_projects_are_listed_unranked_and_foreign_ids_dropped(judged):
     rows, unranked = results.build_rows(judged, snapshot)
     assert [r.project.name for r in rows] == ["P0", "P2", "P3"]
     assert [r.project.name for r in unranked] == ["P1"]
+
+
+# --- the demo path: the fixture event, straight from a fresh import ------------------------------------
+
+@TX
+def test_fixture_event_can_compute_final_and_publish_on_a_fresh_import(make_user, client_for):
+    """Sample Hack 2026 closes 2026-03-01, so its derived judging window (14 days) is in the past
+    on any boot after mid-March 2026: the final can be computed and published straight away."""
+    from engine_helpers import FIXTURES
+    from imports.fixtures import import_file
+    from imports.models import FixtureRef
+
+    import_file(FIXTURES)
+    event = Event.objects.get(pk=FixtureRef.objects.get(kind="event", external_id="evt_01").object_id)
+    admin = client_for(make_user(role=ADMIN))
+    base = f"/organizer/events/{event.slug}/results"
+    assert admin.post(base + "/compute", {"kind": "final"}).status_code == 302
+    snapshot = ResultSnapshot.objects.get(event=event, kind=SnapshotKind.FINAL)
+    assert admin.post(base + "/settings", {"visibility": "public_full", "winners_top_n": 3}).status_code == 302
+    assert admin.post(base + "/publish", {"snapshot": snapshot.pk}).status_code == 302
+    page = Client().get(f"/events/{event.slug}/results")
+    assert page.status_code == 200
+    assert "full ranking" in page.content.decode()
+
+
+# --- end judging now ------------------------------------------------------------------------------------
+
+def judging_now(make_event):
+    now = timezone.now()
+    return make_event(submissions_open_at=now - timedelta(days=3), submissions_close_at=now - timedelta(days=2),
+                      judging_starts_at=now - timedelta(days=1), judging_ends_at=now + timedelta(days=3))
+
+
+@pytest.mark.django_db
+def test_end_judging_now_moves_the_end_to_the_db_clock_once(make_event, client_for):
+    from core.judging import judging_closed
+    from core.deadlines import db_now
+
+    event = judging_now(make_event)
+    old_end = event.judging_ends_at
+    client = client_for(event.organizer)
+    assert client.post(f"/organizer/events/{event.slug}/judging/end").status_code == 302
+    event.refresh_from_db()
+    assert event.judging_ends_at < old_end and judging_closed(event, db_now())
+    assert event.original_judging_ends_at == old_end
+    entry = AuditLog.objects.get(action=AuditAction.JUDGING_ENDED_EARLY)
+    assert entry.detail["old"] == old_end.isoformat()
+    # a second press: already past -> refused, audited, nothing moves
+    ended = event.judging_ends_at
+    client.post(f"/organizer/events/{event.slug}/judging/end")
+    event.refresh_from_db()
+    assert event.judging_ends_at == ended
+    assert AuditLog.objects.get(action=AuditAction.JUDGING_END_REFUSED).detail["reason"] == "already ended"
+
+
+@pytest.mark.django_db
+def test_end_judging_now_refused_before_judging_starts(make_event):
+    from events.services import EventRuleError, end_judging_now
+
+    event = make_event()  # submissions still open
+    before = event.judging_ends_at
+    with pytest.raises(EventRuleError):
+        end_judging_now(event, actor=event.organizer)
+    event.refresh_from_db()
+    assert event.judging_ends_at == before
+    assert AuditLog.objects.get(action=AuditAction.JUDGING_END_REFUSED).detail["reason"] == "not started"
+
+
+@pytest.mark.django_db
+def test_end_judging_now_has_both_gates(make_event, make_user, client_for):
+    event = judging_now(make_event)
+    before = event.judging_ends_at
+    url = f"/organizer/events/{event.slug}/judging/end"
+    assert client_for(make_user()).post(url).status_code == 403
+    assert client_for(make_event().organizer).post(url).status_code == 404
+    event.refresh_from_db()
+    assert event.judging_ends_at == before
+    from events.services import end_judging_now
+    with pytest.raises(PermissionDenied):
+        end_judging_now(event, actor=make_user())
+
+
+# --- CSV formula injection, one test per CSV the portal writes ------------------------------------------
+
+EVIL = '=HYPERLINK("x")'
+
+
+def csv_rows(body):
+    return list(csv.reader(io.StringIO(body.decode("utf-8-sig"))))
+
+
+@TX
+def test_winners_csv_escapes_formulas(judged, client_for):
+    from core.deadlines import deadline_bypass
+
+    project = judged.projects_list[0]
+    with deadline_bypass(None, "test: formula-shaped names after the close"):
+        Project.objects.filter(pk=project.pk).update(name=EVIL)
+        project.team.__class__.objects.filter(pk=project.team_id).update(name="+team")
+    user = project.team.captain
+    user.__class__.objects.filter(pk=user.pk).update(name="@member")
+    publish(judged)
+    rows = csv_rows(client_for(judged.organizer).get(f"/organizer/events/{judged.slug}/results/winners.csv").content)
+    cells = {c for r in rows for c in r}
+    assert "'" + EVIL in cells and "'+team" in cells and "'@member" in cells
+    assert EVIL not in cells and "+team" not in cells and "@member" not in cells
+
+
+@TX
+def test_export_csv_escapes_formulas(make_event, make_team, client_for):
+    event = make_event()
+    Project.objects.create(team=make_team(event, name="-team"), event=event, name=EVIL)
+    rows = csv_rows(client_for(event.organizer).get(f"/api/export.csv?event={event.slug}&sheet=projects").content)
+    cells = {c for r in rows for c in r}
+    assert "'" + EVIL in cells and "'-team" in cells and EVIL not in cells
+
+
+@TX
+def test_export_zip_escapes_formulas(make_event, make_team, client_for):
+    import zipfile
+
+    event = make_event()
+    Project.objects.create(team=make_team(event, name="\tteam"), event=event, name=EVIL)
+    archive = zipfile.ZipFile(io.BytesIO(client_for(event.organizer).get(f"/api/export.zip?event={event.slug}").content))
+    cells = {c for name in archive.namelist() if name.endswith(".csv") for r in csv_rows(archive.read(name)) for c in r}
+    assert "'" + EVIL in cells and "'\tteam" in cells and EVIL not in cells
+
+
+def test_cell_escapes_every_formula_start_but_not_real_numbers():
+    from core.csvfile import cell
+
+    for start in ("=", "+", "-", "@", "\t", "\r"):
+        assert cell(start + "1+1") == "'" + start + "1+1"
+    assert (cell(-1), cell(-0.25)) == ("-1", "-0.25")

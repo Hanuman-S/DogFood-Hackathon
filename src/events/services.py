@@ -465,6 +465,48 @@ def extend_judging(request, event, new_end, reason):
     return event
 
 
+def end_judging_now(event, *, actor, origin=None):
+    """Close judging at this instant: `judging_ends_at` = the database clock. It only ever moves
+    the end earlier. Refused (audited) when judging has already ended, and before judging has
+    started (the end must stay after the start). The event row is locked, so this cannot race an
+    extension or a second press. The first end is kept in `original_judging_ends_at`; a results
+    date, if set, is already after the old end and so stays after the new one."""
+    from django.core.exceptions import PermissionDenied
+
+    from core.deadlines import db_now
+
+    def refuse(reason, message, **detail):
+        audit.record(AuditAction.JUDGING_END_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     reason=reason, **detail)
+        raise EventRuleError(message)
+
+    if not can_manage(actor, event):
+        audit.record(AuditAction.JUDGING_END_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     reason="not an organizer")
+        raise PermissionDenied("Only the event's organizers can end judging.")
+    problem = None
+    with transaction.atomic():
+        locked = Event.objects.select_for_update().get(pk=event.pk)
+        now = db_now()
+        old_end = locked.judging_ends_at
+        if now >= old_end:
+            problem = ("already ended", f"Judging already ended at {old_end.isoformat()}.")
+        elif now <= locked.judging_starts_at:
+            problem = ("not started", "Judging has not started yet, so there is nothing to end. "
+                       "Edit the dates in the settings instead.")
+        else:
+            if locked.original_judging_ends_at is None:
+                locked.original_judging_ends_at = old_end
+            locked.judging_ends_at = now
+            locked.save(update_fields=["judging_ends_at", "original_judging_ends_at", "updated_at"])
+    if problem:
+        refuse(problem[0], problem[1], judging_ends_at=old_end.isoformat())
+    audit.record(AuditAction.JUDGING_ENDED_EARLY, origin=origin, actor=actor, subject=event.slug,
+                 old=old_end.isoformat(), new=now.isoformat())
+    event.refresh_from_db()
+    return event
+
+
 def grant_extension(request, event, team, until, reason):
     from teams.models import TeamExtension
 

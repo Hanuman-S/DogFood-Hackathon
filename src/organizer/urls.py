@@ -37,6 +37,7 @@ urlpatterns = [
     path("events/<slug:slug>/deadline/extend", views.deadline_extend, name="deadline_extend"),
     path("events/<slug:slug>/deadline/teams", views.extension_grant, name="extension_grant"),
     path("events/<slug:slug>/judging/extend", views.judging_extend, name="judging_extend"),
+    path("events/<slug:slug>/judging/end", views.judging_end, name="judging_end"),
     path("events/<slug:slug>/assignments", assignments.assignments, name="assignments"),
     path("events/<slug:slug>/assignments/add", assignments.assignment_add, name="assignment_add"),
     path("events/<slug:slug>/assignments/<int:assignment_id>/withdraw", assignments.assignment_withdraw, name="assignment_withdraw"),

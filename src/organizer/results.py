@@ -15,10 +15,10 @@ from django.views.decorators.http import require_GET, require_POST
 
 from accounts.guards import portal_required
 from core import audit
+from core.csvfile import download, stamp, to_csv
 from core.deadlines import db_now
-from core.judging import judging_closed
+from core.judging import judging_closed, judging_window
 from events.services import get_managed_event
-from organizer.export import _download, _stamp, to_csv
 from scoring import results as result_views
 from scoring import services
 from scoring.errors import ScoringError
@@ -39,6 +39,7 @@ def _page(request, event, settings_form=None, status=200):
         "latest_final": latest_final,
         "publication": services.active_publication(event),
         "judging_closed": judging_closed(event, db_now()),
+        "judging_open": judging_window(event).is_open,
     }, status=status)
 
 
@@ -127,5 +128,5 @@ def winners_csv(request, slug):
     except ScoringError as error:
         messages.error(request, str(error))
         return redirect("organizer:results", slug=event.slug)
-    return _download(to_csv(result_views.WINNERS_HEADER, rows), "text/csv; charset=utf-8",
-                     f"{event.slug}-winners-{_stamp(db_now())}.csv")
+    return download(to_csv(result_views.WINNERS_HEADER, rows), "text/csv; charset=utf-8",
+                     f"{event.slug}-winners-{stamp(db_now())}.csv")

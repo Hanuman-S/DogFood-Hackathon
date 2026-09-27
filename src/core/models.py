@@ -73,6 +73,8 @@ class AuditAction(models.TextChoices):
     JUDGE_INVITE_REFUSED = "judge_invite_refused", "Refused a judge invite"
     JUDGING_EXTENDED = "judging_extended", "Extended judging"
     JUDGING_EXTENSION_REFUSED = "judging_extension_refused", "Refused to extend judging (a final result exists)"
+    JUDGING_ENDED_EARLY = "judging_ended_early", "Ended judging now"
+    JUDGING_END_REFUSED = "judging_end_refused", "Refused to end judging now"
     ASSIGNMENTS_GENERATED = "assignments_generated", "Ran an automatic assignment round"
     ASSIGNMENT_ADDED = "assignment_added", "Assigned a project to a judge"
     ASSIGNMENT_WITHDRAWN = "assignment_withdrawn", "Withdrew an assignment"

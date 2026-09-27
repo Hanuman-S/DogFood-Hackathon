@@ -17,6 +17,7 @@
           <button class="btn" type="submit" name="kind" value="final"{% if not judging_closed %} disabled aria-describedby="final-why"{% endif %}>compute final results</button>
         </form>
         {% if not judging_closed %}<p class="faint" id="final-why">a final result can be computed once judging closes ({{ event.judging_ends_at|utc }}). a preview can be computed now; it is never published.</p>{% endif %}
+        {% if judging_open %}<form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">{% csrf_token %}<input type="hidden" name="next" value="results"><button class="btn btn--small btn--danger" type="submit">end judging now</button><span class="faint">only moves the end earlier.</span></form>{% endif %}
 
         <p class="section-title">publish</p>
         {% if publication %}
