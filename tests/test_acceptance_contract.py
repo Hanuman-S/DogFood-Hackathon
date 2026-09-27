@@ -24,6 +24,7 @@ from django.urls import Resolver404, resolve
 
 from accounts.models import ApiToken
 from api.views import ProjectCreateView
+from gallery.views import project_gallery
 from core import clock
 from events.models import Event
 from tests.conftest import bearer
@@ -91,6 +92,32 @@ def test_the_submit_route_resolves_with_no_redirect(config):
     # wrapper is named `view`.
     match = resolve(path)
     assert getattr(match.func, "cls", None) is ProjectCreateView
+
+
+def test_the_gallery_route_resolves_with_no_redirect(config):
+    """Check 1's route. It must be registered at the root at exactly this string: under the
+    `projects/` include it would answer only via an APPEND_SLASH redirect, which `urllib` follows --
+    so the checker would measure a different path."""
+    path = config["routes"]["gallery"]
+    assert not path.endswith("/")
+
+    match = resolve(path)
+    assert match.func is project_gallery
+
+
+def test_the_gallery_answers_200_to_an_anonymous_get(client, db, config):
+    """Check 1, as the checker sends it: a GET with no auth header at all."""
+    response = client.get(config["routes"]["gallery"])
+
+    assert response.status_code == 200
+
+
+def test_the_gallery_route_does_not_redirect_over_http(client, db, config):
+    """Belt and braces around the resolver test: assert the real response is not a 3xx, because a
+    redirect is what silently turns the checker's request into something else."""
+    response = client.get(config["routes"]["gallery"])
+
+    assert response.status_code not in (301, 302, 307, 308)
 
 
 def test_the_advertised_t1_paths_carry_no_query_string(config):

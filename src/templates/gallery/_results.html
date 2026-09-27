@@ -1,0 +1,70 @@
+{% comment %}
+The results region: rendered inside `project_list.html` on a full page load, and returned on its own
+for an htmx request. One template either way, so the two paths cannot show different rows.
+
+Note there is no per-project authorization check here. The gallery's queryset is viewer-independent
+by construction (`gallery.selectors`), so every row in `projects` is public by definition. A
+`{% if %}` guarding a card would suggest otherwise and invite someone to "fix" the queryset later.
+{% endcomment %}
+
+<p class="muted result-count" role="status">
+  {% if total == 1 %}1 project{% else %}{{ total }} projects{% endif %}
+  {% if is_filtered %}match these filters{% endif %}
+  {% if page.paginator.num_pages > 1 %}
+    · page {{ page.number }} of {{ page.paginator.num_pages }}
+  {% endif %}
+</p>
+
+{% if projects %}
+  <div class="project-grid">
+    {% for project in projects %}
+      <article class="project-card">
+        {% if project.thumbnail %}
+          <img class="project-thumb" src="/projects/{{ project.pk }}/thumbnail.img"
+               alt="{{ project.name }}" loading="lazy">
+        {% endif %}
+        <header>
+          <h2><a href="/projects/{{ project.pk }}">{{ project.name }}</a></h2>
+          <p class="muted">
+            {{ project.team.name }}
+            {% if not event %}· <a href="/events/{{ project.event.slug }}/projects">{{ project.event.name }}</a>{% endif %}
+            {% if project.track %}· {{ project.track.name }}{% endif %}
+          </p>
+        </header>
+
+        {% if project.tagline %}<p>{{ project.tagline }}</p>{% endif %}
+
+        <footer>
+          {% for project_tag in project.project_tags.all %}
+            <a class="status-pill" href="?tag={{ project_tag.tag.name|urlencode }}">{{ project_tag.tag.name }}</a>
+          {% endfor %}
+          <small class="muted">Submitted {{ project.submitted_at|date:"Y-m-d H:i" }} UTC</small>
+        </footer>
+      </article>
+    {% endfor %}
+  </div>
+
+  {% if page.has_previous or page.has_next %}
+    <nav class="pagination" aria-label="Pages">
+      {% if page.has_previous %}
+        <a href="{{ previous_link }}" rel="prev" role="button" class="secondary outline">← Previous</a>
+      {% endif %}
+      <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+      {% if page.has_next %}
+        <a href="{{ next_link }}" rel="next" role="button" class="secondary outline">Next →</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% else %}
+  <p class="muted">
+    {% if is_filtered %}
+      No projects match these filters.
+      {% comment %}
+      An unresolvable filter value (a track or tag that does not exist) lands here rather than being
+      dropped -- silently widening the results would show projects the visitor did not ask for.
+      {% endcomment %}
+    {% else %}
+      No projects have been submitted yet.
+    {% endif %}
+  </p>
+{% endif %}

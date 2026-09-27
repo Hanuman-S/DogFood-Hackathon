@@ -15,5 +15,8 @@ from django.urls import path
 from api import views
 
 urlpatterns = [
+    # Read: the JSON gallery. Same selector, same filters, same rows as /projects.
+    path("projects", views.ProjectListView.as_view(), name="api_project_list"),
+    # Write: the one T1 write endpoint.
     path("events/<slug:slug>/projects", views.ProjectCreateView.as_view(), name="api_project_create"),
 ]

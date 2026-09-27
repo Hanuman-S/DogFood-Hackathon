@@ -540,41 +540,137 @@ For the README's "Not done yet" (phase 7):
   cleanup command.
 - Custom-question answers are stored as text for every kind, with no per-kind columns.
 
-## ▶ Handoff — start of phase 6
+### Phase 6 — Gallery ✅ (2026-09-26)
 
-State: phases 1-5 committed. 416 tests green. Acceptance: T1 check 3 PASS, checks 1-2 FAIL because
-the gallery does not exist yet, four T2 checks FAIL honestly.
+**Acceptance: `claimed T1, verified T1`.** All three T1 checks pass against a stack built from a
+clean `down -v`. The four T2 lines still read FAIL, honestly.
 
-Phase 6 is the gallery, and it is what turns checks 1 and 2 green:
+Verified first, before writing any gallery code:
 
-- **`/projects` at exactly that string**, registered at the root in `config/urls.py` - not under the
-  `projects/` include, which only handles `/projects/<...>`. `.dogfood.toml` advertises it, and
-  `tests/test_acceptance_contract.py` already asserts the T1 paths carry no query string; extend it
-  to assert this one resolves and answers 200 anonymously.
-- Defaults are settled and load-bearing: sort `newest`, page size **50**
-  (`settings.GALLERY_PAGE_SIZE` / `GALLERY_DEFAULT_SORT`). All 40 visible fixture projects fit page
-  one, so all three titles the checker looks for are present under any sort. Nothing may inspect the
-  request to decide what to show.
-- Search over `Project.search_vector` (GIN index; weights A name / B tagline+tags+team /
-  C description, already maintained by `projects.search.rebuild_search_vector`). Filters: event,
-  track, tag. Sorts: newest, name. **All state in query params**, so a filtered view is a URL
-  somebody can paste.
-- Scope every list through `core.permissions.gallery_projects()` or `visible_projects(user)` - never
-  a hand-rolled filter. `ProjectQuerySet.gallery_visible()` and `permissions.is_publicly_visible()`
-  must stay in agreement; `tests/test_permissions.py` asserts that across the whole fixture set.
-- `/events/<slug>/projects` for the per-event gallery (phase-4 templates already link to it).
-- JSON equivalents under `/api/projects` - read-only, same scoping.
-- The fixture summaries are identical across many projects (`tests/test_import_fixtures.py` notes
-  this), so search relevance will look odd on fixture data. Say so in the README rather than tuning
-  the weights around it.
+- `git ls-files --eol` reports `i/lf w/lf attr/text eol=lf` for `Dockerfile`, `docker/entrypoint.sh`,
+  `docker-compose.yml` and `scripts/test.sh`. No fix needed.
+- An organizer edit to an imported fixture row survives a restart: changed `evt_01`'s name and
+  `submissions_close_at` through `events.services.update_event`, ran `docker compose restart web`,
+  and both survived. The boot report named the divergence field by field
+  (`event: Event evt_01: judging_ends_at, name, submissions_close_at`) under its PRESERVED heading.
+  Already covered by `tests/test_import_fixtures.py::test_an_organizer_extending_a_deadline_survives_a_reimport`
+  (the entrypoint runs exactly that command), so no new test was needed. Gating is `SEED_FIXTURES`
+  rather than `DEMO_MODE` — the separate flag the earlier review explicitly allowed — because a real
+  deployment may want the organizers' event without 121 demo accounts. Restored the row with
+  `import_fixtures --sync` afterwards.
 
-Already in place for phase 6 to reuse rather than reinvent: `project_detail` and the protected media
-views in `projects/views.py`, `services.render_markdown`, the `.project-card` / `.project-thumb` CSS
-classes (already in `portal.css`, unused until now), and `GALLERY_PAGE_SIZE`.
+Done:
 
-Then phase 7: real acceptance run committed, README (with the "Not done yet" list above and the
-build-needs-network caveat), ARCHITECTURE.md, DATA-MODEL.md (Mermaid ER + fixture mapping),
-JUDGING.md stub, final clean-clone test with the network off. **Stop for go-ahead after phase 7.**
+- `gallery/selectors.py` — one function, `gallery_page()`, called by both the HTML gallery and
+  `GET /api/projects`. Not "the same rules in two places": the same code.
+- **Viewer-independent by construction.** It calls `permissions.gallery_projects()` and takes no
+  `user` or `request` argument at all, so it cannot drift into being viewer-dependent. A test
+  asserts the signatures have no such parameter, another monkeypatches `visible_projects` to raise,
+  and the headline test compares the rendered listing for anonymous / draft owner / organizer / admin
+  as a set and requires equality — then asserts the set is the public one, so the equality cannot be
+  satisfied by showing everything to everyone. Verified live too: logged in as the demo participant
+  whose team has a draft, and the gallery showed 0 projects, exactly as it does anonymously.
+- **Search**: `websearch_to_tsquery` (`search_type="websearch"`), never `to_tsquery` or `"raw"` —
+  13 parameterized operator-syntax inputs (`glass & `, `!x`, `(((`, unbalanced quotes, `<->`) each
+  assert no exception, because every one of them is a database error through `to_tsquery`. Plus
+  `name__icontains` for partial words, backed by a **pg_trgm GIN index on `Upper(name)`**
+  (migration 0003, index chosen to match what Django actually renders for `icontains`). Quoted
+  phrases and `-negation` work and are tested.
+- **Tags filter by exact normalized name**, not through the vector: `react` must not match
+  `reactivity`, which it would once the stemmer collapsed both to `reactiv`.
+- **Every ordering ends in a primary-key tiebreak** — `(-submitted_at, -id)` and `(name, id)` — with
+  a test that walks every page of ten projects sharing one timestamp and one name, asserting the
+  union is complete with no repeats. A structural test asserts each entry in `SORTS` ends in
+  `id`/`-id`.
+- **Nothing can 500.** 25 garbage parameter sets (`page=abc`, `sort=id) --`, 500-character tags, SQL
+  fragments, a null byte, a list-valued page) are asserted to render 200, and separately to parse
+  into a coherent `GalleryQuery`. Unresolvable *filters* (`track=99999`, `tag=nope`) deliberately
+  match nothing rather than being dropped: silently widening the result set would show projects the
+  visitor never asked for.
+- **Query count pinned**: 7 for the HTML page (COUNT, page, two prefetch, three facet queries) and 4
+  for the API, both with `django_assert_num_queries`, plus a second test that measures at 2 and 22
+  projects and requires the counts to be equal — so the pin cannot be satisfied by a page that
+  happens to be small.
+- **Works with no JavaScript.** A plain `method="get"` form with a submit button; no CSRF token and
+  no POST anywhere. htmx attributes swap only the results region when present. The one header branch
+  in the portal (`HX-Request`) selects the wrapper template, never the rows, and a test asserts both
+  paths return the same project ids.
+- `GET /api/projects` — same selector, same filters, with `count`, `page`, `pages`, `page_size`,
+  `next`, `previous` and an echo of how the query was understood (so a `sort=purple` silently
+  becoming `newest` is visible to a client). `next` preserves every other filter. A test walks the
+  pages and asserts each project appears exactly once.
+- `/events/<slug>/projects` scoped by its path, which wins over a `?event=` parameter. An event with
+  `gallery_public=False` is a 404 there rather than an empty page — an organizer who just switched
+  it off needs to see the difference.
+- **Still T1**: tests assert the rendered page contains none of "score", "rank", "winner",
+  "average" or "leaderboard", and that no ordering is randomised.
 
-Environment gotchas: see CLAUDE.md (Git Bash path mangling - `MSYS_NO_PATHCONV=1` is needed for
-`docker compose exec ... /app/src/manage.py` too; python3 Store shim).
+Bug found and fixed while building:
+
+- **A null byte in any text parameter was a 500.** `?q=glass%00signal` — which anyone can type —
+  reaches psycopg as `ValueError: A string literal cannot contain NUL characters`, raised by the
+  driver before the query is sent. Fixed by stripping C0 controls and DEL in `_clean_text`. Found by
+  requirement 4's parameterized sweep, and it would not have been found by a hand-written set of
+  plausible inputs.
+
+Two of my own test assumptions were wrong and were corrected rather than worked around: the English
+stemmer does not relate "build" to "built" (both stem to themselves, so the test now uses regular
+inflection), and the HTML page issues 7 queries rather than the 6 I guessed — the prefetch of
+`project_tags__tag` is two queries, not one.
+
+Tests: **556 green** (416 before, +140). New: `tests/test_gallery.py` (108) and
+`tests/test_api_gallery.py` (29); `tests/test_acceptance_contract.py` gained the gallery route's
+resolution, its anonymous 200, and a no-redirect assertion.
+
+Verified live on a clean stack: migration 0003 applied and `pg_trgm` present alongside `btree_gist`;
+`/projects` returns 200 with 40 cards and all three checker titles on page one; nine garbage query
+strings all 200; `?q=sig` finds 2 projects and `?q="glass signal"` finds 1; `?tag=nope` finds 0; the
+per-event gallery 200s; `/api/projects?sort=name` reports `count 40 pages 1 page_size 50` in
+alphabetical order; an `HX-Request` GET returns the bare results region.
+
+## ▶ Handoff — start of phase 7
+
+State: phases 1-6 committed. 556 tests green. **Acceptance: `claimed T1, verified T1`** — all three
+T1 checks pass; the four T2 checks FAIL because T2 is not built, which is the intended output.
+
+Phase 7 is documentation and the final honest run. No new features.
+
+- **`acceptance-report.txt`**: committed from a real run against a stack built from a clean
+  `docker compose down -v && up --build`. The current file is already that, but regenerate it last,
+  after any final change, and do not hand-edit it.
+- **README.md** — currently a two-line stub, so this is the biggest writing job:
+  - What it is, and `docker compose up` → http://localhost:8080 with no `.env` needed.
+  - The demo credentials and fixed API tokens (`DEMO_MODE=1`), and how to turn them off
+    (`DEMO_MODE=0`, `SEED_FIXTURES=0`).
+  - **The build needs network access** even though the running portal does not: the image installs
+    pinned wheels from PyPI. Say so plainly — "no runtime network" is the claim, not "no network
+    ever".
+  - **"Not done yet"**, which must include: no T2 judging at all (scores, CSV export, judge
+    assignment); no API for editing or submitting a project (create only); no submission withdrawal
+    and no organizer path from `submitted` back to `draft`; no live duplicate detection on submit
+    (organizers flag by hand); orphaned media files are possible if the process dies between commit
+    and unlink, with no cleanup command; no password reset and no outbound email; custom-question
+    answers stored as text for every kind; `pg_trgm` and `btree_gist` need a database role that may
+    create extensions (fine on the bundled Postgres, may need a DBA on a managed one).
+  - The fixture summaries are identical across many projects, so search relevance looks odd on
+    fixture data. State it rather than tuning weights around it.
+- **ARCHITECTURE.md**: the service-layer rule, the check order
+  (authenticate → resolve → deadline → permission → validation), the injectable clock, why bearer
+  auth skips CSRF, the viewer-independent gallery scoper versus `visible_projects`, protected media,
+  and the create-only importer.
+- **DATA-MODEL.md**: Mermaid ER diagram plus the fixture mapping (`external_id` per model, which
+  fixture fields are synthesized and which are absent).
+- **JUDGING.md**: what exists (`scoring` models, imported criteria and scores,
+  `assert_judging_open` raising `NotImplementedError`, `can_view_project_scores` returning False)
+  and what does not. It is the file a judge reads to confirm T2 is genuinely absent rather than
+  half-built.
+- **LICENSE** is already MIT, copyright Anurag V Rao. Check it is referenced from the README.
+- Final check with **the network off**: `docker compose down -v`, disconnect, `docker compose up`
+  from the built image, load the gallery and a project page, confirm nothing external is requested.
+  Note in the README that a *fresh build* cannot be done offline.
+
+**Stop for go-ahead after phase 7.** Nothing in T2 may be started without it, and `.dogfood.toml`
+must keep claiming only `["T1"]`.
+
+Environment gotchas: see CLAUDE.md (Git Bash path mangling — `MSYS_NO_PATHCONV=1` for anything with
+a `/path` argument, including `docker compose exec ... /app/src/manage.py`; python3 Store shim).

@@ -74,3 +74,39 @@ def rebuild_search_vector(project) -> None:
             description=project.description,
         )
     )
+
+
+def search_projects(queryset, term: str):
+    """Filter `queryset` to projects matching a visitor's search box.
+
+    Two matchers, OR'd together, because they fail in opposite directions:
+
+    1. **`websearch_to_tsquery`** against the precomputed `search_vector`. Used rather than
+       `to_tsquery` because `to_tsquery` demands operator syntax and raises a database error on
+       ordinary human input -- `to_tsquery('english', 'kiln & ')` or a stray quote is a 500, and a
+       search box that 500s on an apostrophe is worse than no search box. `websearch` accepts what
+       people actually type, including quoted phrases and `-excluded` words, and never raises.
+       Django's `search_type="websearch"` is exactly this function. **Never pass `search_type="raw"`
+       here**: that hands user input straight to `to_tsquery`.
+    2. **A substring match on the project name.** The vector is built from lexemes, so it matches
+       whole words only: a visitor typing "sig" finds nothing for "Glass Signal", and typing three
+       letters into a search box is the commonest thing a visitor does. `icontains` covers partial
+       words anywhere in the name, and the trigram GIN index on `UPPER(name)` (migration 0003) is
+       what keeps it from being a sequential scan.
+
+    Relevance ranking is deliberately absent. The gallery's two sorts are newest and name, both
+    fully ordered (see `gallery.selectors.SORTS`); adding a rank would make the order depend on the
+    search term and is not something T1 asks for. It would also look absurd on the fixture data,
+    where many projects share an identical summary.
+    """
+    term = (term or "").strip()
+    if not term:
+        return queryset
+
+    from django.contrib.postgres.search import SearchQuery
+    from django.db.models import Q
+
+    return queryset.filter(
+        Q(search_vector=SearchQuery(term, config=SEARCH_CONFIG, search_type="websearch"))
+        | Q(name__icontains=term)
+    )

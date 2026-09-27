@@ -44,7 +44,7 @@ src/
   events/            Event, Track, Prize, EventMembership, JudgeTrack, CustomQuestion
   teams/             Team, TeamMember, TeamInvite
   projects/          Project, ProjectImage, Tag, CustomAnswer, protected media serving
-  gallery/           public gallery views + search
+  gallery/           public gallery: selectors.py holds the one query both doors use
   scoring/           Criterion, Score, ScoreItem — models + fixture import only (T2 uses them)
   api/               DRF views, serializers, urls
   seed/              management commands: import_fixtures, seed_demo
@@ -212,6 +212,61 @@ submission is admitted by the guard and then stamped with a time after the deadl
 Where a request body has to be validated, validate it **after** the guards -- on a later statement,
 not in the same expression. Python evaluates arguments before the call, so
 `service(..., **validate(body))` runs the validation first and turns a late request into a 400.
+
+### 11. The gallery's scoper is viewer-independent, and must stay that way
+
+`gallery.selectors` calls `permissions.gallery_projects()` and **never** `visible_projects(user)`.
+Neither `gallery_queryset` nor `gallery_page` takes a `user` or `request` argument, so the
+distinction cannot be blurred by accident, and `tests/test_gallery.py` asserts both that the
+signatures have no such parameter and that the rendered listing is identical for an anonymous
+visitor, a team member with a draft, an organizer and a platform admin.
+
+The reason is a participant trap, not a permission one. If a team saw their own unsubmitted draft in
+the public listing, they would reasonably conclude it was public and never press submit. An organizer
+seeing hidden projects there would have no way to know what the public actually sees. Drafts stay
+reachable at `/projects/<id>` for the people entitled to them -- *that* page is viewer-dependent --
+but the listing shows one thing to everyone.
+
+`GET /api/projects` calls the same `gallery_page()`. Not "applies the same rules": the same function.
+A second filter implementation is how a JSON endpoint ends up listing a draft the HTML gallery hid.
+
+### 12. Search takes user input, so it uses `websearch_to_tsquery`
+
+`projects.search.search_projects` passes `search_type="websearch"`. **Never `"raw"`, and never
+`to_tsquery`**: those expect operator syntax and raise a database error on ordinary human input, so
+a stray `&`, an unbalanced quote or a `:` in the search box becomes a 500.
+`tests/test_gallery.py` sweeps a dozen such strings.
+
+Two matchers are OR'd because they fail in opposite directions: the `search_vector` matches whole
+stemmed words, and `name__icontains` catches the three letters a visitor actually typed. The second
+is backed by a pg_trgm GIN index on `Upper("name")` (migration 0003) -- `Upper` because that is what
+Django renders `icontains` as on Postgres; an index on the bare column would not be used.
+
+Tags are filtered by **exact normalized name**, never through the vector: stemming would make
+`react` match `reactivity`, and a tag pill has to mean exactly that tag.
+
+### 13. Every ordering ends in a primary-key tiebreak
+
+`gallery.selectors.SORTS` is `(-submitted_at, -id)` and `(name, id)`. Without the `id`, rows that tie
+on the leading column come back in whatever order Postgres finds convenient, and LIMIT/OFFSET over an
+unstable ordering shows a visitor one project twice and another not at all. Any new sort needs the
+same tiebreak; a test asserts each entry ends in `id` or `-id`.
+
+### 14. Query-string parameters are parsed tolerantly, and never reach the database raw
+
+`GalleryQuery.from_params` cannot raise. A malformed scalar (`page=abc`, `sort=purple`) falls back to
+the default; a filter naming something that does not exist matches nothing, which is deliberate --
+dropping an unresolvable filter would widen the result set and show projects the visitor did not ask
+for.
+
+Text parameters go through `_clean_text`, which strips C0 control characters. This is not tidiness:
+psycopg rejects a **null byte** in a query parameter before the query is even sent, so `?q=a%00b`
+was a 500 until that existed. `tests/test_gallery.py` parameterizes 25 garbage query strings and
+requires 200 from every one.
+
+Page counts are pinned with `django_assert_num_queries` (7 for the HTML page, 4 for the API), plus a
+test that compares the count at 2 and 22 projects. The gallery is the most-reloaded page in the
+portal; an N+1 there is the difference between a demo and a stall.
 
 ## Running things
 

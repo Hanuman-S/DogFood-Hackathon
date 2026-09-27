@@ -15,6 +15,7 @@ from django.urls import include, path
 
 from core.admin_site import portal_admin_site
 from core.views import healthz, home
+from gallery import urls as gallery_urls
 from projects import urls as projects_urls
 from teams import urls as teams_urls
 
@@ -37,12 +38,17 @@ urlpatterns = [
     # form would make the URL name `invites:invite_accept`, and every `reverse("invite_accept")` in
     # the views would fail at runtime rather than at import time. No namespace means no ambiguity.
     path("", include(teams_urls.invite_urlpatterns)),
+    # The public gallery, at exactly the string `.dogfood.toml` advertises. At the root rather than
+    # inside the `projects/` include below, which owns `/projects/<id>` -- see gallery/urls.py.
+    path("", include(gallery_urls.root_urlpatterns)),
     path("events/", include("events.urls")),
     # `/events/<slug>/teams/new` belongs to the teams app but reads naturally under the event.
     path("events/", include(teams_urls.event_team_urlpatterns)),
     # Likewise `/events/<slug>/projects/new`: a project is created inside an event, and afterwards
     # has an identity of its own under /projects/<id>.
     path("events/", include(projects_urls.event_project_urlpatterns)),
+    # `/events/<slug>/projects` -- the same gallery scoped to one event.
+    path("events/", include(gallery_urls.event_urlpatterns)),
     path("teams/", include("teams.urls")),
     path("projects/", include("projects.urls")),
     # The JSON API. `/api/events/<slug>/projects` is the route `.dogfood.toml` advertises as

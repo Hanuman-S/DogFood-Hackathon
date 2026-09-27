@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}{% if event %}{{ event.name }} projects{% else %}Projects{% endif %} · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>{% if event %}{{ event.name }}{% else %}Project gallery{% endif %}</h1>
+    <p>
+      {% if event %}
+        <a href="/events/{{ event.slug }}">Event details</a> ·
+        Submissions closed {{ event.submissions_close_at|date:"Y-m-d H:i" }} UTC
+      {% else %}
+        Every submitted project, across every public event.
+      {% endif %}
+    </p>
+  </hgroup>
+
+  {% comment %}
+  A plain GET form. No JavaScript is required for any of it: the button submits, the browser builds
+  the query string, and the server renders the results. The htmx attributes are an enhancement that
+  swaps only the results region; with htmx absent or blocked, every control still works.
+
+  `hx-push-url` matters for the same reason the form is GET: all state lives in the URL, so a
+  filtered view stays shareable and the back button behaves.
+  {% endcomment %}
+  <form method="get" action="{% if event %}/events/{{ event.slug }}/projects{% else %}/projects{% endif %}"
+        class="gallery-filters"
+        hx-get="{% if event %}/events/{{ event.slug }}/projects{% else %}/projects{% endif %}"
+        hx-target="#gallery-results"
+        hx-push-url="true">
+    <div class="filter-row">
+      <label for="q">
+        Search
+        <input type="search" id="q" name="q" value="{{ query.q }}"
+               placeholder="name, tagline, description, tag or team">
+      </label>
+
+      {% if not event %}
+        <label for="event">
+          Event
+          <select id="event" name="event">
+            <option value="">All events</option>
+            {% for option in facets.events %}
+              <option value="{{ option.slug }}" {% if option.slug == query.event %}selected{% endif %}>
+                {{ option.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+      {% endif %}
+
+      <label for="track">
+        Track
+        <select id="track" name="track">
+          <option value="">All tracks</option>
+          {% for track in facets.tracks %}
+            <option value="{{ track.pk }}" {% if track.pk == query.track %}selected{% endif %}>
+              {{ track.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label for="tag">
+        Tag
+        <select id="tag" name="tag">
+          <option value="">All tags</option>
+          {% for tag in facets.tags %}
+            <option value="{{ tag.name }}" {% if tag.name == query.tag %}selected{% endif %}>
+              {{ tag.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label for="sort">
+        Sort
+        <select id="sort" name="sort">
+          {% for option in sort_options %}
+            <option value="{{ option.key }}" {% if option.current %}selected{% endif %}>
+              {{ option.label }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="filter-actions">
+      <button type="submit">Apply</button>
+      {% if is_filtered %}
+        <a href="{% if event %}/events/{{ event.slug }}/projects{% else %}/projects{% endif %}"
+           role="button" class="secondary outline">Clear filters</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <div id="gallery-results">
+    {% include "gallery/_results.html" %}
+  </div>
+{% endblock %}

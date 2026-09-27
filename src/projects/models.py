@@ -17,12 +17,13 @@ Three things here are worth reading closely:
 
 from __future__ import annotations
 
-from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.indexes import GinIndex, OpClass
 from django.contrib.postgres.search import SearchVectorField
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Upper
 
 from core import clock
 from projects.validators import validate_web_url
@@ -154,6 +155,15 @@ class Project(models.Model):
             models.Index(fields=["event", "status"], name="project_event_status_idx"),
             models.Index(fields=["event", "track"], name="project_event_track_idx"),
             GinIndex(fields=["search_vector"], name="project_search_vector_gin"),
+            # Trigram index for the gallery's partial-word matching. `search_vector` matches whole
+            # words only, so `projects.search.search_projects` also runs `name__icontains` -- a
+            # `LIKE '%...%'` that no B-tree can serve. Indexed on `Upper("name")` because that is
+            # exactly what Django renders `icontains` as on Postgres; an index on the bare column
+            # would not be used. Needs the pg_trgm extension, created in migration 0003.
+            GinIndex(
+                OpClass(Upper("name"), name="gin_trgm_ops"),
+                name="project_name_trgm_gin",
+            ),
         ]
 
     def __str__(self) -> str:

@@ -3,15 +3,8 @@ portal: http://localhost:8080
 claimed: T1
 fixtures: C:\Users\anura\Desktop\DogFood\DogFood_Hackathon\acceptance\fixtures.json
 
-T1  gallery is public ................. FAIL
-       GET http://localhost:8080/projects
-       no auth header
-       got 404, wanted 200
-T1  project from fixtures shown ....... FAIL
-       GET http://localhost:8080/projects
-       looked for any of these fixture project titles: 'Glass Signal', 'Small Meadow', 'Deep Compass'
-       none of them appeared in the response body
-       if your gallery paginates, make sure page one is what this route returns
+T1  gallery is public ................. PASS
+T1  project from fixtures shown ....... PASS
 T1  closed event refuses submissions .. PASS
 T2  judge sees own scores ............. FAIL
        GET http://localhost:8080/api/judge/scores
@@ -30,5 +23,4 @@ T2  csv export works .................. FAIL
        sent as organizer
        got 404, wanted 200
 
-claimed T1, verified nothing
-note: claimed but not verified: T1
+claimed T1, verified T1

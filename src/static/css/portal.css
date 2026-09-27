@@ -145,6 +145,26 @@ a.brand { text-decoration: none; }
 }
 .image-grid figcaption { font-size: 0.8rem; color: var(--dogfood-muted); }
 
+/* Gallery: filter bar and card grid. The filter row wraps rather than scrolling, so the form stays
+ * usable at phone width with no JavaScript involved. */
+.gallery-filters { margin-bottom: 1.5rem; }
+.filter-row { display: flex; flex-wrap: wrap; gap: 0 1rem; align-items: flex-end; }
+.filter-row label { flex: 1 1 12rem; margin-bottom: 0.5rem; }
+.filter-actions { display: flex; gap: 0.5rem; align-items: center; }
+.filter-actions button, .filter-actions a { width: auto; margin: 0; }
+.result-count { margin-bottom: 1rem; }
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.project-card > header h2 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+.project-card > footer { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+
+.pagination { display: flex; gap: 1rem; align-items: center; margin-top: 1.5rem; }
+.pagination a { width: auto; margin: 0; }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --dogfood-warning-bg: #3a2d14;
