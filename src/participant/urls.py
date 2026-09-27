@@ -1,6 +1,6 @@
 from django.urls import path
 
-from participant import views
+from participant import views, voting
 
 app_name = "participant"
 
@@ -9,6 +9,9 @@ urlpatterns = [
     path("events/<slug:slug>/", views.event, name="event"),
     path("events/<slug:slug>/team", views.team_create, name="team_create"),
     path("events/<slug:slug>/project", views.project_start, name="project_start"),
+    path("events/<slug:slug>/vote", voting.vote, name="vote"),
+    path("events/<slug:slug>/vote/open", voting.vote_open, name="vote_open"),
+    path("events/<slug:slug>/vote/cast", voting.vote_cast, name="vote_cast"),
     path("teams/<int:team_id>/rename", views.team_rename, name="team_rename"),
     path("teams/<int:team_id>/reset-link", views.team_reset_link, name="team_reset_link"),
     path("teams/<int:team_id>/members/<int:member_id>/captain", views.team_captain, name="team_captain"),

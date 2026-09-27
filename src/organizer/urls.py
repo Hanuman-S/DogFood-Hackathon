@@ -1,6 +1,6 @@
 from django.urls import path, register_converter
 
-from organizer import assignments, progress, results, rubric, views
+from organizer import assignments, progress, results, rubric, views, voting
 
 
 class PartKind:
@@ -50,6 +50,11 @@ urlpatterns = [
     path("events/<slug:slug>/results/unpublish", results.unpublish, name="results_unpublish"),
     path("events/<slug:slug>/results/settings", results.settings, name="results_settings"),
     path("events/<slug:slug>/results/winners.csv", results.winners_csv, name="winners_csv"),
+    path("events/<slug:slug>/voting", voting.voting, name="voting"),
+    path("events/<slug:slug>/voting/settings", voting.voting_settings, name="voting_settings"),
+    path("events/<slug:slug>/voting/end", voting.voting_end, name="voting_end"),
+    path("events/<slug:slug>/voting/remove", voting.voting_remove, name="voting_remove"),
+    path("events/<slug:slug>/voting/tally.csv", voting.tally_csv, name="tally_csv"),
     path("events/<slug:slug>/progress/nudge/<int:membership_id>", progress.nudge, name="judge_nudge"),
     path("events/<slug:slug>/deadline/teams/<int:extension_id>/revoke", views.extension_revoke, name="extension_revoke"),
     path("events/<slug:slug>/organizers/<int:link_id>/remove", views.organizer_remove, name="organizer_remove"),

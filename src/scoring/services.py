@@ -67,6 +67,9 @@ from scoring.models import (
     Score, ScoreItem, SnapshotKind,
 )
 
+from voting.errors import VotingOpen
+from voting.models import VotingConfig
+
 from .engine import pipeline
 from .engine.config import EngineConfig
 from .engine.errors import ConfigError, EngineError
@@ -805,7 +808,7 @@ def active_publication(event):
 def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
     """Publish the event's latest final snapshot. Refusals, each audited: PermissionDenied (not an
     organizer of the event, nor an admin); NoSuchSnapshot (404); NotFinal (400); NotLatestFinal,
-    AlreadyPublished (409)."""
+    VotingOpen (community voting has not closed yet), AlreadyPublished (409)."""
 
     def refuse(error, reason):
         audit.record(AuditAction.RESULTS_PUBLISH_REFUSED, origin=origin, actor=actor, subject=event.slug,
@@ -824,6 +827,10 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
                 raise NotFinal("Only a final result can be published; this one is a preview.")
             if latest_final(event).pk != snapshot.pk:
                 raise NotLatestFinal("A newer final result exists; publish that one instead.")
+            voting = VotingConfig.objects.filter(event=event).first()
+            if voting is not None and db_now() < voting.closes_at:
+                raise VotingOpen(f"Community voting closes at {voting.closes_at.isoformat()}; final results "
+                                 "can be published once it has closed.")
             current = active_publication(event)
             if current is not None:
                 raise AlreadyPublished(
@@ -832,7 +839,7 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
                 event=event, snapshot=snapshot, published_at=db_now(), published_by=actor,
                 published_by_email=actor.email,
             )
-    except (NoSuchSnapshot, NotFinal, NotLatestFinal, AlreadyPublished) as error:
+    except (NoSuchSnapshot, NotFinal, NotLatestFinal, AlreadyPublished, VotingOpen) as error:
         refuse(error, error.code)
     except IntegrityError:  # the partial unique constraint, if the lock was somehow not enough
         refuse(AlreadyPublished("These results are already published; unpublish them first."), "already_published")

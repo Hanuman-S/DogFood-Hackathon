@@ -116,7 +116,12 @@ def event_control(request, slug):
         if not form.is_valid():
             event.refresh_from_db()
             return _control(request, event, status=400, settings_form=form)
-        event = services.update_event(request, event, form)
+        try:
+            event = services.update_event(request, event, form)
+        except services.EventRuleError as error:
+            form.add_error("submissions_close_at", str(error))
+            event.refresh_from_db()
+            return _control(request, event, status=409, settings_form=form)
         messages.success(request, "event settings saved.")
         return redirect("organizer:event", slug=event.slug)
     return _control(request, event)

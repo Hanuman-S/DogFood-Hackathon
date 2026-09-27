@@ -27,6 +27,7 @@ urlpatterns = [
     path("api/", include("projects.api_urls")),
     path("api/", include("judge.api_urls")),
     path("api/", include("organizer.api_urls")),
+    path("api/", include("participant.api_urls")),
     path("join/<str:token>", participant_views.join, name="join"),
     path("invite/judge/<str:token>", judge_views.invite, name="judge_invite"),
     path("media/projects/<str:name>", media.serve, name="project_media"),

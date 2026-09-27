@@ -101,6 +101,19 @@ class AuditAction(models.TextChoices):
     RESULTS_PUBLISH_REFUSED = "results_publish_refused", "Refused to publish or unpublish results"
     RESULT_SETTINGS_CHANGED = "result_settings_changed", "Changed who can see an event's results"
     WINNERS_EXPORTED = "winners_exported", "Downloaded the winners and their contacts"
+    # community voting (T3)
+    EVENT_CHANGE_REFUSED = "event_change_refused", "Refused a date change (community voting is scheduled)"
+    VOTING_CONFIG_CHANGED = "voting_config_changed", "Set up or changed an event's community vote"
+    VOTING_CONFIG_REFUSED = "voting_config_refused", "Refused a change to an event's community vote"
+    VOTING_REMOVED = "voting_removed", "Removed an event's community vote before it opened"
+    VOTING_ENDED_EARLY = "voting_ended_early", "Ended voting now"
+    VOTING_END_REFUSED = "voting_end_refused", "Refused to end voting now"
+    BALLOT_OPENED = "ballot_opened", "Opened a ballot"
+    VOTE_CAST = "vote_cast", "Cast a vote"
+    VOTE_CHANGED = "vote_changed", "Changed a vote"
+    VOTE_REFUSED = "vote_refused", "Refused a vote"
+    VOTE_LATE_REFUSED = "vote_late_refused", "Refused a vote outside the voting window"
+    TALLY_EXPORTED = "tally_exported", "Downloaded a vote tally"
 
 
 class AuditLog(models.Model):

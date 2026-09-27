@@ -24,6 +24,7 @@ from scoring import services
 from scoring.errors import ScoringError
 from scoring.forms import ResultSettingsForm
 from scoring.models import ResultSnapshot, SnapshotKind
+from voting.errors import VotingError
 
 
 def _page(request, event, settings_form=None, status=200):
@@ -62,7 +63,7 @@ def compute(request, slug):
         return redirect("organizer:results", slug=event.slug)
     try:
         snapshot = services.compute_snapshot(event, kind, actor=request.user, request=request)
-    except (ScoringError, PermissionDenied) as error:
+    except (ScoringError, VotingError, PermissionDenied) as error:
         messages.error(request, str(error))
         return redirect("organizer:results", slug=event.slug)
     messages.success(request, f"{kind} #{snapshot.pk} computed.")
@@ -80,7 +81,7 @@ def publish(request, slug):
         return redirect("organizer:results", slug=event.slug)
     try:
         services.publish_results(event, snapshot_id, actor=request.user, origin=audit.origin_of(request))
-    except (ScoringError, PermissionDenied) as error:
+    except (ScoringError, VotingError, PermissionDenied) as error:
         messages.error(request, str(error))
         return redirect("organizer:results", slug=event.slug)
     messages.success(request, "results published.")
@@ -93,7 +94,7 @@ def unpublish(request, slug):
     event = get_managed_event(request.user, slug)
     try:
         services.unpublish_results(event, actor=request.user, origin=audit.origin_of(request))
-    except (ScoringError, PermissionDenied) as error:
+    except (ScoringError, VotingError, PermissionDenied) as error:
         messages.error(request, str(error))
         return redirect("organizer:results", slug=event.slug)
     messages.success(request, "results unpublished: only organizers can see them now.")

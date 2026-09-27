@@ -14,6 +14,8 @@ from projects import gallery as gallery_query
 from projects.models import Project
 from projects.services import can_view
 from scoring.results import results_page, results_visible
+from voting import services as voting_services
+from core.deadlines import db_now
 
 
 @never_cache
@@ -41,6 +43,7 @@ def event_detail(request, slug):
             "submitted_count": event.projects.filter(status="submitted").count(),
             "team_count": event.teams.count(),
             "results_visible": results_visible(event, request.user),
+            "voting_open": voting_services.is_open(voting_services.voting_for(event), db_now()),
         },
     )
 

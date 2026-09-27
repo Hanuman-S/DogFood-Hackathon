@@ -24,3 +24,23 @@ def user_agent(request):
 def wants_json(request):
     """True for API callers: anything under /api/, or authenticated by Bearer token."""
     return request.path.startswith("/api/") or getattr(request, "auth_method", "") == "bearer"
+
+
+IP_HASH_SALT = "dogfood.ip_hash"
+
+
+def hash_ip(ip):
+    """A keyed hash of an IP address (HMAC-SHA256, the key derived from SECRET_KEY), or "" for no IP.
+
+    Stable for as long as SECRET_KEY is, so the same address can be counted (rate limits) and
+    clustered (integrity flags) without ever being stored. Rotating SECRET_KEY resets both.
+    """
+    if not ip:
+        return ""
+    from django.utils.crypto import salted_hmac
+
+    return salted_hmac(IP_HASH_SALT, ip, algorithm="sha256").hexdigest()
+
+
+def ip_hash(request):
+    return hash_ip(client_ip(request)) if request is not None else ""

@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "projects",
     "imports",
     "scoring",
+    "voting",
     # ours -- one app per audience, so each can be owned by a different teammate
     "public",
     "participant",
