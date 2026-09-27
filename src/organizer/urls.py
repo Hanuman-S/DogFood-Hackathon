@@ -27,6 +27,7 @@ urlpatterns = [
     path("events/<slug:slug>/<part:kind>/<int:part_id>/visibility", views.part_visibility, name="part_visibility"),
     path("events/<slug:slug>/<part:kind>/<int:part_id>/delete", views.part_delete, name="part_delete"),
     path("events/<slug:slug>/organizers", views.organizer_add, name="organizer_add"),
+    path("events/<slug:slug>/organizers/invite", views.organizer_invite_create, name="organizer_invite_create"),
     path("events/<slug:slug>/rubric", rubric.rubric, name="rubric"),
     path("events/<slug:slug>/rubric/standard", rubric.rubric_standard, name="rubric_standard"),
     path("events/<slug:slug>/rubric/<int:criterion_id>", rubric.criterion_text, name="criterion_text"),

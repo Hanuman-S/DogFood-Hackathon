@@ -225,7 +225,34 @@ def add_judge(request, event, email, tracks=()):
 # --- judge invite links ------------------------------------------------------------------------
 
 INVITE_TTL = timedelta(days=7)
-INVITE_PREFIX = "jinv_"
+INVITE_PREFIX = "jinv_"            # judge invite links
+ORGANIZER_INVITE_PREFIX = "oinv_"  # co-organizer invite links
+
+# Audit actions per invite role: (invited, accepted, revoked, refused, added).
+_INVITE_ACTIONS = {
+    Role.JUDGE: (AuditAction.JUDGE_INVITED, AuditAction.JUDGE_INVITE_ACCEPTED,
+                 AuditAction.JUDGE_INVITE_REVOKED, AuditAction.JUDGE_INVITE_REFUSED, AuditAction.JUDGE_ADDED),
+    Role.ORGANIZER: (AuditAction.ORGANIZER_INVITED, AuditAction.ORGANIZER_INVITE_ACCEPTED,
+                     AuditAction.ORGANIZER_INVITE_REVOKED, AuditAction.ORGANIZER_INVITE_REFUSED,
+                     AuditAction.ORGANIZER_ADDED),
+}
+
+
+def invite_problem(event, user, role):
+    """Why `user` cannot accept a `role` invite to `event`, or ""."""
+    if role == Role.JUDGE:
+        return judge_invite_problem(event, user)
+    if user.is_platform_admin:
+        return "Platform admins can already manage every event."
+    held = roles_in(user, event)
+    if Role.ORGANIZER in held:
+        return f"{user.email} is already an organizer of this event."
+    if Role.PARTICIPANT in held:
+        return (
+            f"{user.email} is competing in this event, so they cannot also organize it "
+            "(conflict of interest)."
+        )
+    return ""
 
 
 def judge_invite_problem(event, user):
@@ -243,8 +270,13 @@ def judge_invite_problem(event, user):
     return ""
 
 
-def create_judge_invite(request, event, email="", tracks=()):
-    """A one-time link that makes its holder a judge of `event`.
+def create_organizer_invite(request, event, email=""):
+    """A one-time link that makes its holder a co-organizer of `event` (see create_judge_invite)."""
+    return create_judge_invite(request, event, email, role=Role.ORGANIZER)
+
+
+def create_judge_invite(request, event, email="", tracks=(), role=Role.JUDGE):
+    """A one-time link that makes its holder a judge of `event` (or, with `role`, a co-organizer).
 
     With `email`, only that person can accept it; inviting the same email again revokes their
     pending link first. With no email it is an **open** link that the first person to accept it
@@ -256,22 +288,24 @@ def create_judge_invite(request, event, email="", tracks=()):
     email = normalize_email(email) if (email or "").strip() else ""
     existing = User.objects.filter(email=email).first() if email else None
     if existing is not None:
-        problem = judge_invite_problem(event, existing)
+        problem = invite_problem(event, existing, role)
         if problem:
             raise EventRuleError(problem)
+    if role != Role.JUDGE:
+        tracks = ()
     now = timezone.now()
-    raw = INVITE_PREFIX + secrets.token_urlsafe(32)
+    raw = (INVITE_PREFIX if role == Role.JUDGE else ORGANIZER_INVITE_PREFIX) + secrets.token_urlsafe(32)
     with transaction.atomic():
         replaced = JudgeInvite.objects.filter(
-            event=event, email=email, accepted_at__isnull=True, revoked_at__isnull=True
+            event=event, role=role, email=email, accepted_at__isnull=True, revoked_at__isnull=True
         ).update(revoked_at=now) if email else 0
         invite = JudgeInvite.objects.create(
-            event=event, email=email, digest=digest_token(raw), created_by=request.user,
+            event=event, role=role, email=email, digest=digest_token(raw), created_by=request.user,
             expires_at=now + INVITE_TTL,
         )
         invite.tracks.set(tracks)
     audit.record(
-        AuditAction.JUDGE_INVITED, request=request, subject=event.slug, email=email,
+        _INVITE_ACTIONS[role][0], request=request, subject=event.slug, email=email,
         open_link=not email, tracks=[t.name for t in tracks], expires=invite.expires_at.isoformat(),
         replaced_pending=replaced, has_account=existing is not None,
     )
@@ -282,7 +316,7 @@ def find_judge_invite(raw):
     """The invite behind a link, whatever its state, or None."""
     from accounts.models import digest_token
 
-    if not raw or not raw.startswith(INVITE_PREFIX):
+    if not raw or not raw.startswith((INVITE_PREFIX, ORGANIZER_INVITE_PREFIX)):
         return None
     return (
         JudgeInvite.objects.select_related("event", "created_by")
@@ -328,38 +362,39 @@ def accept_judge_invite(request, raw, user):
                 raise _InviteRefused(
                     invite, f"This invite is for {invite.email}. Log out, then open the link again."
                 )
-            problem = judge_invite_problem(invite.event, user)
+            problem = invite_problem(invite.event, user, invite.role)
             if problem:
                 raise _InviteRefused(invite, problem)
             try:
                 with transaction.atomic():
                     membership = EventMembership.objects.create(
-                        event=invite.event, user=user, role=Role.JUDGE, added_by=invite.created_by
+                        event=invite.event, user=user, role=invite.role, added_by=invite.created_by
                     )
             except IntegrityError:
                 # The conflict-of-interest constraint beat the check above.
-                raise _InviteRefused(invite, "You cannot judge this event (conflict of interest).")
-            for track in invite.tracks.all():
-                JudgeTrack.objects.create(membership=membership, track=track)
+                raise _InviteRefused(invite, f"You cannot {'judge' if invite.role == Role.JUDGE else 'organize'} "
+                                             "this event (conflict of interest).")
+            if invite.role == Role.JUDGE:
+                for track in invite.tracks.all():
+                    JudgeTrack.objects.create(membership=membership, track=track)
             invite.accepted_at, invite.accepted_by = timezone.now(), user
             invite.save(update_fields=["accepted_at", "accepted_by"])
     except _InviteRefused as refusal:
         invite, reason = refusal.args
         audit.record(
-            AuditAction.JUDGE_INVITE_REFUSED, request=request, actor=user,
+            _INVITE_ACTIONS[invite.role if invite else Role.JUDGE][3], request=request, actor=user,
             subject=invite.event.slug if invite else "", email=user.email, reason=reason,
         )
         raise EventRuleError(reason) from None
     forget_cached_roles(user)
+    actions = _INVITE_ACTIONS[invite.role]
     audit.record(
-        AuditAction.JUDGE_INVITE_ACCEPTED, request=request, actor=user, subject=invite.event.slug,
+        actions[1], request=request, actor=user, subject=invite.event.slug,
         email=user.email, invited_by=getattr(invite.created_by, "email", ""),
         open_link=not invite.email,
     )
-    audit.record(
-        AuditAction.JUDGE_ADDED, request=request, actor=user, subject=invite.event.slug,
-        email=user.email, via="invite link",
-    )
+    audit.record(actions[4], request=request, actor=user, subject=invite.event.slug,
+                 email=user.email, via="invite link")
     return membership
 
 
@@ -368,7 +403,7 @@ def revoke_judge_invite(request, event, invite):
         raise EventRuleError("That invite is no longer pending.")
     invite.revoked_at = timezone.now()
     invite.save(update_fields=["revoked_at"])
-    audit.record(AuditAction.JUDGE_INVITE_REVOKED, request=request, subject=event.slug,
+    audit.record(_INVITE_ACTIONS[invite.role][2], request=request, subject=event.slug,
                  email=invite.email, open_link=not invite.email)
 
 

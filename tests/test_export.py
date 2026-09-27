@@ -86,7 +86,7 @@ def end_judging(event):
 # --- every stage --------------------------------------------------------------------------------
 
 
-SETUP = {"event", "tracks", "prizes", "questions", "rubric", "judges", "judge_invites", "audit"}
+SETUP = {"event", "tracks", "prizes", "questions", "rubric", "judges", "invites", "audit"}
 STAGES = [  # (dates that put the event in a stage, the sheets open then)
     ({"submissions_open_at": timezone.now() + timedelta(days=1)}, SETUP),
     ({}, SETUP | {"teams", "members", "projects"}),
@@ -211,7 +211,7 @@ def test_extensions_teams_members_and_invites(judged, client_for, make_user):
     assert teams[team.name]["extension reason"] == "wifi"
     members = as_dicts(sheet(client, judged, "members"))
     assert any(m["team"] == team.name and m["captain"] == "yes" for m in members)
-    invites = as_dicts(sheet(client, judged, "judge_invites"))
+    invites = as_dicts(sheet(client, judged, "invites"))
     assert invites[0]["for"].startswith("open link") and invites[0]["state"] == "pending"
 
 

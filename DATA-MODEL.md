@@ -90,7 +90,7 @@ role per account. The portals, URLs and refusals are unchanged; see [ARCHITECTUR
 | `events_event` | slug, name, tagline, Markdown description, `starts_at`, `submissions_open_at`, `submissions_close_at`, `original_submissions_close_at`, `judging_starts_at`, `judging_ends_at`, `original_judging_ends_at`, `results_at` (null = to be announced), min/max team size, `is_published` | a strictly ordered timeline, one CHECK per step: `event_starts_before_submissions_open`, `event_submissions_window_valid` (open < close), `event_judging_starts_after_close`, `event_judging_window_valid`, `event_results_after_judging` (when set); `event_team_size_range` (1 ≤ min ≤ max ≤ 20) |
 | `events_eventmembership` | user, event, role, generated `side`, who added it | `membership_unique_user_event_role`, `membership_role_valid`, `membership_no_competitor_and_staff` **(pg)** |
 | `events_judgetrack` | which tracks a judge membership covers (none = every track) | `judge_track_unique` |
-| `events_judgeinvite` | a one-time judge link: email, tracks, SHA-256 **digest** of the token (never the token), expiry, accepted/revoked timestamps | `judge_invite_one_pending_per_email` (partial unique), `judge_invite_not_accepted_and_revoked` |
+| `events_judgeinvite` | a one-time judge or co-organizer link (`role`): email (empty = open link), tracks (judges), SHA-256 **digest** of the token (never the token), expiry, accepted/revoked timestamps | `judge_invite_one_pending_per_email` (partial unique), `judge_invite_not_accepted_and_revoked` |
 | `events_track` | name, description, order, `is_hidden` | `track_name_unique_per_event` |
 | `events_prize` | title, value text, rank, optional track | |
 | `events_customquestion` | prompt, help, kind (short / long / url / choice / checkbox), choices, required, `is_hidden` | |
@@ -230,7 +230,7 @@ from each event's control page in the organizer portal.
   `docker compose exec db pg_dump -U dogfood dogfood > dogfood.sql` takes all of it, and
   `manage.py dumpdata` gives a portable JSON dump.
 - **CSV, stage by stage:** each sheet unlocks when its stage starts. Organizers download
-  `GET /api/export.zip?event=<slug>` (one CSV per open sheet: event, tracks, prizes, questions, rubric, judges, judge invites, teams, members,
+  `GET /api/export.zip?event=<slug>` (one CSV per open sheet: event, tracks, prizes, questions, rubric, judges, invites, teams, members,
   projects, assignments, assignment rounds, submitted reviews, results, audit, plus a README), or
   one sheet with `GET /api/export.csv?event=<slug>&sheet=<name>`; the same links are on each
   event's page. Secrets (team invite tokens, judge invite digests) and draft reviews are never

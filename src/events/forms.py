@@ -279,7 +279,13 @@ class QuestionForm(_OrderedPartForm):
 
 
 class AddOrganizerForm(forms.Form):
-    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "the email of an existing account"}))
+    """One form, two buttons, like adding a judge: "add" needs the email of an existing account;
+    "invite by link" takes an email (only that person can use the link) or none (an open link)."""
+
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={"placeholder": "e.g. ada@example.org (optional for a link)"}),
+    )
 
 
 class AddJudgeForm(forms.Form):

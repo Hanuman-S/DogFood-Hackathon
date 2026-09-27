@@ -111,6 +111,13 @@ link** creates a one-time link for an email (optionally for chosen tracks). The 
 Audit rows: `judge_invited`, `judge_invite_accepted` (plus `judge_added`), `judge_invite_refused`
 with the reason (wrong account, used, expired, conflict of interest), `judge_invite_revoked`.
 
+The email is optional: without one the link is an **open link** that the first person to accept it
+uses up. **Co-organizers** are invited the same way from the organizers section (the same model,
+`events_judgeinvite`, with `role` "organizer"; links start `oinv_` and land on
+`/invite/organizer/<token>`); accepting makes the holder an organizer of that event, refused for
+anyone competing in it. Audit rows: `organizer_invited`, `organizer_invite_accepted` (plus
+`organizer_added`), `organizer_invite_refused`, `organizer_invite_revoked`.
+
 ## The judging window (built)
 
 Reviews may be written only from `judging_starts_at` to `judging_ends_at`, by the database clock,
@@ -187,13 +194,13 @@ are never deleted; their status changes.
 
 The export (`src/organizer/export.py`) grows with the event: each sheet belongs to a stage and
 unlocks when that stage starts, by the database clock. Setup (event, tracks, prizes, questions,
-rubric, judges, judge invites) and the audit trail are there from creation; teams, members and
+rubric, judges, invites) and the audit trail are there from creation; teams, members and
 projects from submissions open; assignments from submissions close; reviews from judging start;
 results from judging end (until then rank, score and judge lean are empty everywhere). A sheet of
 a stage that has not started is refused with 409 `stage_not_open` and its opening time, and left
 out of the ZIP (whose README says when it opens).
 `GET /api/export.zip?event=<slug>` gives one CSV per open sheet (event, tracks, prizes, questions,
-rubric, judges, judge invites, teams, members, projects, assignments, assignment rounds,
+rubric, judges, invites, teams, members, projects, assignments, assignment rounds,
 reviews, results, audit) plus a README, all read in one REPEATABLE READ snapshot;
 `GET /api/export.csv?event=<slug>&sheet=<name>` gives one sheet; `GET /api/export.csv` alone
 (the checker's route) gives the projects of every event the caller manages. Organizers of the

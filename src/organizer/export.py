@@ -130,7 +130,7 @@ SHEETS = [
     Sheet("questions", "setup", "custom submission questions and how many projects answered each"),
     Sheet("rubric", "setup", "criteria: weight, share of the score, scale and the written description of each level"),
     Sheet("judges", "setup", "judges: tracks and progress (assigned, submitted, drafts, declined); their lean once results open"),
-    Sheet("judge_invites", "setup", "judge invite links: who for, state, and who accepted (the link itself is never exported)"),
+    Sheet("invites", "setup", "judge and co-organizer invite links: role, who for, state, and who accepted (the link itself is never exported)"),
     Sheet("teams", "submissions", "teams: captain, members, project and any deadline extension", SUBMISSIONS),
     Sheet("members", "submissions", "one row per participant: team, name, email, captain or not", SUBMISSIONS),
     Sheet("projects", "submissions", "one row per project: status, links, tags, custom answers, reviews in; rank and score once results open", SUBMISSIONS),
@@ -326,7 +326,7 @@ class EventExport:
             ))
         return header, rows
 
-    def sheet_judge_invites(self):
+    def sheet_invites(self):
         invites = (JudgeInvite.objects.filter(event=self.event).select_related("created_by", "accepted_by")
                    .prefetch_related("tracks").order_by("-created_at"))
 
@@ -339,8 +339,9 @@ class EventExport:
                 return "expired"
             return "pending"
 
-        return (["for", "tracks", "state", "created", "created by", "expires", "accepted", "accepted by", "revoked"],
-                [(i.email or "open link (anyone with it)", [t.name for t in i.tracks.all()] or "all tracks",
+        return (["role", "for", "tracks", "state", "created", "created by", "expires", "accepted", "accepted by", "revoked"],
+                [(i.get_role_display().lower(), i.email or "open link (anyone with it)",
+                  ([t.name for t in i.tracks.all()] or "all tracks") if i.role == "judge" else "",
                   state(i), i.created_at, i.created_by.email if i.created_by else "", i.expires_at,
                   i.accepted_at, i.accepted_by.email if i.accepted_by else "", i.revoked_at) for i in invites])
 

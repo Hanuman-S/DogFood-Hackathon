@@ -29,6 +29,7 @@ urlpatterns = [
     path("api/", include("organizer.api_urls")),
     path("join/<str:token>", participant_views.join, name="join"),
     path("invite/judge/<str:token>", judge_views.invite, name="judge_invite"),
+    path("invite/organizer/<str:token>", judge_views.invite, name="organizer_invite"),
     path("media/projects/<str:name>", media.serve, name="project_media"),
     path("", include("public.urls")),
     path("participant/", include("participant.urls")),

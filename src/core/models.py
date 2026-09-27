@@ -94,6 +94,11 @@ class AuditAction(models.TextChoices):
     SCORING_CONFIG_CHANGED = "scoring_config_changed", "Changed an event's scoring configuration"
     SCORING_CONFIG_REFUSED = "scoring_config_refused", "Refused a change to an event's scoring configuration"
     EXPORT_DOWNLOADED = "export_downloaded", "Downloaded a CSV export"
+    ASSIGNMENTS_RESHUFFLED = "assignments_reshuffled", "Reshuffled every unstarted review"
+    ORGANIZER_INVITED = "organizer_invited", "Created a co-organizer invite link"
+    ORGANIZER_INVITE_ACCEPTED = "organizer_invite_accepted", "Accepted a co-organizer invite"
+    ORGANIZER_INVITE_REVOKED = "organizer_invite_revoked", "Revoked a co-organizer invite"
+    ORGANIZER_INVITE_REFUSED = "organizer_invite_refused", "Refused a co-organizer invite"
 
 
 class AuditLog(models.Model):
