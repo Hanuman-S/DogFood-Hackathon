@@ -29,6 +29,8 @@
           {% if role == "participant" %}<a class="btn" href="{% url 'participant:event' event.slug %}">enter as participant</a>
           {% elif role == "visitor" %}<a class="btn" href="{% url 'accounts:signup' %}">sign up to take part</a><a class="btn btn--ghost" href="{% url 'accounts:login' %}?next={% url 'participant:event' event.slug %}">log in</a>{% endif %}
           {% if submitted_count %}<a class="btn btn--ghost" href="/projects?event={{ event.slug }}">browse {{ submitted_count }} project{{ submitted_count|pluralize }}</a>{% endif %}
+          {% if voting_open %}<a class="btn" href="{% url 'participant:vote' event.slug %}">vote</a>{% endif %}
+          {% if results_visible %}<a class="btn btn--ghost" href="{% url 'public:event_results' event.slug %}">results</a>{% endif %}
           {% if can_manage %}<a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">manage</a>{% endif %}
         </div>
       </div>

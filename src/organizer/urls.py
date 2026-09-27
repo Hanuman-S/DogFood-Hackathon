@@ -1,6 +1,6 @@
 from django.urls import path, register_converter
 
-from organizer import assignments, progress, rubric, views
+from organizer import assignments, progress, results, rubric, views, voting
 
 
 class PartKind:
@@ -27,7 +27,6 @@ urlpatterns = [
     path("events/<slug:slug>/<part:kind>/<int:part_id>/visibility", views.part_visibility, name="part_visibility"),
     path("events/<slug:slug>/<part:kind>/<int:part_id>/delete", views.part_delete, name="part_delete"),
     path("events/<slug:slug>/organizers", views.organizer_add, name="organizer_add"),
-    path("events/<slug:slug>/organizers/invite", views.organizer_invite_create, name="organizer_invite_create"),
     path("events/<slug:slug>/rubric", rubric.rubric, name="rubric"),
     path("events/<slug:slug>/rubric/standard", rubric.rubric_standard, name="rubric_standard"),
     path("events/<slug:slug>/rubric/<int:criterion_id>", rubric.criterion_text, name="criterion_text"),
@@ -38,11 +37,28 @@ urlpatterns = [
     path("events/<slug:slug>/deadline/extend", views.deadline_extend, name="deadline_extend"),
     path("events/<slug:slug>/deadline/teams", views.extension_grant, name="extension_grant"),
     path("events/<slug:slug>/judging/extend", views.judging_extend, name="judging_extend"),
+    path("events/<slug:slug>/judging/end", views.judging_end, name="judging_end"),
     path("events/<slug:slug>/assignments", assignments.assignments, name="assignments"),
     path("events/<slug:slug>/assignments/add", assignments.assignment_add, name="assignment_add"),
     path("events/<slug:slug>/assignments/<int:assignment_id>/withdraw", assignments.assignment_withdraw, name="assignment_withdraw"),
+    path("events/<slug:slug>/assignments/<int:assignment_id>/move", assignments.assignment_move, name="assignment_move"),
     path("events/<slug:slug>/judges/<int:membership_id>/reassign", assignments.judge_reassign, name="judge_reassign"),
     path("events/<slug:slug>/progress", progress.progress, name="progress"),
+    path("events/<slug:slug>/results", results.results, name="results"),
+    path("events/<slug:slug>/results/compute", results.compute, name="results_compute"),
+    path("events/<slug:slug>/results/publish", results.publish, name="results_publish"),
+    path("events/<slug:slug>/results/unpublish", results.unpublish, name="results_unpublish"),
+    path("events/<slug:slug>/results/settings", results.settings, name="results_settings"),
+    path("events/<slug:slug>/results/winners.csv", results.winners_csv, name="winners_csv"),
+    path("events/<slug:slug>/voting", voting.voting, name="voting"),
+    path("events/<slug:slug>/voting/settings", voting.voting_settings, name="voting_settings"),
+    path("events/<slug:slug>/voting/end", voting.voting_end, name="voting_end"),
+    path("events/<slug:slug>/voting/remove", voting.voting_remove, name="voting_remove"),
+    path("events/<slug:slug>/voting/tally.csv", voting.tally_csv, name="tally_csv"),
+    path("events/<slug:slug>/voting/links", voting.voter_links_add, name="voter_links_add"),
+    path("events/<slug:slug>/voting/links/<int:link_id>/revoke", voting.voter_link_revoke, name="voter_link_revoke"),
+    path("events/<slug:slug>/voting/voter-links.csv", voting.voter_links_csv, name="voter_links_csv"),
+    path("events/<slug:slug>/voting/open-link", voting.open_link_rotate, name="open_link_rotate"),
     path("events/<slug:slug>/progress/nudge/<int:membership_id>", progress.nudge, name="judge_nudge"),
     path("events/<slug:slug>/deadline/teams/<int:extension_id>/revoke", views.extension_revoke, name="extension_revoke"),
     path("events/<slug:slug>/organizers/<int:link_id>/remove", views.organizer_remove, name="organizer_remove"),

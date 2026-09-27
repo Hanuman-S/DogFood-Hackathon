@@ -70,6 +70,17 @@ The demo seed also creates two events:
 
 Reset everything with `docker compose down -v`.
 
+**The secret key.** Nothing in this repository is a usable `SECRET_KEY`. If you do not set
+`DJANGO_SECRET_KEY`, the first boot generates a random key into the `secrets` Docker volume (never
+the repo, never the image) and every restart reuses it, so `docker compose up` stays one command
+and every install has its own key. For a real deployment, set your own:
+`DJANGO_SECRET_KEY=... docker compose up`. Outside demo mode (`DEMO_MODE=0`) the portal refuses to
+start with a key from this repository or one shorter than 32 characters. Each use gets its own
+key derived from it (`core/keys.py`: HMAC of the key and a purpose, such as `voter-links` or
+`ip-hash`). Changing the key signs everyone out, invalidates every voter link and open-link
+cookie, and resets IP-based rate limits and integrity clustering. `docker compose down -v`
+deletes the generated key along with the database.
+
 **After changing code, rebuild:** `docker compose up --build`. The image copies `src/` and
 collects static files at build time (no source mount, `DEBUG` off), so without `--build` the
 portal keeps serving the old templates, CSS and JavaScript. Pages themselves are never cached:

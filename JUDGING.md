@@ -111,13 +111,6 @@ link** creates a one-time link for an email (optionally for chosen tracks). The 
 Audit rows: `judge_invited`, `judge_invite_accepted` (plus `judge_added`), `judge_invite_refused`
 with the reason (wrong account, used, expired, conflict of interest), `judge_invite_revoked`.
 
-The email is optional: without one the link is an **open link** that the first person to accept it
-uses up. **Co-organizers** are invited the same way from the organizers section (the same model,
-`events_judgeinvite`, with `role` "organizer"; links start `oinv_` and land on
-`/invite/organizer/<token>`); accepting makes the holder an organizer of that event, refused for
-anyone competing in it. Audit rows: `organizer_invited`, `organizer_invite_accepted` (plus
-`organizer_added`), `organizer_invite_refused`, `organizer_invite_revoked`.
-
 ## The judging window (built)
 
 Reviews may be written only from `judging_starts_at` to `judging_ends_at`, by the database clock,
@@ -140,12 +133,9 @@ by `scoring.services.run_assignment`; both are deterministic for a given seed an
 
 1. **Hard rules.** A judge reviews only projects in tracks they cover (no tracks = every track).
    No judge-project pair twice. A judge who **declined** a project (conflict of interest) never
-   gets it back, and an automatic round never gives a project back to a judge an organizer
-   **withdrew** it from (an organizer may still add them back by hand). Competitors cannot be judges at all (the database's exclusion constraint).
+   gets it back. Competitors cannot be judges at all (the database's exclusion constraint).
    Only submitted projects are assigned.
-2. **Balance.** Projects are filled to the **review target** (default 3; changeable until judging
-   starts, fixed after -- lowering it before judging releases the extra reviews from the busiest
-   judges first) one review at a time, in
+2. **Balance.** Projects are filled to the **review target** (default 3) one review at a time, in
    round-robin order starting with the projects that have the fewest eligible judges, so a
    shortage is spread thinly instead of leaving some projects with none. Each review goes to the
    eligible judge with the **lowest load**, never past the optional **load cap**; a final pass
@@ -169,16 +159,13 @@ by `scoring.services.run_assignment`; both are deterministic for a given seed an
 Running again **tops up** only what is missing, which is how the fixture event is handled: its 123
 imported reviews become `import` assignments, and a top-up to 3 adds exactly the 8 reviews its
 two-review projects lack (tested). By hand, an organizer can **add** a judge to a project, and
-**withdraw** an assignment the judge has not started: a started review is never taken away. To move
-one, withdraw it and press assign (it goes to someone else) or add a judge by hand. **Reshuffle
-unstarted** releases every review nobody has started and draws them again at random with a new
-seed. **Reassign** (on the progress page or per judge) withdraws everything a stalled judge
+**move** or **withdraw** an assignment the judge has not started: a started review is never
+taken away. **Reassign** (on the progress page or per judge) withdraws everything a stalled judge
 has not started and tops up without them. **Declined** projects are listed with the reason (only
 organizers see it) until they are covered again.
 
-Every change is audited: `assignments_generated` (with seed, target, cap, counts, and how many
-were released by a lower target), `assignments_reshuffled`, `assignment_added`,
-`assignment_withdrawn`, `assignment_declined`. Assignments
+Every change is audited: `assignments_generated` (with seed, target, cap, counts),
+`assignment_added`, `assignment_moved`, `assignment_withdrawn`, `assignment_declined`. Assignments
 are never deleted; their status changes.
 
 ## The progress dashboard (built)
@@ -200,13 +187,13 @@ are never deleted; their status changes.
 
 The export (`src/organizer/export.py`) grows with the event: each sheet belongs to a stage and
 unlocks when that stage starts, by the database clock. Setup (event, tracks, prizes, questions,
-rubric, judges, invites) and the audit trail are there from creation; teams, members and
+rubric, judges, judge invites) and the audit trail are there from creation; teams, members and
 projects from submissions open; assignments from submissions close; reviews from judging start;
 results from judging end (until then rank, score and judge lean are empty everywhere). A sheet of
 a stage that has not started is refused with 409 `stage_not_open` and its opening time, and left
 out of the ZIP (whose README says when it opens).
 `GET /api/export.zip?event=<slug>` gives one CSV per open sheet (event, tracks, prizes, questions,
-rubric, judges, invites, teams, members, projects, assignments, assignment rounds,
+rubric, judges, judge invites, teams, members, projects, assignments, assignment rounds,
 reviews, results, audit) plus a README, all read in one REPEATABLE READ snapshot;
 `GET /api/export.csv?event=<slug>&sheet=<name>` gives one sheet; `GET /api/export.csv` alone
 (the checker's route) gives the projects of every event the caller manages. Organizers of the

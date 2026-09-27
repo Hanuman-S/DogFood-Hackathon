@@ -34,8 +34,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-dogfood}
       POSTGRES_USER: ${POSTGRES_USER:-dogfood}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dogfood}
-      # Insecure on purpose for a laptop demo; set a real one for any deployment.
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-compose-default-change-me}
+      # Empty = the entrypoint generates a random key on first boot into the `secrets` volume
+      # (never the repo) and reuses it on every restart. Set your own for a real deployment.
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-}
+      DJANGO_SECRET_KEY_FILE: /app/secrets/secret_key
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],web}
       DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
@@ -61,6 +63,8 @@ services:
       # Uploaded project images. A named volume, so they survive rebuilds and the non-root
       # container user owns it. `docker compose down -v` deletes it with the database.
       - media:/app/media
+      # The generated SECRET_KEY (see config/secret_key.py). Deleted by `docker compose down -v`.
+      - secrets:/app/secrets
       # The organizers' file, read-only, straight from the repo: the container imports exactly
       # the file that is committed, and cannot modify it.
       - ./acceptance/fixtures.json:/app/acceptance/fixtures.json:ro
@@ -77,3 +81,4 @@ services:
 volumes:
   pgdata:
   media:
+  secrets:

@@ -62,17 +62,22 @@ from events.models import Event, EventMembership
 from imports.models import FixtureRef
 from projects.models import Project, Status
 from scoring.models import (
-    Assignment, AssignmentRound, AssignmentSource, AssignmentStatus, Criterion, EventScoringConfig,
-    ResultSnapshot, RoundKind, Score, ScoreItem, SnapshotKind,
+    WINNERS_TOP_N_MAX, Assignment, AssignmentRound, AssignmentSource, AssignmentStatus, Criterion,
+    EventResultSettings, EventScoringConfig, Publication, ResultSnapshot, ResultVisibility, RoundKind,
+    Score, ScoreItem, SnapshotKind,
 )
+
+from voting.errors import VotingOpen
+from voting.models import VotingConfig
 
 from .engine import pipeline
 from .engine.config import EngineConfig
 from .engine.errors import ConfigError, EngineError
 from .engine.types import Criterion as EngineCriterion
 from .engine.types import EngineInput, Exclusion, Review, Rubric, dumps, to_jsonable
-from .errors import (FinalOverrideRefused, InvalidConfig, JudgingOpen, ScoringConfigLocked,
-                     SnapshotInsideTransaction)
+from .errors import (AlreadyPublished, FinalOverrideRefused, InvalidConfig, InvalidResultSettings,
+                     JudgingOpen, NoSuchSnapshot, NotFinal, NotLatestFinal, NotPublished,
+                     ScoringConfigLocked, SnapshotInsideTransaction)
 
 FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
@@ -383,19 +388,9 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
         raise AssignmentError("the review target must be between 1 and 20.")
     if max_load is not None and max_load < 1:
         raise AssignmentError("the load cap must be at least 1, or empty for no cap.")
-    current = review_target(event)
-    judging_started = db_now() >= event.judging_starts_at
-    if judging_started and event.assignment_rounds.exists() and target != current:
-        raise AssignmentError(
-            f"the number of reviews per project is fixed once judging has started (it is {current}). "
-            f"it could be changed until {event.judging_starts_at:%Y-%m-%d %H:%M} UTC."
-        )
     seed = seed if seed is not None else secrets.randbits(62)
     with transaction.atomic():
         Event.objects.select_for_update().get(pk=event.pk)
-        # A lower target before judging: release the reviews above it (nobody can have started one
-        # yet), taking them from the busiest judges first, so the next plan starts from the target.
-        released = 0 if judging_started else _trim_to_target(event, target, seed)
         plan = make_plan(event, target=target, max_load=max_load, seed=seed, exclude_judges=exclude_judges)
         if kind is None:
             kind = RoundKind.TOP_UP if Assignment.objects.filter(project__event=event).exists() else RoundKind.INITIAL
@@ -407,7 +402,6 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
             created_by=request.user if request and request.user.is_authenticated else None,
             summary={
                 "added": len(plan.new),
-                "released": released,
                 "bridges": len(plan.bridges),
                 "short": {str(p): n for p, n in sorted(plan.short.items())},
                 "warnings": warnings,
@@ -427,43 +421,9 @@ def run_assignment(request, event, *, target=DEFAULT_TARGET, max_load=None, seed
     audit.record(
         AuditAction.ASSIGNMENTS_GENERATED, request=request, subject=event.slug, round=round_.pk,
         kind=kind, seed=seed, target=target, max_load=max_load, added=len(plan.new),
-        released=released, short=sum(plan.short.values()), warnings=len(warnings),
-        **({"target_was": current} if target != current else {}),
+        short=sum(plan.short.values()), warnings=len(warnings),
     )
     return round_
-
-
-def _trim_to_target(event, target, seed):
-    """Release live, unstarted assignments on projects that have more than `target`, busiest
-    judges first (ties broken by the round's seed). Returns how many were released."""
-    import random
-    from collections import Counter
-
-    started = set(Score.objects.filter(project__event=event).values_list("judge_id", "project_id"))
-    live = list(Assignment.objects.filter(project__event=event, status=AssignmentStatus.ASSIGNED)
-                .values_list("pk", "judge_id", "project_id"))
-    load = Counter(j for _, j, _ in live)
-    by_project = {}
-    for pk, j, p in live:
-        by_project.setdefault(p, []).append((pk, j))
-    rng = random.Random(seed)
-    release = []
-    for p in sorted(by_project):
-        rows = by_project[p]
-        extra = len(rows) - target
-        if extra <= 0:
-            continue
-        free = [(pk, j) for pk, j in rows if (j, p) not in started]
-        rng.shuffle(free)
-        for _ in range(min(extra, len(free))):
-            free.sort(key=lambda row: -load[row[1]])
-            pk, j = free.pop(0)
-            release.append(pk)
-            load[j] -= 1
-    if release:
-        Assignment.objects.filter(pk__in=release).update(
-            status=AssignmentStatus.RELEASED, status_changed_at=timezone.now())
-    return len(release)
 
 
 def _check_can_review(event, judge, project):
@@ -576,30 +536,6 @@ def decline_assignment(request, assignment, reason):
         project=assignment.project_id, reason=assignment.decline_reason,
     )
     return assignment
-
-
-def reshuffle_unstarted(request, event, *, target=None, max_load=None, seed=None):
-    """Draw every unstarted review again, at random: release each assignment nobody has started
-    (no draft, no submitted review) and run a fresh round. Started reviews stay where they are;
-    declines and withdrawals are still respected. Returns (released, round)."""
-    _refuse_if_judging_over(event)
-    started = set(Score.objects.filter(project__event=event).values_list("judge_id", "project_id"))
-    with transaction.atomic():
-        Event.objects.select_for_update().get(pk=event.pk)
-        pending = [a for a in Assignment.objects.filter(project__event=event, status=AssignmentStatus.ASSIGNED)
-                   if (a.judge_id, a.project_id) not in started]
-        now = timezone.now()
-        Assignment.objects.filter(pk__in=[a.pk for a in pending]).update(
-            status=AssignmentStatus.RELEASED, status_changed_at=now)
-        round_ = run_assignment(
-            request, event, target=target or review_target(event), max_load=max_load, seed=seed,
-            kind=RoundKind.RESHUFFLE,
-        )
-    audit.record(
-        AuditAction.ASSIGNMENTS_RESHUFFLED, request=request, subject=event.slug, round=round_.pk,
-        released=len(pending), added=round_.summary.get("added"), seed=round_.seed,
-    )
-    return len(pending), round_
 
 
 def reassign_unstarted(request, event, judge, *, target=None, max_load=None):
@@ -847,6 +783,123 @@ def set_engine_config(actor, event, overrides, *, request=None) -> EventScoringC
         event=event, defaults={"overrides": overrides, "updated_by": actor})
     audit.record(AuditAction.SCORING_CONFIG_CHANGED, request=request, actor=actor, subject=event.slug,
                  overrides=overrides)
+    return row
+
+
+# --- publishing results ------------------------------------------------------------------------------
+#
+# A final snapshot becomes the event's result by a Publication (append-only; the Postgres trigger in
+# scoring/migrations/0005 is the backstop). Who then sees it is `EventResultSettings.visibility`
+# (scoring/results.py reads both). These services take the actor and an `audit.Origin`, never the
+# request. Publish and unpublish lock the event row, so two organizers pressing at once are
+# serialised: the second sees the first's publication and is refused with a clear 409, rather than
+# tripping the partial unique constraint.
+
+def latest_final(event):
+    return (ResultSnapshot.objects.filter(event=event, kind=SnapshotKind.FINAL)
+            .order_by("-created_at", "-id").first())
+
+
+def active_publication(event):
+    return (Publication.objects.filter(event=event, unpublished_at__isnull=True)
+            .select_related("snapshot").first())
+
+
+def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
+    """Publish the event's latest final snapshot. Refusals, each audited: PermissionDenied (not an
+    organizer of the event, nor an admin); NoSuchSnapshot (404); NotFinal (400); NotLatestFinal,
+    VotingOpen (community voting has not closed yet), AlreadyPublished (409)."""
+
+    def refuse(error, reason):
+        audit.record(AuditAction.RESULTS_PUBLISH_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     operation="publish", snapshot=snapshot_id, reason=reason)
+        raise error
+
+    if not is_organizer_of(actor, event):
+        refuse(PermissionDenied("Only the event's organizers can publish its results."), "not an organizer")
+    try:
+        with transaction.atomic():
+            Event.objects.select_for_update().filter(pk=event.pk).first()
+            snapshot = ResultSnapshot.objects.filter(event=event, pk=snapshot_id).first()
+            if snapshot is None:
+                raise NoSuchSnapshot("This event has no such result snapshot.")
+            if snapshot.kind != SnapshotKind.FINAL:
+                raise NotFinal("Only a final result can be published; this one is a preview.")
+            if latest_final(event).pk != snapshot.pk:
+                raise NotLatestFinal("A newer final result exists; publish that one instead.")
+            voting = VotingConfig.objects.filter(event=event).first()
+            if voting is not None and db_now() < voting.closes_at:
+                raise VotingOpen(f"Community voting closes at {voting.closes_at.isoformat()}; final results "
+                                 "can be published once it has closed.")
+            current = active_publication(event)
+            if current is not None:
+                raise AlreadyPublished(
+                    f"Final #{current.snapshot_id} is already published; unpublish it first.")
+            publication = Publication.objects.create(
+                event=event, snapshot=snapshot, published_at=db_now(), published_by=actor,
+                published_by_email=actor.email,
+            )
+    except (NoSuchSnapshot, NotFinal, NotLatestFinal, AlreadyPublished, VotingOpen) as error:
+        refuse(error, error.code)
+    except IntegrityError:  # the partial unique constraint, if the lock was somehow not enough
+        refuse(AlreadyPublished("These results are already published; unpublish them first."), "already_published")
+    audit.record(AuditAction.RESULTS_PUBLISHED, origin=origin, actor=actor, subject=event.slug,
+                 snapshot=snapshot.pk, publication=publication.pk)
+    return publication
+
+
+def unpublish_results(event, *, actor, origin=None) -> Publication:
+    """Take the published result down. The publication row stays (append-only); it records who
+    unpublished it and when. The result can be published again (a new publication)."""
+
+    def refuse(error, reason):
+        audit.record(AuditAction.RESULTS_PUBLISH_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     operation="unpublish", reason=reason)
+        raise error
+
+    if not is_organizer_of(actor, event):
+        refuse(PermissionDenied("Only the event's organizers can unpublish its results."), "not an organizer")
+    try:
+        with transaction.atomic():
+            Event.objects.select_for_update().filter(pk=event.pk).first()
+            publication = (Publication.objects.select_for_update()
+                           .filter(event=event, unpublished_at__isnull=True).first())
+            if publication is None:
+                raise NotPublished("These results are not published.")
+            publication.unpublished_at = db_now()
+            publication.unpublished_by = actor
+            publication.unpublished_by_email = actor.email
+            publication.save(update_fields=["unpublished_at", "unpublished_by", "unpublished_by_email"])
+    except NotPublished as error:
+        refuse(error, error.code)
+    audit.record(AuditAction.RESULTS_UNPUBLISHED, origin=origin, actor=actor, subject=event.slug,
+                 snapshot=publication.snapshot_id, publication=publication.pk)
+    return publication
+
+
+def result_settings(event) -> EventResultSettings:
+    """The event's settings, or the defaults (unsaved) when it has none."""
+    return EventResultSettings.objects.filter(event=event).first() or EventResultSettings(event=event)
+
+
+def set_result_settings(event, *, actor, visibility, winners_top_n, origin=None) -> EventResultSettings:
+    """Change who sees the published result and how many overall winners it names. Allowed at any
+    time: it changes presentation, never the result."""
+    if not is_organizer_of(actor, event):
+        raise PermissionDenied("Only the event's organizers can change who sees its results.")
+    if visibility not in ResultVisibility.values:
+        raise InvalidResultSettings(f"visibility must be one of {', '.join(ResultVisibility.values)}.")
+    if not isinstance(winners_top_n, int) or isinstance(winners_top_n, bool)             or not 1 <= winners_top_n <= WINNERS_TOP_N_MAX:
+        raise InvalidResultSettings(f"winners_top_n must be a whole number from 1 to {WINNERS_TOP_N_MAX}.")
+    with transaction.atomic():
+        row, _ = EventResultSettings.objects.select_for_update().get_or_create(event=event)
+        before = {"visibility": row.visibility, "winners_top_n": row.winners_top_n}
+        row.visibility, row.winners_top_n, row.updated_by = visibility, winners_top_n, actor
+        row.save()
+    after = {"visibility": visibility, "winners_top_n": winners_top_n}
+    if before != after:
+        audit.record(AuditAction.RESULT_SETTINGS_CHANGED, origin=origin, actor=actor, subject=event.slug,
+                     before=before, after=after)
     return row
 
 

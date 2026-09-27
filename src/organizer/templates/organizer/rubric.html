@@ -63,20 +63,26 @@
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table">
           <thead><tr><th>label</th><th>key</th><th class="num">weight</th><th class="num">share</th><th class="num">remove</th><th class="num"><span class="visually-hidden">text</span></th></tr></thead>
-          <tbody data-rubric-rows>
-          {% for form in formset %}{% include "organizer/_rubric_row.html" %}{% endfor %}
+          <tbody>
+          {% for form in formset %}
+            <tr{% if form.errors %} class="field--invalid"{% endif %}>
+              <td>{{ form.id }}<label class="visually-hidden" for="{{ form.label.id_for_label }}">label</label>{{ form.label }}{% for e in form.label.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+              <td><label class="visually-hidden" for="{{ form.key.id_for_label }}">key</label>{{ form.key }}{% for e in form.key.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+              <td class="num"><label class="visually-hidden" for="{{ form.weight.id_for_label }}">relative weight</label>{{ form.weight }}{% for e in form.weight.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+              <td class="num dim"><span data-weight-share>&ndash;</span></td>
+              <td class="num"><label class="check" for="{{ form.DELETE.id_for_label }}">{{ form.DELETE }}<span class="visually-hidden">remove</span></label></td>
+              <td class="num">{% if form.id.value %}<a class="btn btn--small btn--ghost" href="{% url 'organizer:criterion_text' event.slug form.id.value %}">levels</a>{% else %}<span class="faint">new</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
           </tbody>
         </table>
-        <template id="rubric-new-row">{% include "organizer/_rubric_row.html" with form=formset.empty_form %}</template>
       </div>
       <div class="frame__body">
         <div class="actions">
           <button class="btn" type="submit" name="action" value="save">save rubric</button>
-          <button class="btn btn--ghost" type="button" data-rubric-add hidden>+ add criterion</button>
           <button class="btn btn--ghost" type="submit" name="action" value="split">split equally</button>
-          <span class="faint">add as many criteria as you like, remove any, then save once. nothing changes until you press save rubric; split equally sets every weight to 1 for you to check and saves nothing.</span>
+          <span class="faint">split equally sets every weight to 1 for you to check; it saves nothing. the empty row adds a criterion.</span>
         </div>
-        <p class="faint" data-rubric-removed hidden><span data-rubric-removed-text></span> <button class="btn btn--small btn--ghost" type="button" data-rubric-undo>undo</button></p>
       </div>
     </form>
     {% endif %}

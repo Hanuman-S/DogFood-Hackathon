@@ -8,6 +8,11 @@ echo "=================================================================="
 echo " DOGFOOD portal starting"
 echo "=================================================================="
 
+if [ -z "${DJANGO_SECRET_KEY:-}" ] && [ -n "${DJANGO_SECRET_KEY_FILE:-}" ]; then
+    echo "--> SECRET_KEY: using the generated key in ${DJANGO_SECRET_KEY_FILE} (created now if missing)"
+    python /app/src/config/secret_key.py "$DJANGO_SECRET_KEY_FILE"
+fi
+
 echo "--> waiting for the database"
 tries=0
 until python /app/src/manage.py shell -c "from django.db import connection; connection.ensure_connection()" >/dev/null 2>&1; do

@@ -222,3 +222,20 @@ def test_setting_up_open_link_mode_makes_the_link(make_event):
         event, actor=event.organizer, opens_at=event.submissions_close_at,
         closes_at=event.submissions_close_at + timedelta(days=2), access_mode="open_link", method="quadratic")
     assert config.open_link_nonce
+
+
+@pytest.mark.django_db
+def test_allowlist_is_the_gate_for_link_voters_not_account_age(gated, make_user):
+    """An account created after voting opened is refused when logged in (the option is on) but may
+    vote with its allowlisted link: for link voters only the staff and own-team rules apply."""
+    from voting.errors import AccountTooNew
+
+    newcomer = make_user(email="newcomer@example.org")  # date_joined = now > opens_at
+    assert newcomer.date_joined >= gated.config.opens_at and gated.config.accounts_before_open_only
+    assert isinstance(services.ineligibility(gated, gated.config, newcomer), AccountTooNew)  # logged in
+    services.add_voter_links(gated, actor=gated.organizer, text="newcomer@example.org")
+    url = link_url(gated, token_of(gated, "newcomer@example.org"))
+    p = gated.projects_list
+    assert Client().post(url + "/cast", {f"p_{p[1].pk}": "4"}).status_code == 302
+    ballot = Ballot.objects.get(voter_link__email="newcomer@example.org")
+    assert credits(ballot) == {p[1].pk: 4}

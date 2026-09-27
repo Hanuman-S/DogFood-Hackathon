@@ -8,6 +8,11 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
+from config.secret_key import check as check_secret_key
+from config.secret_key import read_key_file
+
 BASE_DIR = Path(__file__).resolve().parent.parent  # .../src
 
 
@@ -30,11 +35,11 @@ def env_list(name, default=""):
 # --- core -------------------------------------------------------------------------------
 
 DEBUG = env_bool("DJANGO_DEBUG", False)
-SECRET_KEY = env("DJANGO_SECRET_KEY") or (
-    "dev-only-insecure-key" if DEBUG else None
+# DJANGO_SECRET_KEY, else the key file the entrypoint generates on first boot (a Docker volume, never
+# the repo). A known key is refused outside DEMO_MODE, below. See config/secret_key.py.
+SECRET_KEY = env("DJANGO_SECRET_KEY") or read_key_file(env("DJANGO_SECRET_KEY_FILE")) or (
+    "dev-only-insecure-key" if DEBUG else ""
 )
-if not SECRET_KEY:
-    raise RuntimeError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is off.")
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 CSRF_TRUSTED_ORIGINS = env_list(
@@ -57,6 +62,7 @@ INSTALLED_APPS = [
     "projects",
     "imports",
     "scoring",
+    "voting",
     # ours -- one app per audience, so each can be owned by a different teammate
     "public",
     "participant",
@@ -243,6 +249,10 @@ FIXTURES_PATH = env("FIXTURES_PATH", str(BASE_DIR.parent / "acceptance" / "fixtu
 # Never enable it for a real event.
 
 DEMO_MODE = env_bool("DEMO_MODE", False)
+
+_key_problem = check_secret_key(SECRET_KEY, demo_mode=DEMO_MODE)
+if _key_problem:
+    raise ImproperlyConfigured(_key_problem)
 DEMO_PASSWORD = env("DEMO_PASSWORD", "dogfood-demo")
 DEMO_TOKENS = {
     "admin": env("DEMO_TOKEN_ADMIN"),

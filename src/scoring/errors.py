@@ -46,3 +46,47 @@ class SnapshotInsideTransaction(ScoringError):
 
     status = 500
     code = "snapshot_inside_transaction"
+
+
+# --- publishing results -----------------------------------------------------------------------------
+
+class NoSuchSnapshot(ScoringError):
+    status = 404
+    code = "no_such_snapshot"
+
+
+class NotFinal(ScoringError):
+    """Only a final snapshot can be published."""
+
+    status = 400
+    code = "not_final"
+
+
+class NotLatestFinal(ScoringError):
+    """A newer final exists: publishing an older one would publish a result the organizers have
+    already replaced."""
+
+    status = 409
+    code = "not_latest_final"
+
+
+class AlreadyPublished(ScoringError):
+    status = 409
+    code = "already_published"
+
+
+class NotPublished(ScoringError):
+    status = 409
+    code = "not_published"
+
+
+class NoFinalResult(ScoringError):
+    """Winners are named from a final result only."""
+
+    status = 409
+    code = "no_final_result"
+
+
+class InvalidResultSettings(ScoringError):
+    status = 400
+    code = "invalid_result_settings"

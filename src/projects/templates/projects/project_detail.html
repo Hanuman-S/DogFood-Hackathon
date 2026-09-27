@@ -4,12 +4,7 @@
 {% block content %}
 <div class="stack">
   {% if not preview %}<p class="meta"><a href="/projects?event={{ project.event.slug }}">&lt;- {{ project.event.name }} gallery</a></p>{% endif %}
-  {% if preview %}
-  <div class="preview-bar" role="region" aria-label="preview">
-    <a class="btn" href="{% url 'participant:project_edit' project.pk %}">&lt;- back to editing</a>
-    <span class="dim">preview: how your project will look{% if not project.is_submitted %}. it is a draft, so only your team and the organizers can see it{% endif %}.</span>
-  </div>
-  {% endif %}
+  {% if preview %}<ul class="msgs"><li class="msg msg--warning">preview of how your project will look{% if not project.is_submitted %}; it is a draft, so only your team and the organizers can see it{% endif %}. <a href="{% url 'participant:project_edit' project.pk %}">back to editing</a></li></ul>{% endif %}
   <section class="frame">
     <header class="frame__bar">
       <h1 class="frame__title">{{ project.name }}</h1>
@@ -58,6 +53,5 @@
     </div>
   </section>
   {% endif %}{% endwith %}
-  {% if preview %}<p class="actions"><a class="btn" href="{% url 'participant:project_edit' project.pk %}">&lt;- back to editing</a></p>{% endif %}
 </div>
 {% endblock %}

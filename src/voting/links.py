@@ -1,9 +1,10 @@
 """Tokens for the two link-based access modes, and the open-link voter cookie.
 
-* email_gated: each VoterLink's token = HMAC(SECRET_KEY-derived key, "<link id>:<nonce>"). It is
+* email_gated: each VoterLink's token = HMAC(derived_key("voter-links"), "<link id>:<nonce>"), with
+  derived_key(p) = HMAC(SECRET_KEY, p) (core.keys). It is
   derived, not stored (the table holds only its SHA-256 digest), so the organizer can download
   voter-links.csv again at any time. Rotating SECRET_KEY changes every token.
-* open_link: the event's one token = HMAC(key, "<event id>:<open_link_nonce>"). A new nonce is a new
+* open_link: the event's one token = HMAC(derived_key("open-link"), "<event id>:<open_link_nonce>"). A new nonce is a new
   link; the old one stops resolving.
 * The open-link voter is a random id in a cookie signed with Django's signing (salt
   "voting.open_link"), scoped to the event. It stops casual double voting in one browser and no more:
@@ -22,10 +23,10 @@ import secrets
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from django.utils.crypto import constant_time_compare, salted_hmac
+from django.utils.crypto import constant_time_compare
 
-LINK_SALT = "dogfood.voter_link"
-OPEN_SALT = "dogfood.open_link"
+from core.keys import keyed_hash
+
 COOKIE_SALT = "voting.open_link"
 MAX_EMAILS = 5000
 
@@ -35,7 +36,7 @@ def new_nonce():
 
 
 def link_token(link) -> str:
-    return salted_hmac(LINK_SALT, f"{link.pk}:{link.nonce}", algorithm="sha256").hexdigest()
+    return keyed_hash("voter-links", f"{link.pk}:{link.nonce}")
 
 
 def digest(token: str) -> str:
@@ -43,7 +44,7 @@ def digest(token: str) -> str:
 
 
 def open_token(config) -> str:
-    return salted_hmac(OPEN_SALT, f"{config.event_id}:{config.open_link_nonce}", algorithm="sha256").hexdigest()
+    return keyed_hash("open-link", f"{config.event_id}:{config.open_link_nonce}")
 
 
 def is_open_token(config, token) -> bool:

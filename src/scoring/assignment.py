@@ -75,10 +75,6 @@ class Board:
             .values_list("judge_id", "project_id", "status", "position")
         )
         self.taken = {(j, p) for j, p, s, _ in rows if s in (AssignmentStatus.ASSIGNED, AssignmentStatus.DECLINED)}
-        # An organizer took this project away from this judge: automatic rounds never hand it
-        # back (otherwise "withdraw, then assign" returns it to the same judge whenever they are
-        # the least loaded). Adding them back by hand is still allowed.
-        self.withdrawn = {(j, p) for j, p, s, _ in rows if s == AssignmentStatus.WITHDRAWN}
         self.active = [(j, p) for j, p, s, _ in rows if s == AssignmentStatus.ASSIGNED]
         self.reviews = defaultdict(int)   # project -> assigned reviews
         self.load = defaultdict(int)      # judge -> assigned reviews
@@ -91,16 +87,14 @@ class Board:
         for j, _, _, pos in rows:
             self.next_position[j] = max(self.next_position[j], pos + 1)
 
-    def may_review(self, judge_id, project, *, by_hand=False):
+    def may_review(self, judge_id, project):
         if judge_id in self.excluded or (judge_id, project.pk) in self.taken:
-            return False
-        if not by_hand and (judge_id, project.pk) in self.withdrawn:
             return False
         tracks = self.tracks_of.get(judge_id)
         return tracks is None or project.track_id is None or project.track_id in tracks
 
-    def eligible(self, project, *, by_hand=False):
-        return [j.pk for j in self.judges if self.may_review(j.pk, project, by_hand=by_hand)]
+    def eligible(self, project):
+        return [j.pk for j in self.judges if self.may_review(j.pk, project)]
 
     # --- graph ----------------------------------------------------------------------------
 

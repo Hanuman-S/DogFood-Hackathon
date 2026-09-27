@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% load portal %}
-{% block title %}{{ invite.role }} invite · {{ event.name }}{% endblock %}
+{% block title %}judge invite · {{ event.name }}{% endblock %}
 {% block content %}
 <section class="frame">
-  <header class="frame__bar"><h1 class="frame__title">{% if invite.role == "organizer" %}co-organizer{% else %}judge{% endif %} invite link</h1><span class="frame__meta">{{ event.name }}</span></header>
+  <header class="frame__bar"><h1 class="frame__title">judge invite link</h1><span class="frame__meta">{{ event.name }}</span></header>
   <div class="frame__body stack">
     <div class="secret" role="status">
       <code id="judge-invite-link">{{ link }}</code>
@@ -12,16 +12,15 @@
     <p class="msg msg--warning">copy it now: this is the only time the link is shown. only a hash of it is stored.</p>
     <table class="kv">
       <tr><th scope="row">for</th><td>{% if invite.email %}{{ invite.email }}{% else %}anyone with the link <span class="faint">(open link)</span>{% endif %}</td></tr>
-      {% if invite.role == "organizer" %}<tr><th scope="row">role</th><td>co-organizer</td></tr>
-      {% else %}<tr><th scope="row">tracks</th><td>{% for t in invite.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>{% endif %}
+      <tr><th scope="row">tracks</th><td>{% for t in invite.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>
       <tr><th scope="row">valid until</th><td>{{ invite.expires_at|utc }}</td></tr>
     </table>
     {% if invite.email %}
     <p class="dim">send it to them however you like. it works once, only for {{ invite.email }}: they log in as that email, or create the account from the link. inviting the same email again cancels this link.</p>
     {% else %}
-    <p class="dim">an open link: the first person to accept it becomes {% if invite.role == "organizer" %}a co-organizer{% else %}a judge{% endif %}, with their own account or one they create from the link, and then it stops working. send it only to them; if it leaks, revoke it from the {% if invite.role == "organizer" %}organizers{% else %}judges{% endif %} list, which shows who accepted it.</p>
+    <p class="dim">an open link: the first person to accept it becomes a judge, with their own account or one they create from the link, and then it stops working. send it only to the judge; if it leaks, revoke it from the judges list. the list shows who accepted it.</p>
     {% endif %}
-    <div class="actions"><a class="btn" href="{% url 'organizer:event' event.slug %}#{% if invite.role == 'organizer' %}organizers{% else %}judges{% endif %}">back to {{ event.name }}</a></div>
+    <div class="actions"><a class="btn" href="{% url 'organizer:event' event.slug %}#judges">back to {{ event.name }}</a></div>
   </div>
 </section>
 {% endblock %}

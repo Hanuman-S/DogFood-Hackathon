@@ -32,12 +32,14 @@ COPY --chown=dogfood:dogfood docker/entrypoint.sh /app/docker/entrypoint.sh
 # Strip Windows line endings: a CRLF entrypoint fails with "/bin/sh^M: bad interpreter".
 RUN sed -i 's/\r$//' /app/docker/entrypoint.sh && chmod +x /app/docker/entrypoint.sh
 
-# Static files are collected at build time, so boot stays fast. The key is a throwaway:
-# nothing is signed during collectstatic.
-RUN DJANGO_SECRET_KEY=build-only DJANGO_STATIC_ROOT=/app/staticfiles \
+# Static files are collected at build time, so boot stays fast. The key is a throwaway (nothing
+# is signed during collectstatic); DEMO_MODE=1 only lets settings accept it for this one command.
+# /app/secrets holds the SECRET_KEY the entrypoint generates (a volume at run time).
+RUN DJANGO_SECRET_KEY=build-only DEMO_MODE=1 DJANGO_STATIC_ROOT=/app/staticfiles \
     python /app/src/manage.py collectstatic --noinput -v0 \
-    && mkdir -p /app/media/projects \
-    && chown -R dogfood:dogfood /app/staticfiles /app/media
+    && mkdir -p /app/media/projects /app/secrets \
+    && chown -R dogfood:dogfood /app/staticfiles /app/media /app/secrets \
+    && chmod 700 /app/secrets
 
 USER dogfood
 EXPOSE 8000

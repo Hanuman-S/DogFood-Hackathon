@@ -253,8 +253,7 @@ class JudgeInviteQuerySet(models.QuerySet):
 
 class JudgeInvite(models.Model):
     """A one-time link that makes its holder a judge of `event`, covering `tracks` (none = every
-    track) -- or, with `role` "organizer", a co-organizer of it (tracks do not apply). The model
-    keeps its first name; both kinds of invite share every rule below.
+    track).
 
     With an `email`, only that person can accept it (they log in as it, or create it from the
     link). Without one it is an **open** link: the first person to accept it -- any account, or a
@@ -268,11 +267,6 @@ class JudgeInvite(models.Model):
     """
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="judge_invites")
-    role = models.CharField(
-        max_length=20, default="judge",
-        choices=[("judge", "Judge"), ("organizer", "Organizer")],
-        help_text="What accepting makes you: a judge or a co-organizer of the event.",
-    )
     # Empty for an open link (anyone may accept it, once).
     email = models.EmailField(max_length=254, blank=True)
     tracks = models.ManyToManyField("Track", blank=True, related_name="+")
@@ -293,10 +287,10 @@ class JudgeInvite(models.Model):
     class Meta:
         ordering = ["-created_at", "-id"]
         constraints = [
-            # One pending invite per person, role and event: re-inviting revokes the old link
-            # first. Open links (no email) are not limited.
+            # One pending invite per person per event: re-inviting revokes the old link first.
+            # Open links (no email) are not limited.
             models.UniqueConstraint(
-                fields=["event", "role", "email"],
+                fields=["event", "email"],
                 condition=Q(accepted_at__isnull=True, revoked_at__isnull=True) & ~Q(email=""),
                 name="judge_invite_one_pending_per_email",
             ),
@@ -307,7 +301,7 @@ class JudgeInvite(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.role} invite for {self.email or 'anyone (open link)'} to {self.event.slug}"
+        return f"judge invite for {self.email or 'anyone (open link)'} to {self.event.slug}"
 
     @property
     def is_open_link(self):

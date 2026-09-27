@@ -794,24 +794,3 @@ details.frame > summary.frame__bar::-webkit-details-marker, details.manage > sum
 
 /* Shown by app.js when a countdown reaches zero while a form has unsaved input (no reload then). */
 .countdown-notice { color: var(--err); white-space: nowrap; }
-
-/* --- keep-your-place toast: repeats the flash message after the page returns to where you were */
-.toast {
-  position: fixed; right: 16px; bottom: 16px; z-index: 50; max-width: min(420px, calc(100vw - 32px));
-  display: grid; gap: 6px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-  transition: opacity 0.5s ease;
-}
-.toast .msg { margin: 0; }
-.toast--gone { opacity: 0; }
-@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
-
-/* --- project preview: the way back to editing stays in view */
-.preview-bar {
-  position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
-  padding: 12px 14px; background: var(--bg-raise); border: 1px solid var(--line); border-radius: var(--radius);
-}
-
-/* The hidden attribute always wins over a component's display (grid, flex...): scripts hide
-   fields and rows with it. */
-[hidden] { display: none !important; }

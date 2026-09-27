@@ -304,8 +304,12 @@ def _check_window(event, config, *, voter, origin, attempted):
     return now
 
 
-def ineligibility(event, config, user):
-    """Why `user` may not vote in `event`, as a VotingError -- or None. No account, no account rule."""
+def ineligibility(event, config, user, *, account_age=True):
+    """Why `user` may not vote in `event`, as a VotingError -- or None. No account, no account rule.
+
+    `account_age`: the "accounts created before voting opened" option. It does not apply to an
+    email link: the allowlist is that voter's gate (the organizer chose the email), so an account
+    with that email gets only the staff and own-team rules."""
     if user is None:
         return None
     if is_admin(user):
@@ -313,9 +317,13 @@ def ineligibility(event, config, user):
     staff = roles_in(user, event) & STAFF_ROLES
     if staff:
         return StaffCannotVote(f"You are a {sorted(staff)[0]} of this event, so you cannot vote in it.")
-    if config.accounts_before_open_only and user.date_joined >= config.opens_at:
+    if account_age and config.accounts_before_open_only and user.date_joined >= config.opens_at:
         return AccountTooNew("This vote is open to accounts created before voting opened.")
     return None
+
+
+def voter_ineligibility(event, config, voter):
+    return ineligibility(event, config, voter.user, account_age=voter.kind != "link")
 
 
 def own_project_ids(event, user):
@@ -368,7 +376,7 @@ def _eligible(event, voter, *, origin, attempted):
     if voter.kind == "link" and voter.link.revoked_at is not None:
         _refuse_vote(LinkRevoked("This voting link has been revoked."), event=event, voter=voter, origin=origin,
                      attempted=attempted)
-    problem = ineligibility(event, config, voter.user)
+    problem = voter_ineligibility(event, config, voter)
     if problem:
         _refuse_vote(problem, event=event, voter=voter, origin=origin, attempted=attempted)
     return config

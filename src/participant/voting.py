@@ -42,7 +42,7 @@ def ballot_page(request, event, config, voter, *, via, open_url, cast_url):
         "config": config,
         "state": services.state(config, db_now()),
         "wrong_mode": services.MODE_OF_KIND[voter.kind] != config.access_mode,
-        "refusal": services.ineligibility(event, config, voter.user),
+        "refusal": services.voter_ineligibility(event, config, voter),
         "ballot": ballot,
         "lines": lines,
         "spent": spent,

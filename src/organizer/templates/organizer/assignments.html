@@ -18,10 +18,7 @@
         <div class="assign-form">
           {% include "_field.html" with field=form.target cmd="--reviews-per-project" short=1 %}
           {% include "_field.html" with field=form.max_load cmd="--max-per-judge" short=1 %}
-          <div class="actions">
-            <button class="btn" type="submit" name="action" value="assign"{% if window.is_closed %} disabled{% endif %}>assign</button>
-            <button class="btn btn--ghost" type="submit" name="action" value="reshuffle"{% if window.is_closed %} disabled{% endif %}>reshuffle unstarted</button>
-          </div>
+          <div class="actions"><button class="btn" type="submit"{% if window.is_closed %} disabled{% endif %}>assign</button></div>
         </div>
         <details class="more">
           <summary>advanced: reproduce a round</summary>
@@ -31,9 +28,7 @@
       {% if window.is_closed %}<p class="faint">judging has ended, so assignments are frozen. <a href="{% url 'organizer:event' event.slug %}#judging">extend judging</a> to change them.</p>{% endif %}
       <details class="more">
         <summary>how assignment works</summary>
-        <p class="dim">assign fills every project up to the reviews-per-project target, and only tops up what is missing, so pressing it again is safe. a judge only gets projects in tracks they cover, never one they declined, never one you withdrew from them, and loads are balanced; among equal judges the choice is random, with the seed saved so a round can be reproduced exactly.</p>
-        <p class="dim">reshuffle unstarted draws every review nobody has started again, at random, with a new seed: use it to redo the assignment. started reviews (a draft or submitted) always stay with their judge.</p>
-        <p class="dim">to move one review: withdraw it from that judge, then press assign (it goes to someone else), or add a judge by hand under "manage".</p>
+        <p class="dim">assign fills every project up to the reviews-per-project target, and only tops up what is missing, so pressing it again is safe. a judge only gets projects in tracks they cover, never one they declined, and loads are balanced; among equal judges the choice is random, with the seed saved so a round can be reproduced exactly.</p>
       </details>
     </div>
   </section>

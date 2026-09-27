@@ -219,21 +219,7 @@ def project_edit(request, project_id):
         if form.is_valid():
             try:
                 project_services.update_project(request, project, form)
-                then = request.POST.get("then")
-                # "save & submit" / "save & preview" live in this form, so what was typed is saved
-                # first. (They used to be separate forms and silently dropped unsaved edits.)
-                if then == "submit" and not project.is_submitted:
-                    project.refresh_from_db()
-                    try:
-                        project_services.submit_project(request, project)
-                        messages.success(request, "saved and submitted. you can keep editing until the deadline.")
-                    except project_services.ProjectRuleError as error:
-                        messages.success(request, "saved.")
-                        messages.error(request, f"not submitted: {error}")
-                elif then == "preview":
-                    return redirect("participant:project_preview", project_id=project.pk)
-                else:
-                    messages.success(request, "saved.")
+                messages.success(request, "saved.")
                 return redirect("participant:project_edit", project_id=project.pk)
             except project_services.ProjectRuleError as error:
                 for field, sentence in getattr(error, "missing", {}).items():

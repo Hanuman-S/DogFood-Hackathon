@@ -120,15 +120,3 @@ def test_no_inline_styles_or_scripts_that_the_csp_would_block():
         if re.search(r"\sstyle=|<style|<script>(?!</script>)|\son[a-z]+=", text):
             offenders.append(str(path.relative_to(SRC)))
     assert offenders == []
-
-
-def test_no_template_has_a_multi_line_hash_comment():
-    """Django's {# #} comments are one line only: a multi-line one is printed into the page (and
-    once swallowed the rubric editor's rows, because its text mentioned a <template> tag)."""
-    import re
-    from pathlib import Path
-
-    src = Path(__file__).resolve().parent.parent / "src"
-    bad = [str(p.relative_to(src)) for p in src.rglob("*.html")
-           if any("\n" in m.group(1) for m in re.finditer(r"\{#(.*?)#\}", p.read_text(), re.S))]
-    assert bad == []

@@ -2,7 +2,10 @@
 
 import os
 
-os.environ.setdefault("DJANGO_SECRET_KEY", "test-only-secret")
+# Compose passes DJANGO_SECRET_KEY as an empty string (the generated key is for the running portal),
+# so fill it in when empty, not only when unset. A known key is fine here: tests run in demo mode.
+os.environ["DJANGO_SECRET_KEY"] = os.environ.get("DJANGO_SECRET_KEY") or "test-only-secret"
+os.environ["DEMO_MODE"] = "1"
 
 from config.settings import *  # noqa: E402,F401,F403
 

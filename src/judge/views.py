@@ -74,7 +74,7 @@ def invite(request, token):
             problem = (f"this invite is for {invite.email}, and you are logged in as {user.email}. "
                        "log out, then open the link again.")
         else:
-            problem = event_services.invite_problem(invite.event, user, invite.role)
+            problem = event_services.judge_invite_problem(invite.event, user)
     form = None if has_account else InviteAccountForm(request.POST or None, email=invite.email or None)
     status = 200
 
@@ -94,9 +94,6 @@ def invite(request, token):
             except event_services.EventRuleError as error:
                 messages.error(request, str(error))
                 return redirect(request.path)
-            if invite.role == Role.ORGANIZER:
-                messages.success(request, f"you are now an organizer of {membership.event.name}.")
-                return redirect("organizer:event", membership.event.slug)
             messages.success(request, f"you are now a judge of {membership.event.name}.")
             return redirect("judge:home")
 

@@ -34,24 +34,21 @@ Rules:
 
 from __future__ import annotations
 
-import csv
 import io
-import json
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from decimal import Decimal
 from functools import cached_property
 
 from django.db import connection, transaction
 from django.db.models import Count, Q
-from django.http import HttpResponse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
 
 from accounts.roles import Role, is_organizer_of
 from core import audit
 from core.api import error
+from core.csvfile import FORMULA_START, cell, download as _download, stamp as _stamp, to_csv  # noqa: F401
 from core.deadlines import db_now
 from core.models import AuditAction, AuditLog
 from events.models import CustomQuestion, Event, EventMembership, JudgeInvite, Prize, Track
@@ -61,74 +58,7 @@ from scoring.models import (Assignment, AssignmentRound, AssignmentStatus, Crite
                             ResultSnapshot, Score, SnapshotKind)
 from teams.models import Team, TeamExtension, TeamMember
 
-# --- cell formatting ------------------------------------------------------------------------------
-
-FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-
-
-def cell(value):
-    """A value as it should appear in a spreadsheet cell."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if hasattr(value, "isoformat") and hasattr(value, "tzinfo"):
-        return value.isoformat().replace("+00:00", "Z")
-    if isinstance(value, int):
-        return str(value)  # a number, even a negative one, is never a formula
-    if isinstance(value, Decimal):
-        return format(value.normalize(), "f")
-    if isinstance(value, float):
-        return f"{value:.6f}".rstrip("0").rstrip(".") if value == value else ""
-    if isinstance(value, (list, tuple)):
-        value = "; ".join(str(v) for v in value)
-    if isinstance(value, dict):
-        value = json.dumps(value, sort_keys=True, ensure_ascii=False)
-    text = str(value)
-    if text.startswith(FORMULA_START):
-        return "'" + text
-    return text
-
-
-def to_csv(header, rows) -> bytes:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator="\r\n")
-    writer.writerow([cell(h) for h in header])
-    for row in rows:
-        writer.writerow([cell(v) for v in row])
-    return ("﻿" + buffer.getvalue()).encode("utf-8")
-
-
-def describe_detail(detail, project_names=None):
-    """An audit row's detail as a line a person can read: "old: ... -> new: ...; email: ...".
-    The reason has a column of its own, and the event is implied by the file."""
-    project_names = project_names or {}
-
-    def show(key, value):
-        if isinstance(value, bool):
-            return "yes" if value else "no"
-        if key == "project" and isinstance(value, int):
-            return project_names.get(value, f"#{value}")
-        if isinstance(value, list):
-            return ", ".join(str(v) for v in value) if value else "none"
-        if isinstance(value, dict):
-            parts = []
-            for k, v in value.items():
-                if isinstance(v, list) and len(v) == 2:
-                    parts.append(f"{k.replace('_', ' ')} {v[0]} -> {v[1]}")
-                else:
-                    parts.append(f"{k.replace('_', ' ')} {v}")
-            return "; ".join(parts) if parts else "none"
-        return str(value).replace("+00:00", "Z")
-
-    parts = []
-    if "old" in detail and "new" in detail:
-        parts.append(f"{show('old', detail['old'])} -> {show('new', detail['new'])}")
-    for key, value in detail.items():
-        if key in ("event", "reason", "old", "new") or value in ("", None, [], {}):
-            continue
-        parts.append(f"{key.replace('_', ' ')}: {show(key, value)}")
-    return "; ".join(parts)
+# Cell formatting and the CSV writer are shared (winners.csv, voter-links.csv): core/csvfile.py.
 
 
 # --- the sheets -----------------------------------------------------------------------------------
@@ -162,7 +92,7 @@ SHEETS = [
     Sheet("questions", "setup", "custom submission questions and how many projects answered each"),
     Sheet("rubric", "setup", "criteria: weight, share of the score, scale and the written description of each level"),
     Sheet("judges", "setup", "judges: tracks and progress (assigned, submitted, drafts, declined); their lean once results open"),
-    Sheet("invites", "setup", "judge and co-organizer invite links: role, who for, state, and who accepted (the link itself is never exported)"),
+    Sheet("judge_invites", "setup", "judge invite links: who for, state, and who accepted (the link itself is never exported)"),
     Sheet("teams", "submissions", "teams: captain, members, project and any deadline extension", SUBMISSIONS),
     Sheet("members", "submissions", "one row per participant: team, name, email, captain or not", SUBMISSIONS),
     Sheet("projects", "submissions", "one row per project: status, links, tags, custom answers, reviews in; rank and score once results open", SUBMISSIONS),
@@ -358,7 +288,7 @@ class EventExport:
             ))
         return header, rows
 
-    def sheet_invites(self):
+    def sheet_judge_invites(self):
         invites = (JudgeInvite.objects.filter(event=self.event).select_related("created_by", "accepted_by")
                    .prefetch_related("tracks").order_by("-created_at"))
 
@@ -371,9 +301,8 @@ class EventExport:
                 return "expired"
             return "pending"
 
-        return (["role", "for", "tracks", "state", "created", "created by", "expires", "accepted", "accepted by", "revoked"],
-                [(i.get_role_display().lower(), i.email or "open link (anyone with it)",
-                  ([t.name for t in i.tracks.all()] or "all tracks") if i.role == "judge" else "",
+        return (["for", "tracks", "state", "created", "created by", "expires", "accepted", "accepted by", "revoked"],
+                [(i.email or "open link (anyone with it)", [t.name for t in i.tracks.all()] or "all tracks",
                   state(i), i.created_at, i.created_by.email if i.created_by else "", i.expires_at,
                   i.accepted_at, i.accepted_by.email if i.accepted_by else "", i.revoked_at) for i in invites])
 
@@ -512,10 +441,8 @@ class EventExport:
         # another event's rows (names are unique per event, not across events).
         slug = self.event.slug
         entries = AuditLog.objects.filter(Q(subject=slug) | Q(detail__event=slug)).order_by("created_at", "pk")
-        names = {p.pk: p.name for p in self.projects}
-        return (["at", "who", "action", "reason", "what", "subject", "action code", "detail (raw)", "ip"],
-                [(e.created_at, e.actor_email, e.get_action_display(), (e.detail or {}).get("reason", ""),
-                  describe_detail(e.detail or {}, names), e.subject, e.action, e.detail, e.ip)
+        return (["at", "who", "action", "action code", "subject", "detail", "ip"],
+                [(e.created_at, e.actor_email, e.get_action_display(), e.action, e.subject, e.detail, e.ip)
                  for e in entries])
 
     # --- output -----------------------------------------------------------------------------------
@@ -615,15 +542,6 @@ def _caller_events(request):
     return list(managed.order_by("-submissions_close_at", "slug")), None
 
 
-def _stamp(now):
-    return now.strftime("%Y%m%d-%H%MZ")
-
-
-def _download(body, content_type, filename):
-    response = HttpResponse(body, content_type=content_type)
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
-    response["X-Content-Type-Options"] = "nosniff"
-    return response
 
 
 @never_cache

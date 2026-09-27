@@ -30,9 +30,9 @@
           {% if project.is_submitted %}
             <form method="post" action="{% url 'participant:project_unsubmit' project.pk %}">{% csrf_token %}<button class="btn btn--ghost" type="submit">withdraw to draft</button></form>
           {% else %}
-            <button class="btn" type="submit" form="project-form" name="then" value="submit">save &amp; submit</button>
+            <form method="post" action="{% url 'participant:project_submit' project.pk %}">{% csrf_token %}<button class="btn" type="submit"{% if missing %} disabled{% endif %}>submit project</button></form>
           {% endif %}
-          <button class="btn btn--ghost" type="submit" form="project-form" name="then" value="preview">save &amp; preview</button>
+          <a class="btn btn--ghost" href="{% url 'participant:project_preview' project.pk %}">preview</a>
           {% if project.is_submitted and event.is_published %}<a class="btn btn--ghost" href="{% url 'public:project' project.pk %}">public page</a>{% endif %}
         </div>
       </div>
@@ -51,7 +51,7 @@
     </div>
   </section>
 
-  <form class="stack" id="project-form" method="post" enctype="multipart/form-data" novalidate data-guard-unsaved>
+  <form class="stack" method="post" enctype="multipart/form-data" novalidate>
     {% csrf_token %}
     {% include "_form_errors.html" %}
     <div class="grid-2">
