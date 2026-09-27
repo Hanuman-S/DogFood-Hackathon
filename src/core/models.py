@@ -128,6 +128,7 @@ class AuditAction(models.TextChoices):
     WEIGHTS_CHANGED = "weights_changed", "Changed the judge/community weights"
     WEIGHTS_REFUSED = "weights_refused", "Refused a change to the judge/community weights"
     WEIGHTS_BYPASSED = "weights_bypassed", "Set weights past the weights lock (bypass)"
+    RESULTS_EXPORTED = "results_exported", "Downloaded results.csv"
 
 
 class AuditLog(models.Model):

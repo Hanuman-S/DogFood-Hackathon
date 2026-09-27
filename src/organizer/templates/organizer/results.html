@@ -37,7 +37,7 @@
         {% else %}
           <p class="faint">compute the final result first; only a final result can be published.</p>
         {% endif %}
-        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:winners_csv' event.slug %}">download winners.csv</a><span class="faint">winners with their team members' names and emails, in every visibility mode. there is no outbound mail.</span></p>
+        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:winners_csv' event.slug %}">download winners.csv</a><a class="btn btn--small btn--ghost" href="{% url 'organizer:results_csv' event.slug %}">results.csv</a><span class="faint">winners with their team members' names and emails, in every visibility mode. there is no outbound mail.</span></p>
       </div>
       <form method="post" action="{% url 'organizer:results_settings' event.slug %}" class="form stack">
         {% csrf_token %}

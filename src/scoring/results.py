@@ -153,6 +153,12 @@ def build_rows(event, snapshot):
             raw_rank=raw.get(i), n_reviews=p.get("n_reviews") or 0,
         )
         (ranked if row.display_rank is not None else unranked).append(row)
+    # Projects the engine left out entirely (no usable review) are "not ranked" too, not missing.
+    excluded = [str(x.get("id")) for x in result.get("excluded", ()) if x.get("kind") == "project"
+                and str(x.get("id", "")).isdigit() and str(x.get("id")) not in by_pk]
+    for project in Project.objects.filter(event=event, pk__in=[int(i) for i in excluded]).select_related("team", "track"):
+        unranked.append(Row(project=project, track=project.track, engine_rank=0, display_rank=None, score=None,
+                            se=None, tie_group=None, tie_size=0, raw_rank=None, n_reviews=0))
     ranked.sort(key=lambda r: (r.display_rank, r.engine_rank))
     unranked.sort(key=lambda r: r.project.name.lower())
     if is_combined(snapshot):
@@ -317,3 +323,64 @@ def winners_rows(event, *, actor, origin=None):
     audit.record(AuditAction.WINNERS_EXPORTED, origin=origin, actor=actor, subject=event.slug,
                  snapshot=snapshot.pk, rows=len(out))
     return snapshot, out
+
+
+# --- results.csv ------------------------------------------------------------------------------------
+
+RESULTS_HEADER = ["final rank", "project", "team", "track", "judged percentile", "M2 rank", "M2 tie group",
+                  "tie group size", "influence", "vote percentile", "people's choice position", "snapshot",
+                  "weights"]
+
+
+def results_rows(event, *, actor, origin=None):
+    """(snapshot, rows) for results.csv: the latest final, every project, organizers only, audited.
+
+    Final rank is the combined rank when the community has a weight, else the M2 rank (shared by exact
+    ties either way). The judged percentile is the one the combination used (from the snapshot), or, for
+    a judges-only final with no vote, the same mid-rank percentile computed here from the M2 scores. Vote
+    columns are empty when the final has no tally. Unranked projects have no rank or percentiles but keep
+    their People's Choice position."""
+    from scoring.engine.combine import mid_rank_percentiles
+
+    if not is_organizer_of(actor, event):
+        raise PermissionDenied("Only the event's organizers can download the results.")
+    snapshot = latest_final(event)
+    if snapshot is None:
+        raise NoFinalResult("There is no final result yet: compute final results first.")
+    ranked, unranked = build_rows(event, snapshot)
+    combined = {c["project_id"]: c for c in snapshot.combined or ()}
+    if combined:
+        judge_pct = {pid: c["judge_pct"] for pid, c in combined.items()}
+    else:
+        decimals = (snapshot.engine_config.get("config") or {}).get("equal_decimals", DEFAULT_EQUAL_DECIMALS)
+        judge_pct = {pid: float(v) for pid, v in
+                     mid_rank_percentiles({str(r.project.pk): r.score for r in ranked}, decimals).items()}
+    choice = {c.project.pk: c.rank for c in peoples_choice(event, snapshot) or ()}
+    weights = snapshot.final_weights or {"judge": 100, "community": 0}
+    weights_text = f"{weights.get('judge', 100)}/{weights.get('community', 0)}"
+    out = []
+    for r in ranked + unranked:
+        pid = str(r.project.pk)
+        c = combined.get(pid)
+        ranked_row = r.display_rank is not None
+        out.append([
+            r.display_rank if ranked_row else "",
+            r.project.name, r.project.team.name, r.track.name if r.track else "",
+            judge_pct.get(pid, "") if ranked_row else "",
+            (r.m2_rank if r.m2_rank is not None else r.display_rank) if ranked_row else "",
+            r.tie_group if ranked_row else "", r.tie_size if ranked_row else "",
+            c["influence"] if c else _influence(snapshot, pid),
+            c["vote_pct"] if c else "",
+            choice.get(r.project.pk, ""),
+            snapshot.pk, weights_text,
+        ])
+    audit.record(AuditAction.RESULTS_EXPORTED, origin=origin, actor=actor, subject=event.slug,
+                 snapshot=snapshot.pk, rows=len(out))
+    return snapshot, out
+
+
+def _influence(snapshot, pid):
+    rows = snapshot.vote_tally.rows if snapshot.vote_tally_id else None
+    if not rows:
+        return ""
+    return next((r["influence"] for r in rows if r["project_id"] == pid), "")

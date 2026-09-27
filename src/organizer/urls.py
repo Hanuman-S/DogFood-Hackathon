@@ -51,6 +51,7 @@ urlpatterns = [
     path("events/<slug:slug>/results/settings", results.settings, name="results_settings"),
     path("events/<slug:slug>/results/weights", results.weights, name="results_weights"),
     path("events/<slug:slug>/results/winners.csv", results.winners_csv, name="winners_csv"),
+    path("events/<slug:slug>/results/results.csv", results.results_csv, name="results_csv"),
     path("events/<slug:slug>/voting", voting.voting, name="voting"),
     path("events/<slug:slug>/voting/settings", voting.voting_settings, name="voting_settings"),
     path("events/<slug:slug>/voting/end", voting.voting_end, name="voting_end"),

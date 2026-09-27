@@ -145,6 +145,20 @@ def weights(request, slug):
 @never_cache
 @require_GET
 @portal_required("organizer")
+def results_csv(request, slug):
+    event = get_managed_event(request.user, slug)
+    try:
+        snapshot, rows = result_views.results_rows(event, actor=request.user, origin=audit.origin_of(request))
+    except ScoringError as error:
+        messages.error(request, str(error))
+        return redirect("organizer:results", slug=event.slug)
+    return download(to_csv(result_views.RESULTS_HEADER, rows), "text/csv; charset=utf-8",
+                    f"{event.slug}-results-{stamp(db_now())}.csv")
+
+
+@never_cache
+@require_GET
+@portal_required("organizer")
 def winners_csv(request, slug):
     event = get_managed_event(request.user, slug)
     try:

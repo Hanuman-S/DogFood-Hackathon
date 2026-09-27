@@ -132,8 +132,10 @@ def add_vote(event, closes_in=timedelta(minutes=-30), method=Method.QUADRATIC):
 
 def add_ballots(event, ballots):
     """Ballots written straight in (through the audited bypass: the window may be over)."""
+    from projects.models import Project, Status
+
     now = timezone.now()
-    projects = event.projects_list
+    projects = list(Project.objects.filter(event=event, status=Status.SUBMITTED).order_by("pk"))
     made = []
     with voting.voting_bypass("test: seed ballots"):
         for i, lines in enumerate(ballots):
@@ -340,3 +342,110 @@ def test_weights_page_is_organizer_only(judged, client_for, make_event):
     response = client_for(judged.organizer).post(url, {"judge_weight": 80, "community_weight": 20})
     assert response.status_code == 409  # judging has opened (and closed) on this event
     assert services.final_weights(judged) == (100, 0)
+
+
+# --- the combined population, the publish rule, results.csv -----------------------------------------------------
+
+def add_unreviewed_project(event, make_team):
+    """A submitted project nobody reviewed: the engine leaves it unranked."""
+    from core.deadlines import deadline_bypass
+    from projects.models import Project, Status
+
+    with deadline_bypass(None, "test: a late unreviewed project"):
+        return Project.objects.create(team=make_team(event, name="Unreviewed"), event=event, name="PX",
+                                      status=Status.SUBMITTED, submitted_at=timezone.now())
+
+
+@TX
+def test_combination_covers_only_engine_ranked_projects(judged, make_team):
+    set_weights(judged, 50, 50)
+    add_vote(judged)
+    extra = add_unreviewed_project(judged, make_team)
+    p = judged.projects_list
+    add_ballots(judged, [{extra.pk: 16}, {p[0].pk: 4}])
+    snapshot = services.compute_snapshot(judged, "final", actor=judged.organizer)
+    ranked_ids = {e["project_id"] for e in snapshot.result["projects"] if e.get("score") is not None}
+    assert {c["project_id"] for c in snapshot.combined} == ranked_ids and str(extra.pk) not in ranked_ids
+    # both percentiles over exactly the ranked set: its top vote is 1, bottom 0, with 4 ranked projects
+    pcts = {c["project_id"]: c["vote_pct"] for c in snapshot.combined}
+    assert pcts[str(p[0].pk)] == 1 and min(pcts.values()) == pytest.approx(1 / 3)  # three zero-vote ties at 1/3
+    rows, unranked = results.build_rows(judged, snapshot)
+    assert [r.project.pk for r in unranked] == [extra.pk]
+    assert extra.pk not in {r.project.pk for r in rows}
+    choice = results.peoples_choice(judged, snapshot)
+    assert choice[0].project.pk == extra.pk and choice[0].rank == 1  # People's Choice may include it
+
+
+@pytest.mark.django_db
+def test_judged_percentile_uses_the_same_rounded_equality_as_the_shared_ranks(judged):
+    from scoring.engine.combine import mid_rank_percentiles
+
+    near = 4.0 + 1e-12  # equal after rounding to 9 decimals
+    snapshot = fake_snapshot(judged, [4.0, near, 3.0, 2.0])
+    rows, _ = results.build_rows(judged, snapshot)
+    assert [r.display_rank for r in rows] == [1, 1, 3, 4]
+    pct = mid_rank_percentiles({str(r.project.pk): r.score for r in rows}, 9)
+    ids = [str(r.project.pk) for r in rows]
+    assert pct[ids[0]] == pct[ids[1]]
+    shared = {}
+    for r in rows:
+        shared.setdefault(r.display_rank, set()).add(pct[str(r.project.pk)])
+    assert all(len(v) == 1 for v in shared.values())  # one percentile per shared rank, and vice versa
+    assert len(set(pct.values())) == len(shared)
+
+
+@TX
+def test_publishing_a_final_that_predates_the_vote_close_is_refused(judged):
+    from scoring.errors import FinalPredatesVoteClose
+
+    config = add_vote(judged, closes_in=timedelta(days=1))
+    early = services.compute_snapshot(judged, "final", actor=judged.organizer)
+    assert early.vote_tally is None
+    with voting.voting_bypass("test: close the vote"):
+        VotingConfig.objects.filter(pk=config.pk).update(closes_at=timezone.now() - timedelta(seconds=1))
+    with pytest.raises(FinalPredatesVoteClose) as caught:
+        services.publish_results(judged, early.pk, actor=judged.organizer)
+    assert (caught.value.status, caught.value.code) == (409, "final_predates_vote_close")
+    assert AuditLog.objects.filter(action=AuditAction.RESULTS_PUBLISH_REFUSED,
+                                   detail__reason="final_predates_vote_close").exists()
+    fresh = services.compute_snapshot(judged, "final", actor=judged.organizer)
+    services.publish_results(judged, fresh.pk, actor=judged.organizer)
+
+
+@TX
+def test_results_csv_for_the_latest_final(judged, make_team, client_for, make_event):
+    import csv
+    import io
+
+    set_weights(judged, 80, 20)
+    add_vote(judged)
+    extra = add_unreviewed_project(judged, make_team)
+    p = judged.projects_list
+    add_ballots(judged, [{p[1].pk: 16}, {extra.pk: 4}])
+    snapshot = services.compute_snapshot(judged, "final", actor=judged.organizer)
+    url = f"/organizer/events/{judged.slug}/results/results.csv"
+    assert client_for(judged.participant).get(url).status_code == 403
+    assert client_for(make_event().organizer).get(url).status_code == 404
+    response = client_for(judged.organizer).get(url)
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert list(rows[0]) == results.RESULTS_HEADER
+    by_name = {r["project"]: r for r in rows}
+    combined = {c["project_id"]: c for c in snapshot.combined}
+    top = by_name[p[1].name]
+    assert top["people's choice position"] == "1" and top["weights"] == "80/20"
+    assert int(top["final rank"]) == combined[str(p[1].pk)]["final_rank"]
+    assert float(top["vote percentile"]) == pytest.approx(combined[str(p[1].pk)]["vote_pct"])
+    assert by_name["PX"]["final rank"] == "" and by_name["PX"]["people's choice position"] == "2"
+    assert AuditLog.objects.filter(action=AuditAction.RESULTS_EXPORTED).count() == 1
+
+
+@TX
+def test_results_csv_judges_only_has_percentiles_and_no_vote_columns(judged, client_for):
+    import csv
+    import io
+
+    services.compute_snapshot(judged, "final", actor=judged.organizer)
+    body = client_for(judged.organizer).get(f"/organizer/events/{judged.slug}/results/results.csv").content
+    rows = list(csv.DictReader(io.StringIO(body.decode("utf-8-sig"))))
+    assert all(r["judged percentile"] != "" and r["vote percentile"] == "" for r in rows)
+    assert {r["weights"] for r in rows} == {"100/0"}

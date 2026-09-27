@@ -79,7 +79,7 @@ from .engine.errors import ConfigError, EngineError
 from .engine.types import Criterion as EngineCriterion
 from .engine.types import EngineInput, Exclusion, Review, Rubric, dumps, to_jsonable
 from .engine import combine as combining
-from .errors import (AlreadyPublished, ConcurrentFinal, FinalOverrideRefused, InvalidConfig, InvalidResultSettings,
+from .errors import (AlreadyPublished, ConcurrentFinal, FinalOverrideRefused, FinalPredatesVoteClose, InvalidConfig, InvalidResultSettings,
                      InvalidWeights, JudgingOpen, NoSuchSnapshot, NotFinal, NotLatestFinal, NotPublished,
                      NoVoteForCommunityWeight, ScoringConfigLocked, SnapshotInsideTransaction, WeightsLocked)
 
@@ -867,7 +867,8 @@ def active_publication(event):
 def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
     """Publish the event's latest final snapshot. Refusals, each audited: PermissionDenied (not an
     organizer of the event, nor an admin); NoSuchSnapshot (404); NotFinal (400); NotLatestFinal,
-    VotingOpen (community voting has not closed yet), AlreadyPublished (409)."""
+    VotingOpen (community voting has not closed yet), FinalPredatesVoteClose (the event has a vote but
+    this final has no tally: it was computed before the vote closed), AlreadyPublished (409)."""
 
     def refuse(error, reason):
         audit.record(AuditAction.RESULTS_PUBLISH_REFUSED, origin=origin, actor=actor, subject=event.slug,
@@ -890,6 +891,10 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
             if voting is not None and db_now() < voting.closes_at:
                 raise VotingOpen(f"Community voting closes at {voting.closes_at.isoformat()}; final results "
                                  "can be published once it has closed.")
+            if voting is not None and snapshot.vote_tally_id is None:
+                raise FinalPredatesVoteClose(
+                    f"Final #{snapshot.pk} was computed before community voting closed, so it has no vote "
+                    "tally. Compute final results again, then publish that.")
             current = active_publication(event)
             if current is not None:
                 raise AlreadyPublished(
@@ -898,7 +903,7 @@ def publish_results(event, snapshot_id, *, actor, origin=None) -> Publication:
                 event=event, snapshot=snapshot, published_at=db_now(), published_by=actor,
                 published_by_email=actor.email,
             )
-    except (NoSuchSnapshot, NotFinal, NotLatestFinal, AlreadyPublished, VotingOpen) as error:
+    except (NoSuchSnapshot, NotFinal, NotLatestFinal, AlreadyPublished, VotingOpen, FinalPredatesVoteClose) as error:
         refuse(error, error.code)
     except IntegrityError:  # the partial unique constraint, if the lock was somehow not enough
         refuse(AlreadyPublished("These results are already published; unpublish them first."), "already_published")

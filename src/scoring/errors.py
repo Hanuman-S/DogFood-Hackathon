@@ -118,3 +118,10 @@ class ConcurrentFinal(ScoringError):
 
     status = 409
     code = "final_in_progress"
+
+
+class FinalPredatesVoteClose(ScoringError):
+    """The event has a vote, and this final was computed before it closed (it has no tally)."""
+
+    status = 409
+    code = "final_predates_vote_close"
