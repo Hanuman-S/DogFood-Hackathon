@@ -37,6 +37,7 @@
           <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
         </div>
         {% endif %}
+        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:results' event.slug %}">results</a><span class="faint">compute, publish, choose who sees them, winners.csv</span></p>
         <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'api_export_zip' %}?event={{ event.slug }}">export all (.zip)</a><a class="faint" href="#export">or one sheet</a></p>
         <table class="kv">
           <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>

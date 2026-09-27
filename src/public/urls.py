@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("events/", views.event_list, name="event_list"),
     path("events/<slug:slug>", views.event_detail, name="event_detail"),
+    path("events/<slug:slug>/results", views.event_results, name="event_results"),
     # No trailing slash on purpose: /projects is the exact path .dogfood.toml advertises, and a
     # slash-redirect in front of it would make the acceptance checker measure a 301.
     path("projects", views.gallery, name="gallery"),

@@ -1,0 +1,62 @@
+{% comment %}
+  A results page body (scoring.results.ResultsPage as `page`). Used by the public page and the
+  organizer's results page. Shows no per-judge data.
+{% endcomment %}
+{% if not page.snapshot %}
+  <section class="frame"><div class="frame__body"><p class="faint">nothing computed yet.</p></div></section>
+{% else %}
+  {% if page.no_separable_winner %}
+  <ul class="msgs"><li class="msg msg--warning">no separable winner: first place is shared{% if page.rows or page.overall_winners %} (see the tie group beside the top projects){% endif %}. the judges' scores cannot tell these projects apart.</li></ul>
+  {% endif %}
+
+  <div class="grid-2">
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">winners</h2><span class="frame__meta">top {{ page.top_n }} overall</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col">tie</th></tr></thead>
+          <tbody>
+          {% for r in page.overall_winners %}
+            <tr><td class="num bright">{{ r.display_rank }}</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· {{ r.project.team.name }}</span></td><td class="dim">{{ r.track.name|default:"--" }}</td><td class="dim">{% if r.shared %}group {{ r.tie_group }} ({{ r.tie_size }}){% else %}--{% endif %}</td></tr>
+          {% empty %}<tr><td colspan="4" class="faint">no project was ranked.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">track winners</h2><span class="frame__meta">{{ page.track_winners|length }}</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th scope="col">track</th><th scope="col">project</th><th scope="col" class="num">rank</th></tr></thead>
+          <tbody>
+          {% for t in page.track_winners %}{% for r in t.rows %}
+            <tr><td class="bright">{{ t.track.name }}{% if t.rows|length > 1 %} <span class="badge badge--warn">tied</span>{% endif %}</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· {{ r.project.team.name }}</span></td><td class="num">{{ r.display_rank }}</td></tr>
+          {% endfor %}{% empty %}<tr><td colspan="3" class="faint">one open category: no tracks.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  {% if page.full %}
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">full ranking</h2><span class="frame__meta">{{ page.rows|length }} ranked · {{ page.snapshot.method }} {{ page.snapshot.method_version }}</span></header>
+    <div class="frame__body">
+      <p class="faint">rank is shared by exact ties. a tie group joins projects the scores cannot separate with confidence (P(ahead) below the threshold); ranks inside a group are not a real order. "mean rank" is the plain average of the judges' weighted scores, for comparison.{% if page.components > 1 %} the judges fall into {{ page.components }} groups with no judge in common, so projects in different groups are not directly comparable.{% endif %}</p>
+    </div>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col" class="num">score</th><th scope="col" class="num">± se</th><th scope="col">tie group</th><th scope="col" class="num">mean rank</th><th scope="col" class="num">reviews</th></tr></thead>
+        <tbody>
+        {% for r in page.rows %}
+          <tr><td class="num bright">{{ r.display_rank }}</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· {{ r.project.team.name }}</span>{% for a in r.awards %} <span class="badge badge--on">{{ a }}</span>{% endfor %}</td><td class="dim">{{ r.track.name|default:"--" }}</td><td class="num">{{ r.score|floatformat:3 }}</td><td class="num dim">{% if r.se is not None %}{{ r.se|floatformat:3 }}{% else %}--{% endif %}</td><td class="dim">{% if r.shared %}group {{ r.tie_group }} ({{ r.tie_size }}){% else %}--{% endif %}</td><td class="num dim">{{ r.raw_rank|default:"--" }}</td><td class="num dim">{{ r.n_reviews }}</td></tr>
+        {% endfor %}
+        {% for r in page.unranked %}
+          <tr><td class="num faint">--</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· not ranked (no usable reviews)</span></td><td class="dim">{{ r.track.name|default:"--" }}</td><td colspan="5"></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+{% endif %}

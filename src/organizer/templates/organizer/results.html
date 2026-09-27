@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · results{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">results</h1>
+      <span class="frame__meta">{{ event.name }} {% if publication %}<span class="badge badge--on">published</span>{% else %}<span class="badge">not published</span>{% endif %}</span>
+    </header>
+    <div class="frame__body grid-2">
+      <div class="stack">
+        <p class="section-title">compute</p>
+        <form method="post" action="{% url 'organizer:results_compute' event.slug %}" class="actions">
+          {% csrf_token %}
+          <button class="btn btn--ghost" type="submit" name="kind" value="preview">compute preview</button>
+          <button class="btn" type="submit" name="kind" value="final"{% if not judging_closed %} disabled aria-describedby="final-why"{% endif %}>compute final results</button>
+        </form>
+        {% if not judging_closed %}<p class="faint" id="final-why">a final result can be computed once judging closes ({{ event.judging_ends_at|utc }}). a preview can be computed now; it is never published.</p>{% endif %}
+
+        <p class="section-title">publish</p>
+        {% if publication %}
+          <table class="kv">
+            <tr><th scope="row">published</th><td>final #{{ publication.snapshot_id }}, {{ publication.published_at|utc }} by {{ publication.published_by_email }}</td></tr>
+          </table>
+          <form method="post" action="{% url 'organizer:results_unpublish' event.slug %}" class="actions">
+            {% csrf_token %}<button class="btn btn--ghost" type="submit">unpublish</button>
+            <a href="{% url 'public:event_results' event.slug %}">/events/{{ event.slug }}/results</a>
+          </form>
+        {% elif latest_final %}
+          <form method="post" action="{% url 'organizer:results_publish' event.slug %}" class="actions">
+            {% csrf_token %}<input type="hidden" name="snapshot" value="{{ latest_final.pk }}">
+            <button class="btn" type="submit">publish final #{{ latest_final.pk }}</button>
+            <a href="{% url 'public:event_results' event.slug %}">preview the page</a>
+          </form>
+        {% else %}
+          <p class="faint">compute the final result first; only a final result can be published.</p>
+        {% endif %}
+        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:winners_csv' event.slug %}">download winners.csv</a><span class="faint">winners with their team members' names and emails, in every visibility mode. there is no outbound mail.</span></p>
+      </div>
+      <form method="post" action="{% url 'organizer:results_settings' event.slug %}" class="form stack">
+        {% csrf_token %}
+        <p class="section-title">who sees the published result</p>
+        {% include "_form_errors.html" with form=settings_form %}
+        <fieldset class="field">
+          <legend class="field__label">visibility</legend>
+          {% for radio in settings_form.visibility %}<label class="check">{{ radio.tag }} {{ radio.choice_label }}</label>{% endfor %}
+          <p class="field__help">{{ settings_form.visibility.help_text }}</p>
+        </fieldset>
+        {% include "_field.html" with field=settings_form.winners_top_n cmd="--winners" short=1 %}
+        <div class="actions"><button class="btn btn--small" type="submit">save</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">snapshots</h2><span class="frame__meta">latest {{ snapshots|length }}</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">kind</th><th scope="col">computed</th><th scope="col">by</th><th scope="col">method</th><th scope="col">input</th></tr></thead>
+        <tbody>
+        {% for s in snapshots %}
+          <tr><td class="num">{{ s.pk }}</td><td>{% if s.kind == "final" %}<span class="badge badge--on">final</span>{% else %}<span class="badge">preview</span>{% endif %}{% if publication and publication.snapshot_id == s.pk %} <span class="badge badge--on">published</span>{% endif %}</td><td class="dim">{{ s.created_at|utc }}</td><td class="dim">{{ s.created_by_email }}</td><td class="dim">{{ s.method }} {{ s.method_version }}</td><td class="faint">{{ s.input_hash|slice:":12" }}</td></tr>
+        {% empty %}<tr><td colspan="6" class="faint">nothing computed yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if page.snapshot %}<p class="section-title">what the results page shows (full view: {% if page.snapshot.kind == "final" %}final{% else %}preview{% endif %} #{{ page.snapshot.pk }})</p>{% endif %}
+  {% include "_results.html" %}
+
+  <p class="actions"><a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to {{ event.name }}</a></p>
+</div>
+{% endblock %}

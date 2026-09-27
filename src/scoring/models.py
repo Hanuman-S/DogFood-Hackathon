@@ -10,10 +10,12 @@ Ownership inside T2 (so three people can work here without stepping on each othe
   through `scoring.services.decline_assignment` (never by editing `status` directly).
 * **Scoring engine** -- reads submitted scores and weights (`scoring/engine/`, through
   `scoring.services.build_input`); its own tables are below: `EventScoringConfig`,
-  `ResultSnapshot` (immutable) and `Publication` (append-only, model only).
+  `ResultSnapshot` (immutable), `Publication` (append-only) and `EventResultSettings` (who sees
+  a published result).
 
-Nothing outside organizers reads a score yet: the gallery and the project pages do not show
-scores to anyone. `JUDGING.md` states what is and is not built.
+Scores themselves are read only by organizers; the public sees a result only once an organizer
+publishes a final snapshot with a public visibility (`scoring.results`). The gallery and the project
+pages never show scores. `JUDGING.md` states what is and is not built.
 
 They are defined now rather than in T2 because the fixture ships 126 reviews and discarding
 them on import would mean re-importing later against a schema designed without them in view.
@@ -402,8 +404,7 @@ class ResultSnapshot(models.Model):
 class Publication(models.Model):
     """Which final snapshot is the event's published result. **Append-only.**
 
-    Only the model and its guarantees exist; there is no publishing service or page yet.
-    Enforced in Postgres by a trigger (scoring/migrations/0005): a publication may only point
+    Written only by `scoring.services.publish_results` / `unpublish_results` (audited). Enforced in Postgres by a trigger (scoring/migrations/0005): a publication may only point
     at a *final* snapshot of the *same* event, and once written the only change allowed is
     setting `unpublished_at` / `unpublished_by` once. A partial unique constraint allows one
     active (not unpublished) publication per event. `clean()` checks the same on SQLite.
@@ -446,3 +447,49 @@ class Publication(models.Model):
                 raise ValidationError({"snapshot": "Only a final snapshot can be published."})
             if self.snapshot.event_id != self.event_id:
                 raise ValidationError({"snapshot": "The snapshot belongs to a different event."})
+
+
+WINNERS_TOP_N_MAX = 50
+
+
+class ResultVisibility(models.TextChoices):
+    PUBLIC_FULL = "public_full", "Public: the full ranking"
+    PUBLIC_WINNERS = "public_winners", "Public: the winners only"
+    PRIVATE = "private", "Private: organizers and admins only"
+
+
+class EventResultSettings(models.Model):
+    """Who may see an event's published result, and how many overall winners it names.
+
+    Kept apart from `EventScoringConfig` on purpose: this is presentation, not an input to the
+    engine, so changing it never makes a final result look computed under a different
+    configuration. Written only through `scoring.services.set_result_settings` (audited). No row
+    means the defaults: private, top 3.
+
+    Winners = the top `winners_top_n` places overall (a place shared by an exact tie brings in
+    everyone on it) + the top project of each track.
+    """
+
+    event = models.OneToOneField("events.Event", on_delete=models.CASCADE, related_name="result_settings")
+    visibility = models.CharField(
+        max_length=20, choices=ResultVisibility.choices, default=ResultVisibility.PRIVATE,
+    )
+    winners_top_n = models.PositiveSmallIntegerField(default=3)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(visibility__in=ResultVisibility.values), name="result_visibility_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(winners_top_n__gte=1, winners_top_n__lte=WINNERS_TOP_N_MAX),
+                name="result_winners_top_n_range",
+            ),
+        ]
+
+    def __str__(self):
+        return f"result settings for {self.event_id}"

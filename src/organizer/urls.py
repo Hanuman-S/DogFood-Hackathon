@@ -1,6 +1,6 @@
 from django.urls import path, register_converter
 
-from organizer import assignments, progress, rubric, views
+from organizer import assignments, progress, results, rubric, views
 
 
 class PartKind:
@@ -43,6 +43,12 @@ urlpatterns = [
     path("events/<slug:slug>/assignments/<int:assignment_id>/move", assignments.assignment_move, name="assignment_move"),
     path("events/<slug:slug>/judges/<int:membership_id>/reassign", assignments.judge_reassign, name="judge_reassign"),
     path("events/<slug:slug>/progress", progress.progress, name="progress"),
+    path("events/<slug:slug>/results", results.results, name="results"),
+    path("events/<slug:slug>/results/compute", results.compute, name="results_compute"),
+    path("events/<slug:slug>/results/publish", results.publish, name="results_publish"),
+    path("events/<slug:slug>/results/unpublish", results.unpublish, name="results_unpublish"),
+    path("events/<slug:slug>/results/settings", results.settings, name="results_settings"),
+    path("events/<slug:slug>/results/winners.csv", results.winners_csv, name="winners_csv"),
     path("events/<slug:slug>/progress/nudge/<int:membership_id>", progress.nudge, name="judge_nudge"),
     path("events/<slug:slug>/deadline/teams/<int:extension_id>/revoke", views.extension_revoke, name="extension_revoke"),
     path("events/<slug:slug>/organizers/<int:link_id>/remove", views.organizer_remove, name="organizer_remove"),

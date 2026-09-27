@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · results{% endblock %}
+{% block section %}events{% endblock %}
+{% block content %}
+<div class="stack">
+  {% if page.preview %}
+  <ul class="msgs"><li class="msg msg--warning">preview for organizers:
+    {% if not page.publication %}nothing is published, so only organizers and admins can open this page.
+    {% elif page.visibility == "private" %}the result is published as private, so only organizers and admins can open this page.
+    {% else %}the public sees {{ page.public_mode|lower }}.{% endif %}
+    {% if page.snapshot and page.snapshot.kind == "preview" %} this is a preview snapshot, not a final result.{% endif %}
+  </li></ul>
+  {% endif %}
+  <section class="frame">
+    <header class="frame__bar">
+      <h1 class="frame__title">{{ event.name }} · results</h1>
+      <span class="frame__meta">{% if page.publication %}<span class="badge badge--on">published {{ page.publication.published_at|utc }}</span>{% else %}<span class="badge">not published</span>{% endif %}</span>
+    </header>
+    <div class="frame__body">
+      <p class="actions"><a class="btn btn--ghost" href="{% url 'public:event_detail' event.slug %}">back to {{ event.name }}</a>{% if page.preview %}<a class="btn btn--ghost" href="{% url 'organizer:results' event.slug %}">manage results</a>{% endif %}</p>
+    </div>
+  </section>
+  {% include "_results.html" %}
+</div>
+{% endblock %}

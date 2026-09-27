@@ -94,6 +94,11 @@ class AuditAction(models.TextChoices):
     SCORING_CONFIG_CHANGED = "scoring_config_changed", "Changed an event's scoring configuration"
     SCORING_CONFIG_REFUSED = "scoring_config_refused", "Refused a change to an event's scoring configuration"
     EXPORT_DOWNLOADED = "export_downloaded", "Downloaded a CSV export"
+    # results (T2 completion): publishing, visibility, the winners download
+    RESULTS_UNPUBLISHED = "results_unpublished", "Unpublished an event's results"
+    RESULTS_PUBLISH_REFUSED = "results_publish_refused", "Refused to publish or unpublish results"
+    RESULT_SETTINGS_CHANGED = "result_settings_changed", "Changed who can see an event's results"
+    WINNERS_EXPORTED = "winners_exported", "Downloaded the winners and their contacts"
 
 
 class AuditLog(models.Model):
