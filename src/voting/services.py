@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from django.core.exceptions import PermissionDenied
 from django.db import DatabaseError, IntegrityError, connection, transaction
-from django.db.models import Max
+from django.db.models import F, Max
 
 from accounts.roles import STAFF_ROLES, is_admin, is_organizer_of, roles_in
 from core import audit
@@ -44,7 +44,8 @@ from . import links
 from .errors import (AccountTooNew, AlreadyVoided, InvalidAllowlist, InvalidBallot, InvalidVoid, InvalidVotingConfig,
                      LinkRevoked, NoSuchBallot, NoSuchLink, NotVoided, NoVoting, OverBudget, OwnProject, RateLimited,
                      StaffCannotVote, VotingClosed, VotingConfigLocked, VotingNotOpen, WrongAccessMode)
-from .models import CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VoterLink, VotingConfig
+from .models import (CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VoterLink, VoteTallySnapshot,
+                     VotingConfig)
 
 TRIGGER_MARKER = "dogfood_voting_closed"
 
@@ -569,6 +570,12 @@ def tally(event, viewer):
     total is the same on every call."""
     if not is_organizer_of(viewer, event):
         raise PermissionDenied("Only the event's organizers can see the vote tally.")
+    return _count(event)
+
+
+def _count(event):
+    """The tally, unguarded: for `tally` (which checks the viewer) and for the results computation
+    (compute_snapshot has already checked its actor). Never exposed to a page directly."""
     rows = {p.pk: TallyRow(p, 0.0, 0, 0) for p in
             Project.objects.filter(event=event, status=Status.SUBMITTED).select_related("team", "track")}
     lines = (BallotLine.objects.filter(ballot__event=event, ballot__voided_at__isnull=True, credits__gt=0)
@@ -580,6 +587,38 @@ def tally(event, viewer):
             row.ballots += 1
             row.credits += credits
     return sorted(rows.values(), key=lambda r: (-r.influence, r.project.name.lower(), r.project.pk))
+
+
+def tally_rows(event):
+    """The tally as plain JSON rows, in project order: what a frozen tally stores and what a preview
+    uses live. [{"project_id": "<pk>", "influence", "ballots", "credits"}]."""
+    return [{"project_id": str(r.project.pk), "influence": r.influence, "ballots": r.ballots, "credits": r.credits}
+            for r in sorted(_count(event), key=lambda r: r.project.pk)]
+
+
+def freeze_tally(event, *, actor):
+    """Freeze the event's tally now: a new, immutable VoteTallySnapshot. Called only by
+    scoring.services.compute_snapshot for a final, inside its REPEATABLE READ transaction, once voting
+    has closed. The VotingConfig row is locked and its freeze counter bumped, so a concurrent second
+    freeze fails to serialize (the caller answers 409 and the organizer retries) rather than
+    recording a stale `previous`. Returns the tally; the caller writes the audit row."""
+    import json
+
+    if not connection.in_atomic_block:
+        raise RuntimeError("freeze_tally runs inside compute_snapshot's transaction.")
+    config = VotingConfig.objects.select_for_update().get(event=event)
+    VotingConfig.objects.filter(pk=config.pk).update(tally_freezes=F("tally_freezes") + 1)
+    rows = tally_rows(event)
+    voided = sorted(Ballot.objects.filter(event=event, voided_at__isnull=False).values_list("pk", flat=True))
+    digest = hashlib.sha256(json.dumps({"rows": rows, "voided": voided}, sort_keys=True).encode()).hexdigest()
+    previous = VoteTallySnapshot.objects.filter(event=event).order_by("-created_at", "-id").first()
+    before = set(previous.voided_ballot_ids) if previous else set()
+    return VoteTallySnapshot.objects.create(
+        event=event, created_at=db_now(), created_by=actor, created_by_email=actor.email, method=config.method,
+        budget=config.budget, rows=rows, counts=ballot_counts(event), voided_ballot_ids=voided, input_hash=digest,
+        previous=previous, changed_since_previous=previous is not None and previous.input_hash != digest,
+        voided_since_previous=sorted(set(voided) - before), restored_since_previous=sorted(before - set(voided)),
+    )
 
 
 def ballot_counts(event):

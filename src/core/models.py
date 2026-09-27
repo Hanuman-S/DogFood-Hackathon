@@ -124,6 +124,10 @@ class AuditAction(models.TextChoices):
     BALLOT_VOID_REFUSED = "ballot_void_refused", "Refused to void a ballot"
     BALLOT_RESTORED = "ballot_restored", "Restored a voided ballot"
     BALLOT_RESTORE_REFUSED = "ballot_restore_refused", "Refused to restore a ballot"
+    TALLY_FROZEN = "tally_frozen", "Froze a vote tally (final results)"
+    WEIGHTS_CHANGED = "weights_changed", "Changed the judge/community weights"
+    WEIGHTS_REFUSED = "weights_refused", "Refused a change to the judge/community weights"
+    WEIGHTS_BYPASSED = "weights_bypassed", "Set weights past the weights lock (bypass)"
 
 
 class AuditLog(models.Model):

@@ -88,6 +88,13 @@ build step. `docker compose up --build` is the product; it must stay one command
   `voting.services.voting_bypass`. Voiding (an update of the void columns only) is allowed at any
   time. FKs into ballots are PROTECT (pinned by a test). Tallies are organizers and admins only;
   a GET never writes (a ballot is created by a POST).
+- **Final score** (judges + community): `scoring/engine/combine.py` is pure (percentile mid-ranks,
+  Fractions, no float tie-breaks). Weights live on `EventScoringConfig` (integers summing to 100),
+  are written only by `set_final_weights`, and lock once judging or voting opens (service + trigger
+  `scoring/migrations/0011`; the audited `weights_bypass` is for the seed only). A
+  `VoteTallySnapshot` is frozen only inside `compute_snapshot` for a final, with the VotingConfig row
+  locked and its counter bumped (a concurrent final gets 409 `final_in_progress`); tallies are
+  immutable and append-only. With community_weight 0 the combined ranking is the M2 ranking.
 
 ## Commands
 

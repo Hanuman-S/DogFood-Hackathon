@@ -87,6 +87,13 @@ class CriterionTextForm(forms.Form):
         }
 
 
+class FinalWeightsForm(forms.Form):
+    """The judge/community split. Rules (sum 100, the lock): scoring.services.set_final_weights."""
+
+    judge_weight = forms.IntegerField(min_value=0, max_value=100, label="judges (%)")
+    community_weight = forms.IntegerField(min_value=0, max_value=100, label="community vote (%)")
+
+
 class ResultSettingsForm(forms.Form):
     """Who sees the published result. Rules and the audit row: scoring.services.set_result_settings."""
 

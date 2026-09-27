@@ -61,6 +61,10 @@ class VotingConfig(models.Model):
     # open_link mode: the event's one link is derived from this (voting.links); a new nonce is a new
     # link, and the old one stops working. Empty until the organizer first shows the link.
     open_link_nonce = models.CharField(max_length=32, blank=True, editable=False)
+    # Bumped by every tally freeze, inside compute_snapshot's REPEATABLE READ transaction, with this
+    # row locked: a second final computed at the same moment then fails to serialize (409, retry)
+    # instead of freezing from a snapshot that cannot see the first one's tally.
+    tally_freezes = models.PositiveIntegerField(default=0, editable=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -202,3 +206,46 @@ class BallotLine(models.Model):
 
     def __str__(self):
         return f"{self.credits} on {self.project_id}"
+
+
+class TallyImmutable(Exception):
+    pass
+
+
+class VoteTallySnapshot(models.Model):
+    """One frozen count of an event's votes. **Immutable and append-only**, many per event.
+
+    Frozen only by "Compute final results" (scoring.services.compute_snapshot, after voting has
+    closed), never by a page view. `rows` is per submitted project: influence (the sum of sqrt of the
+    credits each non-voided ballot placed on it), ballots and credits, in project order. A void or a
+    restore after a freeze changes nothing here; it shows in the next freeze, and that freeze records
+    `changed_since_previous` and which ballots were voided or restored in between.
+
+    `save()` refuses an update and a Postgres trigger (voting/migrations/0008) refuses any UPDATE.
+    """
+
+    event = models.ForeignKey("events.Event", on_delete=models.PROTECT, related_name="vote_tallies")
+    created_at = models.DateTimeField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    created_by_email = models.CharField(max_length=254)
+    method = models.CharField(max_length=24)
+    budget = models.PositiveSmallIntegerField()
+    rows = models.JSONField()
+    counts = models.JSONField(default=dict)
+    voided_ballot_ids = models.JSONField(default=list)
+    input_hash = models.CharField(max_length=64)
+    previous = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    changed_since_previous = models.BooleanField(default=False)
+    voided_since_previous = models.JSONField(default=list)
+    restored_since_previous = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"vote tally {self.pk} of {self.event_id}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise TallyImmutable("A vote tally is immutable; freeze a new one instead.")
+        super().save(*args, **kwargs)

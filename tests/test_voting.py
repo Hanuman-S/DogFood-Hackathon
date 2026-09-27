@@ -595,6 +595,9 @@ def test_every_foreign_key_touching_the_voting_tables_is_as_documented():
         "voting.Ballot.event": "PROTECT", "voting.Ballot.voter_user": "PROTECT",
         "voting.Ballot.voter_link": "PROTECT", "voting.Ballot.voided_by": "PROTECT",
         "voting.BallotLine.ballot": "CASCADE", "voting.BallotLine.project": "PROTECT",
+        # Stage 5: frozen tallies, and the result that used one
+        "voting.VoteTallySnapshot.event": "PROTECT", "voting.VoteTallySnapshot.created_by": "PROTECT",
+        "voting.VoteTallySnapshot.previous": "PROTECT", "scoring.ResultSnapshot.vote_tally": "PROTECT",
     }
 
 

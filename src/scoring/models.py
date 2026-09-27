@@ -36,7 +36,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 
@@ -335,10 +335,25 @@ class EventScoringConfig(models.Model):
 
     event = models.OneToOneField("events.Event", on_delete=models.CASCADE, related_name="scoring_config")
     overrides = models.JSONField(default=dict, blank=True)
+    # The final score: judge_weight/100 * the judged percentile + community_weight/100 * the vote
+    # percentile (scoring.engine.combine). Whole numbers, each >= 0, summing to 100; 100/0 = judges
+    # only. Locked (409 weights_locked; a Postgres trigger backs it) once judging or voting opens.
+    # Written only by scoring.services.set_final_weights.
+    judge_weight = models.PositiveSmallIntegerField(default=100)
+    community_weight = models.PositiveSmallIntegerField(default=0)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(judge_weight__gte=0, community_weight__gte=0)
+                & Q(judge_weight=100 - F("community_weight")),
+                name="scoring_final_weights_sum_to_100",
+            ),
+        ]
 
     def __str__(self):
         return f"scoring config for {self.event_id}"
@@ -384,6 +399,14 @@ class ResultSnapshot(models.Model):
     result = models.JSONField()
     comparison = models.JSONField()
     diagnostics = models.JSONField(default=dict)
+    # The community part (Stage 5). A final of an event whose vote has closed freezes a tally and
+    # records it here; a preview uses the live tally (kept in diagnostics["live_tally"]) and freezes
+    # nothing. `final_weights` are the weights used; `combined` is scoring.engine.combine's ranking
+    # (null when there is no tally and the community weight is 0: then the result is judges only).
+    vote_tally = models.ForeignKey("voting.VoteTallySnapshot", null=True, blank=True, on_delete=models.PROTECT,
+                                   related_name="results")
+    final_weights = models.JSONField(default=dict, blank=True)
+    combined = models.JSONField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at", "-id"]

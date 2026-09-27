@@ -90,3 +90,31 @@ class NoFinalResult(ScoringError):
 class InvalidResultSettings(ScoringError):
     status = 400
     code = "invalid_result_settings"
+
+
+# --- the final score (judges + community) ------------------------------------------------------------
+
+class InvalidWeights(ScoringError):
+    status = 400
+    code = "invalid_weights"
+
+
+class WeightsLocked(ScoringError):
+    """The judge/community weights cannot change once judging or voting has opened."""
+
+    status = 409
+    code = "weights_locked"
+
+
+class NoVoteForCommunityWeight(ScoringError):
+    """A final with community_weight > 0 needs a vote to freeze a tally from."""
+
+    status = 409
+    code = "no_vote_for_community_weight"
+
+
+class ConcurrentFinal(ScoringError):
+    """Another final froze a tally at the same moment; computing again is safe."""
+
+    status = 409
+    code = "final_in_progress"

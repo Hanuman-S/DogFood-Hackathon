@@ -25,6 +25,17 @@ Ranks as shown:
 * Winners: every project whose display rank is within the top N (so a tie on the cut brings in
   everyone on it), plus the top project(s) of each track.
 
+With a community weight above 0 (Stage 5), the ranking is the combined one (snapshot.combined,
+scoring.engine.combine): `display_rank` is the final rank, shared only by an exact combined tie; the
+M2 rank, tie group and judged percentile sit beside it as the judged component, and the influence
+and vote percentile as the community component. Tie groups describe the judged component only, and
+"no separable winner" then means an exact combined tie for first place. The combined score has no
+standard error.
+
+People's Choice (when the event had a vote): the projects by total influence, from the tally the
+snapshot used (a final's frozen tally; a preview's live one). It follows the visibility: the full
+list in public_full, the top N places only in public_winners, organizers only when private.
+
 No per-judge data is shown on any results page.
 """
 
@@ -59,6 +70,12 @@ class Row:
     raw_rank: int | None
     n_reviews: int
     awards: list = field(default_factory=list)
+    # the combined ranking (community weight > 0): display_rank is then the final rank
+    m2_rank: int | None = None
+    final: float | None = None
+    judge_pct: float | None = None
+    vote_pct: float | None = None
+    influence: float | None = None
 
     @property
     def shared(self):
@@ -86,6 +103,10 @@ class ResultsPage:
     track_winners: list = field(default_factory=list)
     no_separable_winner: bool = False
     components: int = 1
+    combined: bool = False
+    weights: dict = field(default_factory=dict)
+    peoples_choice: list | None = None
+    peoples_choice_live: bool = False
 
     @property
     def public_mode(self):
@@ -134,7 +155,21 @@ def build_rows(event, snapshot):
         (ranked if row.display_rank is not None else unranked).append(row)
     ranked.sort(key=lambda r: (r.display_rank, r.engine_rank))
     unranked.sort(key=lambda r: r.project.name.lower())
+    if is_combined(snapshot):
+        order = {c["project_id"]: (i, c) for i, c in enumerate(snapshot.combined)}
+        for r in ranked:
+            i, c = order.get(str(r.project.pk), (None, None))
+            if c is None:
+                continue
+            r.m2_rank, r.display_rank = r.display_rank, c["final_rank"]
+            r.final, r.judge_pct, r.vote_pct, r.influence = c["final"], c["judge_pct"], c["vote_pct"], c["influence"]
+        ranked.sort(key=lambda r: order.get(str(r.project.pk), (len(order), None))[0])
     return ranked, unranked
+
+
+def is_combined(snapshot):
+    """The ranking is the combined one: the snapshot has a combination and gave the community a weight."""
+    return bool(snapshot.combined) and (snapshot.final_weights or {}).get("community", 0) > 0
 
 
 def winners(rows, top_n):
@@ -157,11 +192,46 @@ def winners(rows, top_n):
     return overall, tracks
 
 
-def no_separable_winner(rows):
+def no_separable_winner(rows, combined=False):
+    """First place is shared: by an exact tie, or (judges only) by the top project's M2 tie group.
+    For a combined ranking only an exact combined tie counts: tie groups describe the judged part."""
     if len(rows) < 2:
         return False
     first = rows[0]
-    return rows[1].display_rank == first.display_rank or first.tie_size > 1
+    if rows[1].display_rank == first.display_rank:
+        return True
+    return not combined and first.tie_size > 1
+
+
+@dataclass
+class ChoiceRow:
+    rank: int
+    project: Project
+    influence: float
+    ballots: int
+
+
+def peoples_choice(event, snapshot, top_n=None):
+    """People's Choice from the tally `snapshot` used, or None (no vote, or a final taken before the
+    vote closed). Projects with votes only, by influence; exact ties (at the engine's precision) share
+    a rank; `top_n` keeps the top places (a tie on the cut brings everyone on it)."""
+    if snapshot.vote_tally_id:
+        rows = snapshot.vote_tally.rows
+    else:
+        rows = (snapshot.diagnostics or {}).get("live_tally")
+    if rows is None:
+        return None
+    rows = [r for r in rows if r.get("influence")]
+    decimals = (snapshot.engine_config.get("config") or {}).get("equal_decimals", DEFAULT_EQUAL_DECIMALS)
+    ranks = _shared_ranks({i: r["influence"] for i, r in enumerate(rows)}, decimals)
+    projects = {str(p.pk): p for p in Project.objects.filter(event=event, pk__in=[int(r["project_id"]) for r in rows])
+                .select_related("team", "track")}
+    out = [ChoiceRow(ranks[i], projects[r["project_id"]], r["influence"], r["ballots"])
+           for i, r in enumerate(rows) if r["project_id"] in projects]
+    out.sort(key=lambda c: (c.rank, c.project.name.lower()))
+    if top_n is not None:
+        out = [c for c in out if c.rank <= top_n]
+    return out
 
 
 def _staff_snapshot(event, publication):
@@ -199,9 +269,13 @@ def results_page(event, viewer) -> ResultsPage | None:
     if snapshot is None:
         return page
     rows, unranked = build_rows(event, snapshot)
+    page.combined = is_combined(snapshot)
+    page.weights = snapshot.final_weights or {}
     page.overall_winners, page.track_winners = winners(rows, settings.winners_top_n)
-    page.no_separable_winner = no_separable_winner(rows)
+    page.no_separable_winner = no_separable_winner(rows, combined=page.combined)
     page.components = len(snapshot.result.get("components") or ()) or 1
+    page.peoples_choice = peoples_choice(event, snapshot, top_n=None if full else settings.winners_top_n)
+    page.peoples_choice_live = page.peoples_choice is not None and not snapshot.vote_tally_id
     if full:
         page.rows, page.unranked = rows, unranked
     return page
@@ -229,13 +303,17 @@ def winners_rows(event, *, actor, origin=None):
     if snapshot is None:
         raise NoFinalResult("There is no final result yet: compute final results first.")
     rows, _ = build_rows(event, snapshot)
-    overall, tracks = winners(rows, result_settings(event).winners_top_n)
-    awarded = [("overall", r) for r in overall] + [(f"top of {t.track.name}", r) for t in tracks for r in t.rows]
+    top_n = result_settings(event).winners_top_n
+    overall, tracks = winners(rows, top_n)
+    awarded = [("overall", r.display_rank, r.project, r.track) for r in overall]
+    awarded += [(f"top of {t.track.name}", r.display_rank, r.project, r.track) for t in tracks for r in t.rows]
+    awarded += [("people's choice", c.rank, c.project, c.project.track)
+                for c in peoples_choice(event, snapshot, top_n=top_n) or ()]
     out = []
-    for award, r in awarded:
-        for m in r.project.team.members.select_related("user"):
-            out.append([award, r.display_rank, r.track.name if r.track else "", r.project.name,
-                        r.project.team.name, m.user.name, m.user.email, snapshot.pk])
+    for award, rank, project, track in awarded:
+        for m in project.team.members.select_related("user"):
+            out.append([award, rank, track.name if track else "", project.name,
+                        project.team.name, m.user.name, m.user.email, snapshot.pk])
     audit.record(AuditAction.WINNERS_EXPORTED, origin=origin, actor=actor, subject=event.slug,
                  snapshot=snapshot.pk, rows=len(out))
     return snapshot, out

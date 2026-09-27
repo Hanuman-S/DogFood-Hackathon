@@ -54,15 +54,33 @@
     </div>
   </section>
 
+  <section class="frame" id="weights">
+    <header class="frame__bar"><h2 class="frame__title">final score</h2><span class="frame__meta">{{ final_weights.judge }}% judges · {{ final_weights.community }}% community{% if weights_locked %} <span class="badge badge--warn">locked</span>{% endif %}</span></header>
+    <div class="frame__body grid-2">
+      <div class="stack">
+        <p class="faint">the final score combines the judged result and the community vote, each as a percentile rank within the event: final = judges% &times; judged percentile + community% &times; vote percentile. 100 / 0 is judges only. the weights are whole numbers adding up to 100, and they lock once judging or voting opens, so nobody judges or votes under weights that could still change. a final result with a community weight needs the vote to have closed; computing it freezes the tally it uses.</p>
+      </div>
+      <form method="post" action="{% url 'organizer:results_weights' event.slug %}" class="form stack" novalidate>
+        {% csrf_token %}
+        {% include "_form_errors.html" with form=weights_form %}
+        <div class="grid-2">
+          {% include "_field.html" with field=weights_form.judge_weight cmd="--judges" short=1 %}
+          {% include "_field.html" with field=weights_form.community_weight cmd="--community" short=1 %}
+        </div>
+        <div class="actions"><button class="btn btn--small" type="submit"{% if weights_locked %} disabled{% endif %}>save weights</button>{% if weights_locked %}<span class="faint">judging or voting has opened.</span>{% endif %}</div>
+      </form>
+    </div>
+  </section>
+
   <section class="frame">
     <header class="frame__bar"><h2 class="frame__title">snapshots</h2><span class="frame__meta">latest {{ snapshots|length }}</span></header>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th scope="col" class="num">#</th><th scope="col">kind</th><th scope="col">computed</th><th scope="col">by</th><th scope="col">method</th><th scope="col">input</th></tr></thead>
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">kind</th><th scope="col">computed</th><th scope="col">by</th><th scope="col">method</th><th scope="col">weights</th><th scope="col">vote tally</th><th scope="col">input</th></tr></thead>
         <tbody>
         {% for s in snapshots %}
-          <tr><td class="num">{{ s.pk }}</td><td>{% if s.kind == "final" %}<span class="badge badge--on">final</span>{% else %}<span class="badge">preview</span>{% endif %}{% if publication and publication.snapshot_id == s.pk %} <span class="badge badge--on">published</span>{% endif %}</td><td class="dim">{{ s.created_at|utc }}</td><td class="dim">{{ s.created_by_email }}</td><td class="dim">{{ s.method }} {{ s.method_version }}</td><td class="faint">{{ s.input_hash|slice:":12" }}</td></tr>
-        {% empty %}<tr><td colspan="6" class="faint">nothing computed yet.</td></tr>{% endfor %}
+          <tr><td class="num">{{ s.pk }}</td><td>{% if s.kind == "final" %}<span class="badge badge--on">final</span>{% else %}<span class="badge">preview</span>{% endif %}{% if publication and publication.snapshot_id == s.pk %} <span class="badge badge--on">published</span>{% endif %}</td><td class="dim">{{ s.created_at|utc }}</td><td class="dim">{{ s.created_by_email }}</td><td class="dim">{{ s.method }} {{ s.method_version }}</td><td class="dim">{% if s.final_weights %}{{ s.final_weights.judge }}/{{ s.final_weights.community }}{% else %}100/0{% endif %}</td><td class="dim">{% if s.vote_tally_id %}#{{ s.vote_tally_id }}{% if s.diagnostics.vote_tally.changed_since_previous_tally %} <span class="badge badge--warn">changed since the previous tally</span>{% endif %}{% elif s.kind == "preview" and s.diagnostics.live_tally %}live{% else %}--{% endif %}</td><td class="faint">{{ s.input_hash|slice:":12" }}</td></tr>
+        {% empty %}<tr><td colspan="8" class="faint">nothing computed yet.</td></tr>{% endfor %}
         </tbody>
       </table>
     </div>

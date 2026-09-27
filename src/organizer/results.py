@@ -22,13 +22,14 @@ from events.services import get_managed_event
 from scoring import results as result_views
 from scoring import services
 from scoring.errors import ScoringError
-from scoring.forms import ResultSettingsForm
+from scoring.forms import FinalWeightsForm, ResultSettingsForm
 from scoring.models import ResultSnapshot, SnapshotKind
 from voting.errors import VotingError
 
 
-def _page(request, event, settings_form=None, status=200):
+def _page(request, event, settings_form=None, weights_form=None, status=200):
     current = services.result_settings(event)
+    judge_weight, community_weight = services.final_weights(event)
     snapshots = list(ResultSnapshot.objects.filter(event=event).order_by("-created_at", "-id")[:10])
     latest_final = services.latest_final(event)
     return render(request, "organizer/results.html", {
@@ -40,6 +41,10 @@ def _page(request, event, settings_form=None, status=200):
         "latest_final": latest_final,
         "publication": services.active_publication(event),
         "judging_closed": judging_closed(event, db_now()),
+        "weights_form": weights_form or FinalWeightsForm(
+            initial={"judge_weight": judge_weight, "community_weight": community_weight}),
+        "weights_locked": services.weights_locked(event),
+        "final_weights": {"judge": judge_weight, "community": community_weight},
         "judging_open": judging_window(event).is_open,
     }, status=status)
 
@@ -116,6 +121,24 @@ def settings(request, slug):
         messages.error(request, str(error))
         return redirect("organizer:results", slug=event.slug)
     messages.success(request, "result visibility saved.")
+    return redirect("organizer:results", slug=event.slug)
+
+
+@require_POST
+@portal_required("organizer")
+def weights(request, slug):
+    event = get_managed_event(request.user, slug)
+    form = FinalWeightsForm(request.POST)
+    if not form.is_valid():
+        return _page(request, event, weights_form=form, status=400)
+    try:
+        services.set_final_weights(event, actor=request.user, origin=audit.origin_of(request),
+                                   judge_weight=form.cleaned_data["judge_weight"],
+                                   community_weight=form.cleaned_data["community_weight"])
+    except ScoringError as error:
+        form.add_error(None, str(error))
+        return _page(request, event, weights_form=form, status=error.status)
+    messages.success(request, "final score weights saved.")
     return redirect("organizer:results", slug=event.slug)
 
 

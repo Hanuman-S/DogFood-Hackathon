@@ -44,12 +44,14 @@ and any future view that calls it must be decorated @transaction.non_atomic_requ
 from __future__ import annotations
 
 import hashlib
+import math
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, OperationalError, connection, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -67,6 +69,7 @@ from scoring.models import (
     Score, ScoreItem, SnapshotKind,
 )
 
+from voting import services as voting_services
 from voting.errors import VotingOpen
 from voting.models import VotingConfig
 
@@ -75,9 +78,10 @@ from .engine.config import EngineConfig
 from .engine.errors import ConfigError, EngineError
 from .engine.types import Criterion as EngineCriterion
 from .engine.types import EngineInput, Exclusion, Review, Rubric, dumps, to_jsonable
-from .errors import (AlreadyPublished, FinalOverrideRefused, InvalidConfig, InvalidResultSettings,
-                     JudgingOpen, NoSuchSnapshot, NotFinal, NotLatestFinal, NotPublished,
-                     ScoringConfigLocked, SnapshotInsideTransaction)
+from .engine import combine as combining
+from .errors import (AlreadyPublished, ConcurrentFinal, FinalOverrideRefused, InvalidConfig, InvalidResultSettings,
+                     InvalidWeights, JudgingOpen, NoSuchSnapshot, NotFinal, NotLatestFinal, NotPublished,
+                     NoVoteForCommunityWeight, ScoringConfigLocked, SnapshotInsideTransaction, WeightsLocked)
 
 FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
@@ -676,7 +680,15 @@ def compute_snapshot(event, kind, *, actor, method=None, config=None, weights=No
 
     Refusals, in this order: PermissionDenied (not an organizer of the event, nor an admin);
     FinalOverrideRefused (a final with a method, config or weights override); JudgingOpen (a final
-    before judging closed); InvalidConfig. Each is audited, outside any transaction.
+    before judging closed); for a final with community_weight > 0, NoVoteForCommunityWeight (the event
+    has no vote) and VotingOpen (409 voting_open: it has not closed); InvalidConfig; ConcurrentFinal
+    (409: another final froze a tally at the same moment; retry). Each is audited, outside any
+    transaction.
+
+    The community part: a final of an event whose vote has closed freezes a new VoteTallySnapshot
+    (voting.services.freeze_tally, inside this transaction) and records it; a preview uses the live
+    tally and freezes nothing. When there is a tally (or the community weight is above 0),
+    `combined` is scoring.engine.combine's ranking under the event's weights.
     """
     if kind not in SnapshotKind.values:
         raise ValueError(f"kind must be one of {SnapshotKind.values}")
@@ -699,6 +711,15 @@ def compute_snapshot(event, kind, *, actor, method=None, config=None, weights=No
             refuse(JudgingOpen(f"Judging for {event.slug} closes at {event.judging_ends_at.isoformat()}; "
                                "a final result can only be computed after that. A preview can be computed now."),
                    "judging open")
+        judge_weight, community_weight = final_weights(event)
+        vote = VotingConfig.objects.filter(event=event).first()
+        if community_weight > 0 and vote is None:
+            refuse(NoVoteForCommunityWeight(
+                f"The community weight is {community_weight}, but this event has no vote to count. Set the weight "
+                "to 0, or set up voting."), "community weight without a vote")
+        if community_weight > 0 and now < vote.closes_at:
+            refuse(VotingOpen(f"Community voting closes at {vote.closes_at.isoformat()}; a final result with a "
+                              "community weight can only be computed after that."), "voting open")
     if connection.in_atomic_block:
         raise SnapshotInsideTransaction(
             "compute_snapshot opens its own REPEATABLE READ transaction and cannot run inside another. "
@@ -720,6 +741,32 @@ def compute_snapshot(event, kind, *, actor, method=None, config=None, weights=No
             result = comparison.results[primary]
             digest = input_hash(inp)
             diagnostics = {}
+            judge_weight, community_weight = final_weights(event)
+            vote = VotingConfig.objects.filter(event=event).first()
+            tally, rows = None, None
+            if vote is not None and kind == SnapshotKind.FINAL:
+                if db_now() >= vote.closes_at:
+                    tally = voting_services.freeze_tally(event, actor=actor)
+                    rows = tally.rows
+                    diagnostics["vote_tally"] = {
+                        "id": tally.pk, "previous": tally.previous_id,
+                        "changed_since_previous_tally": tally.changed_since_previous,
+                        "voided_since_previous": tally.voided_since_previous,
+                        "restored_since_previous": tally.restored_since_previous,
+                    }
+                else:
+                    diagnostics["vote_tally"] = None
+                    diagnostics["no_tally_reason"] = "voting had not closed: this final has no community part"
+            elif vote is not None:
+                rows = voting_services.tally_rows(event)
+                diagnostics["live_tally"] = rows
+            combined = None
+            if rows is not None or community_weight > 0:
+                scores = {p.project_id: p.score for p in result.projects
+                          if p.score is not None and math.isfinite(p.score) and not p.project_id.startswith("dup:")}
+                influence = {row["project_id"]: row["influence"] for row in rows or ()}
+                combined = combining.to_json(combining.combine(scores, influence, judge_weight, community_weight,
+                                                               decimals=cfg.equal_decimals))
             if kind == SnapshotKind.FINAL:
                 previous = (ResultSnapshot.objects.filter(event=event, kind=SnapshotKind.FINAL)
                             .order_by("-created_at", "-id").first())
@@ -735,14 +782,26 @@ def compute_snapshot(event, kind, *, actor, method=None, config=None, weights=No
                 created_by_email=actor.email, method=result.method, method_version=result.method_version,
                 engine_config=_resolved_config(result), rubric=to_jsonable(inp.rubric),
                 input_hash=digest, result=to_jsonable(result), comparison=to_jsonable(comparison),
-                diagnostics=diagnostics,
+                diagnostics=diagnostics, vote_tally=tally, combined=combined,
+                final_weights={"judge": judge_weight, "community": community_weight},
             )
     except InvalidConfig as error:
         refuse(error, f"invalid: {error.detail}")
     except (ConfigError, EngineError) as error:
         refuse(InvalidConfig(str(error)), f"invalid: {error}")
+    except OperationalError as error:
+        if getattr(getattr(error, "__cause__", None), "sqlstate", None) == "40001":  # serialization failure
+            refuse(ConcurrentFinal("Another final was computed at the same moment. Compute again."), "concurrent final")
+        raise
+    if tally is not None:
+        audit.record(AuditAction.TALLY_FROZEN, request=request, actor=actor, subject=event.slug, tally=tally.pk,
+                     snapshot=snapshot.pk, changed_since_previous=tally.changed_since_previous,
+                     voided_since_previous=tally.voided_since_previous,
+                     restored_since_previous=tally.restored_since_previous)
     audit.record(AuditAction.SNAPSHOT_CREATED, request=request, actor=actor, subject=event.slug,
-                 kind=kind, snapshot=snapshot.pk, method=snapshot.method, input_hash=digest)
+                 kind=kind, snapshot=snapshot.pk, method=snapshot.method, input_hash=digest,
+                 vote_tally=tally.pk if tally else None,
+                 final_weights={"judge": judge_weight, "community": community_weight})
     snapshot.comparison_result = comparison
     return snapshot
 
@@ -901,6 +960,82 @@ def set_result_settings(event, *, actor, visibility, winners_top_n, origin=None)
         audit.record(AuditAction.RESULT_SETTINGS_CHANGED, origin=origin, actor=actor, subject=event.slug,
                      before=before, after=after)
     return row
+
+
+# --- the final score's weights ------------------------------------------------------------------------
+
+def final_weights(event):
+    """(judge_weight, community_weight): the event's, or 100/0 (judges only)."""
+    row = EventScoringConfig.objects.filter(event=event).first()
+    return (row.judge_weight, row.community_weight) if row else (100, 0)
+
+
+def weights_locked(event, now=None):
+    """True once judging or voting has opened (by the database clock). The weights decide the
+    ranking, so they must be fixed before anyone judges or votes under them."""
+    now = now or db_now()
+    if now >= event.judging_starts_at:
+        return True
+    vote = VotingConfig.objects.filter(event=event).first()
+    return vote is not None and now >= vote.opens_at
+
+
+def set_final_weights(event, *, actor, judge_weight, community_weight, origin=None) -> EventScoringConfig:
+    """Set the judge/community split of the final score. Whole numbers, each >= 0, summing to 100.
+    Refused, audited: PermissionDenied; InvalidWeights (400); WeightsLocked (409 weights_locked) once
+    judging or voting has opened -- a Postgres trigger (scoring/migrations/0011) refuses the same."""
+
+    def refuse(error, reason):
+        audit.record(AuditAction.WEIGHTS_REFUSED, origin=origin, actor=actor, subject=event.slug, reason=reason,
+                     judge_weight=judge_weight, community_weight=community_weight)
+        raise error
+
+    if not is_organizer_of(actor, event):
+        refuse(PermissionDenied("Only the event's organizers can set the final score's weights."), "not an organizer")
+    for value in (judge_weight, community_weight):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            refuse(InvalidWeights("Weights are whole numbers, 0 or more."), "not whole numbers")
+    if judge_weight + community_weight != 100:
+        refuse(InvalidWeights(f"The weights must add up to 100 (they add up to {judge_weight + community_weight})."),
+               "not 100")
+    problem = None
+    with transaction.atomic():
+        Event.objects.select_for_update().filter(pk=event.pk).first()
+        before = final_weights(event)
+        if before != (judge_weight, community_weight):
+            if weights_locked(event):
+                problem = WeightsLocked("Judging or voting has opened, so the final score's weights are fixed.")
+            else:
+                row, _ = EventScoringConfig.objects.get_or_create(event=event)
+                row.judge_weight, row.community_weight, row.updated_by = judge_weight, community_weight, actor
+                row.save()
+    if problem:
+        refuse(problem, "locked")
+    if before != (judge_weight, community_weight):
+        audit.record(AuditAction.WEIGHTS_CHANGED, origin=origin, actor=actor, subject=event.slug,
+                     before={"judge": before[0], "community": before[1]},
+                     after={"judge": judge_weight, "community": community_weight})
+    return EventScoringConfig.objects.filter(event=event).first()
+
+
+@contextmanager
+def weights_bypass(reason, *, actor=None, origin=None, subject=""):
+    """The one way past the weights-lock trigger, for one block (switched off again on the way out,
+    so it cannot leak into an outer transaction). Audited even if the block fails. Used by the demo
+    seed only; no page or API uses it."""
+    try:
+        with transaction.atomic():
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute("SET LOCAL dogfood.weights_bypass = 'on'")
+            try:
+                yield
+            finally:
+                if connection.vendor == "postgresql" and not connection.needs_rollback:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL dogfood.weights_bypass = 'off'")
+    finally:
+        audit.record(AuditAction.WEIGHTS_BYPASSED, origin=origin, actor=actor, subject=subject, reason=reason)
 
 
 # ==================================================================================== the judge side

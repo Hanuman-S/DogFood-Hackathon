@@ -337,7 +337,8 @@ verified"; T3's evidence will be `t3-report.txt` (Stage 7).
 | 1 results flow | `f5326b4`, `7f2e5c2` | compute/publish/unpublish pages, `EventResultSettings` (visibility, winners top N), `/events/<slug>/results`, winners.csv; "end judging now"; one CSV writer (`core/csvfile.py`) |
 | 2 voting core | `001b6ba`, `93ad2b1` | `voting` app, window trigger, per-ballot order, hidden tallies, publish refused while voting is open |
 | 3 access modes | `55df4ca`, `4984c78`, `9e78e54` | email links, open link; votes undeletable once voting opens (trigger + PROTECT); per-install SECRET_KEY and derived keys |
-| 4 anti-abuse | `5bbbbd0` + restore | IP hashes only, rate limits, flags, void/restore, integrity page |
+| 4 anti-abuse | `5bbbbd0`, `c0103b7` | IP hashes only, rate limits, flags, void/restore, integrity page |
+| 5 final score | (this commit) | weights + lock, frozen tallies, percentile combination, combined page, People's Choice |
 
 ### Caveats for the docs (JUDGING.md / README, Stage 7)
 - **one_person_one_vote: the identical-ballots flag cannot fire.** It only looks at ballots spread

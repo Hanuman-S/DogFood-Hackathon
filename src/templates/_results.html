@@ -6,7 +6,10 @@
   <section class="frame"><div class="frame__body"><p class="faint">nothing computed yet.</p></div></section>
 {% else %}
   {% if page.no_separable_winner %}
-  <ul class="msgs"><li class="msg msg--warning">no separable winner: first place is shared{% if page.rows or page.overall_winners %} (see the tie group beside the top projects){% endif %}. the judges' scores cannot tell these projects apart.</li></ul>
+  <ul class="msgs"><li class="msg msg--warning">{% if page.combined %}no separable winner: first place is an exact tie on the final score.{% else %}no separable winner: first place is shared{% if page.rows or page.overall_winners %} (see the tie group beside the top projects){% endif %}. the judges' scores cannot tell these projects apart.{% endif %}</li></ul>
+  {% endif %}
+  {% if page.combined %}
+  <p class="faint">final score = {{ page.weights.judge }}% judges + {{ page.weights.community }}% community, each as a percentile rank within the event (ties share the middle of the ranks they span; projects with no votes share the bottom). the final score has no standard error: tie groups describe the judged part only.</p>
   {% endif %}
 
   <div class="grid-2">
@@ -14,7 +17,7 @@
       <header class="frame__bar"><h2 class="frame__title">winners</h2><span class="frame__meta">top {{ page.top_n }} overall</span></header>
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table">
-          <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col">tie</th></tr></thead>
+          <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col">{% if page.combined %}judged tie{% else %}tie{% endif %}</th></tr></thead>
           <tbody>
           {% for r in page.overall_winners %}
             <tr><td class="num bright">{{ r.display_rank }}</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· {{ r.project.team.name }}</span></td><td class="dim">{{ r.track.name|default:"--" }}</td><td class="dim">{% if r.shared %}group {{ r.tie_group }} ({{ r.tie_size }}){% else %}--{% endif %}</td></tr>
@@ -38,14 +41,44 @@
     </section>
   </div>
 
+  {% if page.peoples_choice is not None %}
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">people's choice</h2><span class="frame__meta">{% if page.full %}by community vote{% else %}top {{ page.top_n }} by community vote{% endif %}{% if page.peoples_choice_live %} · <span class="badge badge--warn">live count, preview only</span>{% endif %}</span></header>
+    <div class="frame__body"><p class="faint">influence is the sum over ballots of the square root of the credits each voter placed on the project. voided ballots are left out.</p></div>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col" class="num">influence</th><th scope="col" class="num">ballots</th></tr></thead>
+        <tbody>
+        {% for c in page.peoples_choice %}
+          <tr><td class="num bright">{{ c.rank }}</td><td><a href="{% url 'public:project' c.project.pk %}">{{ c.project.name }}</a> <span class="faint">· {{ c.project.team.name }}</span></td><td class="dim">{{ c.project.track.name|default:"--" }}</td><td class="num">{{ c.influence|floatformat:3 }}</td><td class="num dim">{{ c.ballots }}</td></tr>
+        {% empty %}<tr><td colspan="5" class="faint">no votes were cast.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   {% if page.full %}
   <section class="frame">
     <header class="frame__bar"><h2 class="frame__title">full ranking</h2><span class="frame__meta">{{ page.rows|length }} ranked · {{ page.snapshot.method }} {{ page.snapshot.method_version }}</span></header>
     <div class="frame__body">
-      <p class="faint">rank is shared by exact ties. a tie group joins projects the scores cannot separate with confidence (P(ahead) below the threshold); ranks inside a group are not a real order. "mean rank" is the plain average of the judges' weighted scores, for comparison.{% if page.components > 1 %} the judges fall into {{ page.components }} groups with no judge in common, so projects in different groups are not directly comparable.{% endif %}</p>
+      <p class="faint">{% if page.combined %}rank is the final rank, shared only by an exact tie on the final score. the judged columns are the {{ page.snapshot.method }} result: its rank (shared by exact ties), its tie group (projects the judges' scores cannot separate with confidence) and its percentile; the community columns are the vote.{% else %}rank is shared by exact ties. a tie group joins projects the scores cannot separate with confidence (P(ahead) below the threshold); ranks inside a group are not a real order.{% endif %} "mean rank" is the plain average of the judges' weighted scores, for comparison.{% if page.components > 1 %} the judges fall into {{ page.components }} groups with no judge in common, so projects in different groups are not directly comparable.{% endif %}</p>
     </div>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
+        {% if page.combined %}
+        <thead>
+          <tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col" class="num">final</th><th scope="col" class="num">judged rank</th><th scope="col">judged tie group</th><th scope="col" class="num">judged pct</th><th scope="col" class="num">influence</th><th scope="col" class="num">vote pct</th><th scope="col" class="num">mean rank</th></tr>
+        </thead>
+        <tbody>
+        {% for r in page.rows %}
+          <tr><td class="num bright">{{ r.display_rank }}</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· {{ r.project.team.name }}</span>{% for a in r.awards %} <span class="badge badge--on">{{ a }}</span>{% endfor %}</td><td class="dim">{{ r.track.name|default:"--" }}</td><td class="num bright">{{ r.final|floatformat:3 }}</td><td class="num">{{ r.m2_rank }}</td><td class="dim">{% if r.shared %}group {{ r.tie_group }} ({{ r.tie_size }}){% else %}--{% endif %}</td><td class="num dim">{{ r.judge_pct|floatformat:3 }}</td><td class="num">{{ r.influence|floatformat:3 }}</td><td class="num dim">{{ r.vote_pct|floatformat:3 }}</td><td class="num dim">{{ r.raw_rank|default:"--" }}</td></tr>
+        {% endfor %}
+        {% for r in page.unranked %}
+          <tr><td class="num faint">--</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· not ranked (no usable reviews)</span></td><td class="dim">{{ r.track.name|default:"--" }}</td><td colspan="7"></td></tr>
+        {% endfor %}
+        </tbody>
+        {% else %}
         <thead><tr><th scope="col" class="num">rank</th><th scope="col">project</th><th scope="col">track</th><th scope="col" class="num">score</th><th scope="col" class="num">± se</th><th scope="col">tie group</th><th scope="col" class="num">mean rank</th><th scope="col" class="num">reviews</th></tr></thead>
         <tbody>
         {% for r in page.rows %}
@@ -55,6 +88,7 @@
           <tr><td class="num faint">--</td><td><a href="{% url 'public:project' r.project.pk %}">{{ r.project.name }}</a> <span class="faint">· not ranked (no usable reviews)</span></td><td class="dim">{{ r.track.name|default:"--" }}</td><td colspan="5"></td></tr>
         {% endfor %}
         </tbody>
+        {% endif %}
       </table>
     </div>
   </section>
