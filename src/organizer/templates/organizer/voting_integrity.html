@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · voting integrity{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar"><h1 class="frame__title">voting integrity</h1><span class="frame__meta">{{ event.name }} · organizers and admins only</span></header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">ballots with votes</th><td>{{ counts.with_votes }}</td></tr>
+        <tr><th scope="row">opened, nothing placed</th><td>{{ counts.empty }} <span class="faint">(counted apart: every empty ballot is identical to every other, so they are left out of the flags)</span></td></tr>
+        <tr><th scope="row">voided</th><td>{{ counts.voided }}</td></tr>
+      </table>
+      <p class="faint">flags are reasons to look, not verdicts: nothing is removed automatically. voiding keeps the ballot, records who, when and why, and leaves it out of every tally from then on. it works before and after voting closes.</p>
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">flags</h2><span class="frame__meta">{{ flags|length }}</span></header>
+    <div class="frame__body stack">
+    {% for flag, rows in flags %}
+      <div class="stack">
+        <p><span class="badge badge--warn">{{ flag.kind }}</span> <span class="bright">{{ flag.title }}</span> <span class="faint">· {{ flag.detail }}</span></p>
+        {% include "organizer/_ballot_table.html" with rows=rows voidable=1 %}
+      </div>
+    {% empty %}<p class="faint">nothing flagged.</p>{% endfor %}
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">voided ballots</h2><span class="frame__meta">{{ voided|length }}</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">voter</th><th scope="col">credits</th><th scope="col">voided</th><th scope="col">by</th><th scope="col">reason</th></tr></thead>
+        <tbody>
+        {% for b, who, credits in voided %}
+          <tr><td class="num">{{ b.pk }}</td><td>{{ who }}</td><td class="dim">{{ credits|default:"--" }}</td><td class="dim">{{ b.voided_at|utc }}</td><td class="dim">{{ b.voided_by.email }}</td><td>{{ b.void_reason }}</td></tr>
+        {% empty %}<tr><td colspan="6" class="faint">none.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">credits by position shown</h2><span class="frame__meta">position bias check</span></header>
+    <div class="frame__body"><p class="faint">each ballot shows the projects in its own shuffled order. if the order had pull, early positions would collect more credits; a flat column says they do not. ballots that place credits only, voided ones left out.</p></div>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">position</th><th scope="col" class="num">average credits</th><th scope="col" class="num">lines</th></tr></thead>
+        <tbody>
+        {% for position, avg, n in positions %}<tr><td class="num">{{ position }}</td><td class="num bright">{{ avg|floatformat:2 }}</td><td class="num dim">{{ n }}</td></tr>
+        {% empty %}<tr><td colspan="3" class="faint">no votes yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">audit trail</h2><span class="frame__meta">newest first · last {{ trail|length }}</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col">time (utc)</th><th scope="col">who</th><th scope="col">what</th><th scope="col">details</th></tr></thead>
+        <tbody>
+        {% for row in trail %}<tr><td class="dim">{{ row.at|utc }}</td><td>{{ row.who }}</td><td>{{ row.action }}</td><td class="dim">{{ row.summary }}</td></tr>
+        {% empty %}<tr><td colspan="4" class="faint">nothing yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <p class="actions"><a class="btn btn--ghost" href="{% url 'organizer:voting' event.slug %}">back to voting</a></p>
+</div>
+{% endblock %}

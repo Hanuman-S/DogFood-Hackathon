@@ -11,6 +11,7 @@ from accounts.models import User, UserSession
 from accounts.roles import ADMIN, Role
 from conftest import PASSWORD
 from core.models import AuditAction, AuditLog
+from core.net import hash_ip
 
 pytestmark = pytest.mark.django_db
 
@@ -78,7 +79,7 @@ def test_login_records_a_user_session_and_audit_row(make_user):
     post_login(client, user.email)
     row = UserSession.objects.get(user=user)
     assert row.session_key == client.session.session_key
-    assert row.ip == "10.1.2.3"
+    assert row.ip_hash == hash_ip("10.1.2.3") and "10.1.2.3" not in str(row.__dict__)
     assert row.device == "Chrome on Windows"
     assert AuditLog.objects.filter(action=AuditAction.LOGIN_OK, actor=user).exists()
 

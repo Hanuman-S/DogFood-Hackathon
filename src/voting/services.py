@@ -41,9 +41,9 @@ from scoring.models import Publication
 from teams.models import TeamExtension, TeamMember
 
 from . import links
-from .errors import (AccountTooNew, InvalidAllowlist, InvalidBallot, InvalidVotingConfig,
-                     LinkRevoked, NoSuchLink, NoVoting, OverBudget, OwnProject, StaffCannotVote, VotingClosed,
-                     VotingConfigLocked, VotingNotOpen, WrongAccessMode)
+from .errors import (AccountTooNew, AlreadyVoided, InvalidAllowlist, InvalidBallot, InvalidVoid, InvalidVotingConfig,
+                     LinkRevoked, NoSuchBallot, NoSuchLink, NoVoting, OverBudget, OwnProject, RateLimited,
+                     StaffCannotVote, VotingClosed, VotingConfigLocked, VotingNotOpen, WrongAccessMode)
 from .models import CREDIT_BUDGET_MAX, AccessMode, Ballot, BallotLine, Method, VoterLink, VotingConfig
 
 TRIGGER_MARKER = "dogfood_voting_closed"
@@ -356,7 +356,7 @@ def ballot_of(event, voter):
 def _create_ballot(event, config, voter, now, ip_hash):
     """The ballot with every project on it at 0 credits, in this ballot's own order. Inside the
     caller's transaction; a concurrent create for the same voter hits the unique constraint."""
-    ballot = Ballot.objects.create(event=event, created_at=now, updated_at=now, ip_hash=ip_hash,
+    ballot = Ballot.objects.create(event=event, created_at=now, updated_at=now, ip_hash=ip_hash, created_ip_hash=ip_hash,
                                    **voter.ballot_filter())
     order = ballot_order(config, ballot.pk, ballot_project_ids(event, voter.user))
     BallotLine.objects.bulk_create(
@@ -365,11 +365,45 @@ def _create_ballot(event, config, voter, now, ip_hash):
     return ballot
 
 
-def _eligible(event, voter, *, origin, attempted):
+def _with_ip(origin, ip_hash):
+    """The audit origin for a vote write, carrying the same IP hash the write is limited and flagged
+    by: the per-IP rate limit counts audit rows by that hash, so the two must never differ."""
+    return audit.Origin(ip_hash=ip_hash or "", user_agent=origin.user_agent if origin is not None else "")
+
+
+# Every attempt at a vote write leaves one of these rows, so they are what the rate limit counts.
+VOTE_WRITE_ACTIONS = (AuditAction.BALLOT_OPENED, AuditAction.VOTE_CAST, AuditAction.VOTE_CHANGED,
+                      AuditAction.VOTE_REFUSED, AuditAction.VOTE_LATE_REFUSED)
+
+
+def _check_rate(event, voter, ip_hash, *, origin, attempted):
+    """429 rate_limited (audited as vote_throttled) past VOTE_RATE_PER_VOTER writes by this voter, or
+    VOTE_RATE_PER_IP from this IP hash, in VOTE_RATE_WINDOW. Checked after the window, so a late
+    write is still a 409."""
+    from django.conf import settings
+
+    from core import ratelimit
+
+    which = ratelimit.exceeded(
+        VOTE_WRITE_ACTIONS, now=db_now(),
+        per_actor=ratelimit.Limit(settings.VOTE_RATE_PER_VOTER, settings.VOTE_RATE_WINDOW),
+        actor_filter={"subject": event.slug, "detail__voter": voter.label},
+        per_ip=ratelimit.Limit(settings.VOTE_RATE_PER_IP, settings.VOTE_RATE_WINDOW), ip_hash=ip_hash,
+    )
+    if which:
+        minutes = int(settings.VOTE_RATE_WINDOW.total_seconds() // 60)
+        _refuse_vote(RateLimited(f"Too many votes from {'this voter' if which == 'actor' else 'this network'}; "
+                                 f"wait a few minutes (the limit is counted over {minutes} minutes)."),
+                     event=event, voter=voter, origin=origin, attempted=attempted, action=AuditAction.VOTE_THROTTLED,
+                     limit=which)
+
+
+def _eligible(event, voter, *, origin, attempted, ip_hash=""):
     config = voting_for(event)
     if config is None:
         raise NoVoting("This event has no community vote.")
     _check_window(event, config, voter=voter, origin=origin, attempted=attempted)
+    _check_rate(event, voter, ip_hash, origin=origin, attempted=attempted)
     if MODE_OF_KIND[voter.kind] != config.access_mode:
         _refuse_vote(WrongAccessMode(f"This vote is by {config.get_access_mode_display().lower()}, not this way."),
                      event=event, voter=voter, origin=origin, attempted=attempted)
@@ -392,7 +426,8 @@ def _late_from_trigger(error, event, voter, origin, attempted):
 def open_ballot(event, voter, *, ip_hash="", origin=None) -> Ballot:
     """The voter's ballot, created (empty, in its own order) on their first explicit request. A
     POST, never a page load: a GET does not write."""
-    config = _eligible(event, voter, origin=origin, attempted="open ballot")
+    origin = _with_ip(origin, ip_hash)
+    config = _eligible(event, voter, origin=origin, attempted="open ballot", ip_hash=ip_hash)
     existing = ballot_of(event, voter)
     if existing is not None:
         return existing
@@ -434,8 +469,9 @@ def _parse_lines(lines, budget):
 def cast(event, voter, ip_hash, lines, actor=None, *, origin=None) -> Ballot:
     """Set `voter`'s whole ballot to `lines` ({project id: credits}; projects not named get 0).
     Creates the ballot on the first cast. See the module docstring for the order of refusals."""
+    origin = _with_ip(origin, ip_hash)
     attempted = "cast"
-    config = _eligible(event, voter, origin=origin, attempted=attempted)
+    config = _eligible(event, voter, origin=origin, attempted=attempted, ip_hash=ip_hash)
     budget = config.budget
     raw = lines if isinstance(lines, dict) else {}
     own = own_project_ids(event, voter.user)
@@ -692,3 +728,54 @@ def voting_bypass(reason, *, actor=None, origin=None, subject=""):
                         cursor.execute("SET LOCAL dogfood.voting_bypass = 'off'")
     finally:
         audit.record(AuditAction.VOTING_BYPASSED, origin=origin, actor=actor, subject=subject, reason=reason)
+
+
+# --- voiding ---------------------------------------------------------------------------------------
+
+VOID_REASON_MAX = 300
+
+
+def void_ballot(event, ballot_id, *, actor, reason, origin=None) -> Ballot:
+    """Leave a ballot out of every tally, keeping it (with who, when and why). Organizers of the event
+    and admins; at any time, before or after the close (the trigger allows an update of the void
+    fields alone). Takes effect in the next tally (Stage 5: the next frozen tally). Refusals, audited:
+    PermissionDenied, NoSuchBallot (404), InvalidVoid (400: a reason is required), AlreadyVoided (409).
+    Nothing is ever deleted."""
+
+    def refuse(error, why):
+        audit.record(AuditAction.BALLOT_VOID_REFUSED, origin=origin, actor=actor, subject=event.slug,
+                     ballot=ballot_id, reason=why)
+        raise error
+
+    if not is_organizer_of(actor, event):
+        refuse(PermissionDenied("Only the event's organizers can void ballots."), "not an organizer")
+    reason = (reason or "").strip()
+    if len(reason) < 3 or len(reason) > VOID_REASON_MAX:
+        refuse(InvalidVoid(f"Give a reason (3 to {VOID_REASON_MAX} characters); it is kept with the ballot."),
+               "invalid reason")
+    problem = None
+    with transaction.atomic():
+        ballot = Ballot.objects.select_for_update().filter(event=event, pk=ballot_id).first()
+        if ballot is None:
+            problem = (NoSuchBallot("This event has no such ballot."), "no such ballot")
+        elif ballot.voided_at is not None:
+            problem = (AlreadyVoided(f"Ballot #{ballot.pk} was already voided."), "already voided")
+        else:
+            ballot.voided_at, ballot.voided_by, ballot.void_reason = db_now(), actor, reason
+            ballot.save(update_fields=["voided_at", "voided_by", "void_reason"])
+    if problem:
+        refuse(*problem)
+    credits = {str(pk): c for pk, c in ballot.lines.filter(credits__gt=0).values_list("project_id", "credits")}
+    audit.record(AuditAction.BALLOT_VOIDED, origin=origin, actor=actor, subject=event.slug, ballot=ballot.pk,
+                 voter=ballot_label(ballot), reason=reason, credits=credits)
+    return ballot
+
+
+def ballot_label(ballot):
+    """Who cast a ballot, for organizers: the account's email, the link's email, or the open-link
+    cookie's first characters."""
+    if ballot.voter_user_id:
+        return ballot.voter_user.email
+    if ballot.voter_link_id:
+        return f"link:{ballot.voter_link.email}"
+    return f"open link:{ballot.voter_cookie[:8]}"

@@ -36,9 +36,9 @@ class ApiTokenAdmin(admin.ModelAdmin):
 
 @admin.register(UserSession, site=database_admin)
 class UserSessionAdmin(admin.ModelAdmin):
-    list_display = ["user", "device", "ip", "created_at", "last_seen_at"]
-    search_fields = ["user__email", "ip"]
-    readonly_fields = ["user", "session_key", "ip", "user_agent", "created_at", "last_seen_at"]
+    list_display = ["user", "device", "ip_hash", "created_at", "last_seen_at"]
+    search_fields = ["user__email", "ip_hash"]
+    readonly_fields = ["user", "session_key", "ip_hash", "user_agent", "created_at", "last_seen_at"]
 
     def has_add_permission(self, request):
         return False
@@ -48,9 +48,9 @@ class UserSessionAdmin(admin.ModelAdmin):
 class AuditLogAdmin(admin.ModelAdmin):
     """Read-only, even for admins: an audit trail an admin could edit would prove nothing."""
 
-    list_display = ["created_at", "actor_email", "action", "subject", "ip"]
+    list_display = ["created_at", "actor_email", "action", "subject", "ip_hash"]
     list_filter = ["action"]
-    search_fields = ["actor_email", "subject", "ip"]
+    search_fields = ["actor_email", "subject", "ip_hash"]
 
     def has_add_permission(self, request):
         return False

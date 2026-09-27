@@ -40,6 +40,7 @@
           {% if config.original_closes_at %}<tr><th scope="row">originally closing</th><td class="dim">{{ config.original_closes_at|utc }}</td></tr>{% endif %}
           <tr><th scope="row">method</th><td>{{ config.get_method_display }}{% if config.method == "quadratic" %}, {{ config.credit_budget }} credits{% endif %}</td></tr>
           <tr><th scope="row">ballots</th><td>{{ counts.cast }} with a vote · {{ counts.ballots }} opened · {{ counts.voided }} voided</td></tr>
+          <tr><th scope="row">integrity</th><td><a href="{% url 'organizer:voting_integrity' event.slug %}">flags, voided ballots, the audit trail</a></td></tr>
           <tr><th scope="row">voters' page</th><td><a href="{% url 'participant:vote' event.slug %}">/participant/events/{{ event.slug }}/vote</a></td></tr>
         </table>
         {% if state == "open" %}

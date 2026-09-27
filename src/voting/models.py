@@ -141,7 +141,8 @@ class Ballot(models.Model):
     voter_cookie = models.CharField(max_length=64, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
-    ip_hash = models.CharField(max_length=64, blank=True)
+    ip_hash = models.CharField(max_length=64, blank=True)  # of the last write
+    created_ip_hash = models.CharField(max_length=64, blank=True)  # of the write that created it
     voided_at = models.DateTimeField(null=True, blank=True)
     voided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"

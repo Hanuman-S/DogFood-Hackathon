@@ -119,6 +119,9 @@ class AuditAction(models.TextChoices):
     VOTER_LINKS_EXPORTED = "voter_links_exported", "Downloaded voter links"
     OPEN_LINK_ROTATED = "open_link_rotated", "Replaced an event's open voting link"
     VOTING_BYPASSED = "voting_bypassed", "Wrote to ballots past the voting trigger (bypass)"
+    VOTE_THROTTLED = "vote_throttled", "Refused a vote write (rate limit)"
+    BALLOT_VOIDED = "ballot_voided", "Voided a ballot"
+    BALLOT_VOID_REFUSED = "ballot_void_refused", "Refused to void a ballot"
 
 
 class AuditLog(models.Model):
@@ -131,9 +134,11 @@ class AuditLog(models.Model):
     actor_email = models.CharField(max_length=254, blank=True)
     action = models.CharField(max_length=40, choices=AuditAction.choices)
     # What the action was about, as text: the email a login attempted, a portal name, a token
-    # prefix. Indexed, because the login throttle counts rows by (action, subject, ip).
+    # prefix. Indexed, because the login throttle counts rows by (action, subject, ip_hash).
     subject = models.CharField(max_length=254, blank=True)
-    ip = models.GenericIPAddressField(null=True, blank=True)
+    # A keyed hash of the caller's IP (core.net.hash_ip), never the address itself. Enough to count
+    # (rate limits) and to cluster (voting integrity flags); "" when there was no request.
+    ip_hash = models.CharField(max_length=64, blank=True)
     user_agent = models.CharField(max_length=300, blank=True)
     detail = models.JSONField(default=dict, blank=True)
 
@@ -141,7 +146,7 @@ class AuditLog(models.Model):
         ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["action", "subject", "created_at"], name="audit_throttle_idx"),
-            models.Index(fields=["action", "ip", "created_at"], name="audit_ip_idx"),
+            models.Index(fields=["action", "ip_hash", "created_at"], name="audit_ip_hash_idx"),
         ]
 
     def __str__(self):

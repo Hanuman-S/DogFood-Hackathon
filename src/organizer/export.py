@@ -441,8 +441,8 @@ class EventExport:
         # another event's rows (names are unique per event, not across events).
         slug = self.event.slug
         entries = AuditLog.objects.filter(Q(subject=slug) | Q(detail__event=slug)).order_by("created_at", "pk")
-        return (["at", "who", "action", "action code", "subject", "detail", "ip"],
-                [(e.created_at, e.actor_email, e.get_action_display(), e.action, e.subject, e.detail, e.ip)
+        return (["at", "who", "action", "action code", "subject", "detail", "ip hash"],
+                [(e.created_at, e.actor_email, e.get_action_display(), e.action, e.subject, e.detail, e.ip_hash[:12])
                  for e in entries])
 
     # --- output -----------------------------------------------------------------------------------

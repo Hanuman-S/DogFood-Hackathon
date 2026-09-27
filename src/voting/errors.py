@@ -69,6 +69,26 @@ class VotingConfigLocked(VotingError):
     code = "voting_config_locked"
 
 
+class RateLimited(VotingError):
+    status = 429
+    code = "rate_limited"
+
+
+class InvalidVoid(VotingError):
+    status = 400
+    code = "invalid_void"
+
+
+class AlreadyVoided(VotingError):
+    status = 409
+    code = "already_voided"
+
+
+class NoSuchBallot(VotingError):
+    status = 404
+    code = "no_such_ballot"
+
+
 class WrongAccessMode(VotingError):
     """This event's vote is not cast this way (e.g. logged in, when it is by email link)."""
 

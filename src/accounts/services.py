@@ -15,7 +15,7 @@ from accounts.models import ApiToken, User, UserSession, normalize_email
 from accounts.throttle import is_throttled
 from core import audit
 from core.models import AuditAction
-from core.net import client_ip, user_agent
+from core.net import ip_hash, user_agent
 
 
 @dataclass
@@ -33,9 +33,7 @@ def attempt_login(request, email, password, remember):
     time.
     """
     email = normalize_email(email)
-    ip = client_ip(request)
-
-    if is_throttled(email, ip):
+    if is_throttled(email, ip_hash(request)):
         audit.record(AuditAction.LOGIN_THROTTLED, request=request, subject=email)
         return LoginResult(error="throttled")
 
@@ -89,7 +87,7 @@ def start_session(request, user):
         session_key=request.session.session_key,
         defaults={
             "user": user,
-            "ip": client_ip(request),
+            "ip_hash": ip_hash(request),
             "user_agent": user_agent(request),
             "created_at": now,
             "last_seen_at": now,
@@ -126,7 +124,7 @@ def revoke_session(request, user_session):
     is_current = user_session.session_key == request.session.session_key
     audit.record(
         AuditAction.SESSION_REVOKED, request=request, subject=user_session.device,
-        ip_of_session=user_session.ip, current=is_current,
+        session_ip_hash=user_session.ip_hash[:12], current=is_current,
     )
     if is_current:
         logout_user(request)

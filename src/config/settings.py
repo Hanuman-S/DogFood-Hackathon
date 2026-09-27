@@ -173,6 +173,17 @@ LOGIN_FAILURE_LIMIT = env_int("LOGIN_FAILURE_LIMIT", 5)          # per (email, I
 LOGIN_IP_FAILURE_LIMIT = env_int("LOGIN_IP_FAILURE_LIMIT", 30)   # per IP, any email
 LOGIN_FAILURE_WINDOW = timedelta(minutes=env_int("LOGIN_FAILURE_WINDOW_MINUTES", 15))
 
+# Community voting (voting/services.py, voting/integrity.py). Vote writes -- opening a ballot,
+# casting, changing, and refused attempts -- per voter and per IP hash, in a sliding window. The
+# per-IP limit is generous: a venue's voters often share one address.
+VOTE_RATE_WINDOW = timedelta(minutes=env_int("VOTE_RATE_WINDOW_MINUTES", 10))
+VOTE_RATE_PER_VOTER = env_int("VOTE_RATE_PER_VOTER", 30)
+VOTE_RATE_PER_IP = env_int("VOTE_RATE_PER_IP", 300)
+# Integrity flags (shown to organizers; nothing is ever removed automatically).
+VOTE_FLAG_WINDOW = timedelta(minutes=env_int("VOTE_FLAG_WINDOW_MINUTES", 10))
+VOTE_FLAG_IP_BALLOTS = env_int("VOTE_FLAG_IP_BALLOTS", 3)
+VOTE_FLAG_NEW_ACCOUNT = timedelta(minutes=env_int("VOTE_FLAG_NEW_ACCOUNT_MINUTES", 10))
+
 # Only trust X-Forwarded-For behind a proxy you run; otherwise anyone can forge their IP.
 TRUST_PROXY_HEADERS = env_bool("TRUST_PROXY_HEADERS", False)
 

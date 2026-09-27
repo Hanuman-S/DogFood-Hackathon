@@ -21,6 +21,7 @@ from events.services import get_managed_event
 from voting import services
 from voting.errors import VotingError
 from voting.forms import VotingConfigForm
+from voting import integrity as evidence
 from voting import links
 from voting.models import Method, VoterLink
 
@@ -217,3 +218,35 @@ def open_link_rotate(request, slug):
     else:
         messages.success(request, "new open link made; the old one no longer works.")
     return redirect("organizer:voting", slug=event.slug)
+
+
+# --- integrity -------------------------------------------------------------------------------------
+
+@never_cache
+@portal_required("organizer")
+def integrity(request, slug):
+    """Flags, voided ballots, the audit trail and the position profile. Read-only (voting.integrity)."""
+    event = get_managed_event(request.user, slug)
+    return render(request, "organizer/voting_integrity.html", {
+        "event": event,
+        "config": services.voting_for(event),
+        "counts": evidence.counts(event),
+        "flags": [(flag, evidence.ballot_rows(flag.ballots)) for flag in evidence.flags(event)],
+        "voided": evidence.ballot_rows(evidence.voided(event)),
+        "positions": evidence.position_bias(event),
+        "trail": evidence.trail(event),
+    })
+
+
+@require_POST
+@portal_required("organizer")
+def ballot_void(request, slug, ballot_id):
+    event = get_managed_event(request.user, slug)
+    try:
+        services.void_ballot(event, ballot_id, actor=request.user, reason=request.POST.get("reason", ""),
+                             origin=audit.origin_of(request))
+    except VotingError as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(request, f"ballot #{ballot_id} voided. it is kept, and left out of every tally from now on.")
+    return redirect("organizer:voting_integrity", slug=event.slug)

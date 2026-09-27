@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from core.models import AuditLog
-from core.net import client_ip, user_agent
+from core.net import ip_hash, user_agent
 
 
 @dataclass(frozen=True)
@@ -11,14 +11,14 @@ class Origin:
     """Where a write came from, taken off the request by the view. Services take this (never the
     request itself), so a service can be called from a view, a command or a test alike."""
 
-    ip: str | None = None
+    ip_hash: str = ""  # core.net.hash_ip; the address itself is never passed around or stored
     user_agent: str = ""
 
 
 def origin_of(request):
     if request is None:
         return None
-    return Origin(ip=client_ip(request), user_agent=user_agent(request))
+    return Origin(ip_hash=ip_hash(request), user_agent=user_agent(request))
 
 
 def record(action, *, request=None, origin=None, actor=None, subject="", **detail):
@@ -40,7 +40,7 @@ def record(action, *, request=None, origin=None, actor=None, subject="", **detai
         actor=actor,
         actor_email=getattr(actor, "email", "") or "",
         subject=(subject or "")[:254],
-        ip=origin.ip if origin is not None else None,
+        ip_hash=origin.ip_hash if origin is not None else "",
         user_agent=origin.user_agent if origin is not None else "",
         detail=detail,
     )

@@ -1,0 +1,14 @@
+{% load portal %}
+<div class="table-wrap">
+  <table class="table">
+    <thead><tr><th scope="col" class="num">#</th><th scope="col">voter</th><th scope="col">credits</th><th scope="col">cast</th><th scope="col">network</th>{% if voidable %}<th scope="col">void</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for b, who, credits in rows %}
+      <tr>
+        <td class="num">{{ b.pk }}</td><td>{{ who }}</td><td class="dim">{{ credits|default:"--" }}</td><td class="dim">{{ b.created_at|utc }}</td><td class="faint">{{ b.created_ip_hash|slice:":8"|default:"--" }}</td>
+        {% if voidable %}<td>{% if b.voided_at %}<span class="badge">voided</span>{% else %}<form method="post" action="{% url 'organizer:ballot_void' event.slug b.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="reason-{{ b.pk }}">reason for voiding ballot {{ b.pk }}</label><input id="reason-{{ b.pk }}" name="reason" required minlength="3" maxlength="300" placeholder="reason"><button class="btn btn--small btn--danger" type="submit">void</button></form>{% endif %}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>

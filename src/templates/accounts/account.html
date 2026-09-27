@@ -55,12 +55,12 @@
     </header>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th>device</th><th>ip</th><th>started</th><th>last seen</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
+        <thead><tr><th>device</th><th>network</th><th>started</th><th>last seen</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
         <tbody>
         {% for s in sessions %}
           <tr>
             <td>{{ s.device }}{% if s.session_key == current_session_key %} <span class="pill">this one</span>{% endif %}</td>
-            <td class="dim">{{ s.ip|default:"--" }}</td>
+            <td class="dim">{% if s.ip_hash and s.ip_hash == current_ip_hash %}this network{% else %}{{ s.ip_hash|slice:":8"|default:"--" }}{% endif %}</td>
             <td class="dim">{{ s.created_at|date:"Y-m-d H:i" }}</td>
             <td class="dim">{{ s.last_seen_at|timesince }} ago</td>
             <td class="num">

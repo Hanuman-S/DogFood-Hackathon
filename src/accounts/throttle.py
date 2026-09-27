@@ -2,6 +2,9 @@
 
 Two limits, both over a sliding window (15 minutes by default):
 
+IPs are keyed hashes (core.net.hash_ip); the address itself is never stored. The clock is the
+database's (core.deadlines.db_now), like every other time decision.
+
 * per (email, IP): 5 failures. Stops password guessing against one account from one place,
   and resets as soon as that email logs in successfully from that IP.
 * per IP, any email: 30 failures. Stops one machine spraying many accounts.
@@ -15,18 +18,18 @@ victim out by typing their email five times; keying on (email, IP) does not.
 """
 
 from django.conf import settings
-from django.utils import timezone
 
+from core.deadlines import db_now
 from core.models import AuditAction, AuditLog
 
 
-def is_throttled(email, ip):
-    now = timezone.now()
+def is_throttled(email, ip_hash):
+    now = db_now()
     window_start = now - settings.LOGIN_FAILURE_WINDOW
 
     last_success = (
         AuditLog.objects.filter(
-            action=AuditAction.LOGIN_OK, subject=email, ip=ip, created_at__gte=window_start
+            action=AuditAction.LOGIN_OK, subject=email, ip_hash=ip_hash, created_at__gte=window_start
         )
         .order_by("-created_at")
         .values_list("created_at", flat=True)
@@ -35,12 +38,12 @@ def is_throttled(email, ip):
     since = max(window_start, last_success) if last_success else window_start
 
     per_account = AuditLog.objects.filter(
-        action=AuditAction.LOGIN_FAILED, subject=email, ip=ip, created_at__gt=since
+        action=AuditAction.LOGIN_FAILED, subject=email, ip_hash=ip_hash, created_at__gt=since
     ).count()
     if per_account >= settings.LOGIN_FAILURE_LIMIT:
         return True
 
     per_ip = AuditLog.objects.filter(
-        action=AuditAction.LOGIN_FAILED, ip=ip, created_at__gte=window_start
+        action=AuditAction.LOGIN_FAILED, ip_hash=ip_hash, created_at__gte=window_start
     ).count()
     return per_ip >= settings.LOGIN_IP_FAILURE_LIMIT

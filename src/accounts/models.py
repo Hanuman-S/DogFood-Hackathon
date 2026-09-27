@@ -181,7 +181,7 @@ class UserSession(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions")
     session_key = models.CharField(max_length=40, unique=True)
-    ip = models.GenericIPAddressField(null=True, blank=True)
+    ip_hash = models.CharField(max_length=64, blank=True)  # core.net.hash_ip; no address is stored
     user_agent = models.CharField(max_length=300, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     last_seen_at = models.DateTimeField(default=timezone.now)
@@ -190,7 +190,7 @@ class UserSession(models.Model):
         ordering = ["-last_seen_at"]
 
     def __str__(self):
-        return f"{self.user.email} @ {self.ip or '?'}"
+        return f"{self.user.email} @ {self.ip_hash[:12] or '?'}"
 
     @property
     def device(self):

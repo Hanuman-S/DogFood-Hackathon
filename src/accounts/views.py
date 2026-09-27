@@ -14,6 +14,7 @@ from django.views.decorators.http import require_POST
 from accounts import services
 from accounts.forms import LoginForm, PasswordChangeForm, SignupForm, TokenForm
 from accounts.guards import login_required
+from core.net import ip_hash
 from accounts.models import ApiToken, UserSession
 from accounts.roles import PORTAL_URL, home_portal as home_portal_name
 from core.views import forbidden
@@ -105,6 +106,8 @@ def account_view(request, password_form=None, token_form=None, status=200):
         {
             "sessions": services.live_sessions(request.user),
             "current_session_key": request.session.session_key,
+            # Addresses are stored only as keyed hashes; the list can say "this network", not where.
+            "current_ip_hash": ip_hash(request),
             "tokens": ApiToken.objects.filter(user=request.user),
             # A freshly issued token is shown exactly once, then forgotten.
             "new_token": request.session.pop("new_token", None),
