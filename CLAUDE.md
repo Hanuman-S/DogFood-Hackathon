@@ -173,6 +173,14 @@ Tests use `config.settings_test`, forced via `--ds` in `pytest.ini` because the 
 exports `DJANGO_SETTINGS_MODULE` and the env var would otherwise outrank the ini setting.
 `DEBUG` stays False in tests so they exercise production error handling.
 
+### Testing with curl from Git Bash on Windows
+
+Set `MSYS_NO_PATHCONV=1` first. MSYS rewrites any argument that looks like a POSIX path, so
+`--data-urlencode "next=/profile"` is silently sent as `next=C:/Program Files/Git/profile`, and a
+container path like `/app/src/manage.py` becomes `C:/Program Files/Git/app/src/manage.py`. Both
+produce confusing failures that look like application bugs. One session was spent chasing a
+redirect "bug" that was entirely this.
+
 Generating a migration (no database needed):
 
 ```bash

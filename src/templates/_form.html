@@ -1,0 +1,34 @@
+{% comment %}
+Renders a form's fields and errors accessibly.
+
+Included rather than repeated in every template, and deliberately plain: Pico.css styles bare
+form elements, so the markup stays close to what a screen reader expects.
+
+`aria-invalid` and `aria-describedby` are set explicitly because Django does not, and a validation
+error that is only visible as red text is not an error a screen reader user is told about.
+{% endcomment %}
+
+{% if form.non_field_errors %}
+  <div class="flash flash-error" role="alert">
+    {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+  </div>
+{% endif %}
+
+{% for field in form %}
+  <label for="{{ field.id_for_label }}">
+    {{ field.label }}
+    {% if field.field.required %}<span aria-hidden="true">*</span>{% endif %}
+  </label>
+
+  {{ field }}
+
+  {% if field.help_text %}
+    <small id="{{ field.id_for_label }}_help">{{ field.help_text }}</small>
+  {% endif %}
+
+  {% if field.errors %}
+    <small id="{{ field.id_for_label }}_error" class="field-error" role="alert">
+      {{ field.errors|join:" " }}
+    </small>
+  {% endif %}
+{% endfor %}

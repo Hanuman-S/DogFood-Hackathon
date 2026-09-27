@@ -315,5 +315,60 @@ index stores `#!/bin/sh\n`). Extended anyway: explicit rules for `Dockerfile`, `
 `.gitattributes` cannot — a GitHub ZIP download, or a file round-tripped through a Windows editor
 — where the failure mode is `/bin/sh^M: bad interpreter` and no useful clue why.
 
-Next: phase 3 — auth, sessions, API token management UI, `core/permissions.py`, login
-throttling, audit-log wiring, and the permission-matrix tests against real URLs.
+### Phase 3 — Auth, permissions, audit wiring ✅ (2026-09-26)
+
+Done:
+
+- **`core/permissions.py`** — every authorization decision in the portal, as named policy functions
+  plus queryset scopers. No inline role checks anywhere else.
+- **`accounts/services.py`** — signup, login, logout, password change, token create/revoke. Views
+  are thin: validate the form, call a service, render.
+- **Login throttling**, DB-backed: 5 failures per (email, IP) per 15 minutes, counted from the
+  `login.failed` audit rows the brief already requires. One store, survives restarts, applies
+  across both gunicorn workers.
+- **Auth UI**: signup, login, logout (POST only), password change, and a profile page listing the
+  caller's per-event roles and their API tokens. A new token's plaintext is shown exactly once and
+  is not stored anywhere that survives a refresh.
+- **Audit log in the admin**, deliberately append-only: no add, no change, no delete, not even for
+  a platform admin.
+- **195 tests pass** (+83 this phase): 32 auth/throttle, 17 Bearer-token, 30 permission, plus a
+  `tests/factories.py` of builders that phases 4–6 reuse.
+
+Decisions worth defending:
+
+- **Throttle scope is (email, IP) together.** By email alone, anyone could lock a known user out of
+  their own account by failing five times on their behalf. By IP alone, one fumbled password locks
+  out everyone behind a shared NAT.
+- **`X-Forwarded-For` is ignored unless `TRUST_PROXY_HEADERS=1`.** It is client-supplied, so
+  trusting it by default would let anyone forge the IP the throttle counts against.
+- **Login is not an account-existence oracle**: unknown email and wrong password return the same
+  status and the same message. Tested.
+- **`next=` is validated as a same-site path**, so the login form cannot be used as an open
+  redirect. Absolute and protocol-relative URLs both fall back to `/`.
+
+#### A spec conflict I resolved, and you should know about
+
+The permission matrix lists **"no"** for both organizer and admin on *create/edit/submit project*,
+while §4's prose says "Admin can do everything". I implemented the matrix, because an admin able to
+rewrite a submission after the deadline would undermine the one guarantee this software exists to
+provide. Admins and organizers get full *visibility* (drafts included) and moderation (hide, flag
+duplicate) instead — they never author on a team's behalf. It is commented at
+`core/permissions.py:can_edit_project` and asserted by a test. Say the word if you want the looser
+reading instead.
+
+#### A "bug" that wasn't
+
+A live curl check showed `next=/profile` redirecting to `/` while the test passed. The cause was
+Git Bash: MSYS rewrote `/profile` into `C:/Program Files/Git/profile` before curl ever sent it, and
+`safe_next` correctly refused a non-relative path. The application was right the whole time — and
+the open-redirect guard even did the right thing with mangled input. Recorded in CLAUDE.md, since
+the same quirk had already cost time on container paths.
+
+Also noted: the session-scoped fixture import means ~40 organizer projects are always in the test
+database, so three visibility tests that asserted on whole-table contents passed alone and failed
+in the suite. Fixed by scoping them to their own rows, and one test now deliberately checks the
+object-level and queryset-level visibility rules agree across the entire real fixture set —
+including `prj_41`, the row where they are most likely to diverge.
+
+Next: phase 4 — organizer event/track/prize/question management, memberships, team creation,
+invite links, join/leave.

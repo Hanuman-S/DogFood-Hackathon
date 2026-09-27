@@ -11,7 +11,7 @@ contract.py` asserts each one answers in a single hop.
 """
 
 from django.http import HttpResponse
-from django.urls import path
+from django.urls import include, path
 
 from core.admin_site import portal_admin_site
 from core.views import healthz, home
@@ -27,6 +27,8 @@ urlpatterns = [
     path("", home, name="home"),
     path("healthz", healthz, name="healthz"),
     path("robots.txt", robots_txt),
+    # Auth and profile at the root: /login, /signup, /profile.
+    path("", include("accounts.urls")),
     # Admin is gated on is_platform_admin by PortalAdminSite.has_permission.
     path("admin/", portal_admin_site.urls),
 ]

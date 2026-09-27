@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Sign up · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <article>
+    <h1>Create an account</h1>
+    <p>
+      An account lets you register for an event, join or start a team, and submit a project.
+      Browsing the gallery needs no account at all.
+    </p>
+
+    <form method="post" action="/signup">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% include "_form.html" %}
+      <button type="submit">Create account</button>
+    </form>
+
+    <p>Already have an account? <a href="/login">Sign in</a>.</p>
+  </article>
+{% endblock %}

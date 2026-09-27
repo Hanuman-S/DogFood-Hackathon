@@ -39,6 +39,7 @@ class AuditAction(models.TextChoices):
     LOGIN_SUCCEEDED = "login.succeeded", "Login succeeded"
     LOGIN_FAILED = "login.failed", "Login failed"
     LOGIN_THROTTLED = "login.throttled", "Login refused by throttle"
+    LOGOUT = "account.logout", "Signed out"
     SIGNUP = "account.signup", "Account created"
     PASSWORD_CHANGED = "account.password_changed", "Password changed"
     TOKEN_CREATED = "token.created", "API token created"

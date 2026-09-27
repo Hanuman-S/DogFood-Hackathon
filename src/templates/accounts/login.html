@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in · {{ portal_name }}{% endblock %}
+
+{% block content %}
+  <article>
+    <h1>Sign in</h1>
+
+    <form method="post" action="/login">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% include "_form.html" %}
+      <button type="submit">Sign in</button>
+    </form>
+
+    <p>
+      No account? <a href="/signup{% if next != '/' %}?next={{ next|urlencode }}{% endif %}">Sign up</a>.
+    </p>
+    <p>
+      <small class="muted">
+        {# Stated rather than hidden: there is no password reset, because sending email would need #}
+        {# a hosted mail provider and the portal has to run with the network off. #}
+        Forgotten your password? This deployment sends no email, so ask an administrator to reset
+        it for you.
+      </small>
+    </p>
+  </article>
+{% endblock %}
