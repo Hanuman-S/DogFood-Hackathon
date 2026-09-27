@@ -308,7 +308,8 @@ def test_seeded_closed_event_refuses_the_checkers_post(settings):
 
     settings.DEMO_TOKENS = {"participant": "demo-participant-token"}
     call_command("seed_demo", stdout=StringIO())
+    before = Project.objects.filter(event__slug="dogfood-archive-2026").count()
     response = Client().post("/api/events/dogfood-archive-2026/projects", json.dumps({"name": "x"}),
                              content_type="application/json", HTTP_AUTHORIZATION="Bearer demo-participant-token")
     assert_closed(response)
-    assert Project.objects.filter(event__slug="dogfood-archive-2026", status=Status.SUBMITTED).count() == 1
+    assert Project.objects.filter(event__slug="dogfood-archive-2026").count() == before   # nothing was created

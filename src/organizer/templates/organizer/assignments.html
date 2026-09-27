@@ -11,101 +11,128 @@
       </span>
     </header>
     <div class="frame__body stack">
-      <table class="kv">
-        <tr><th scope="row">submitted projects</th><td>{{ rows|length }}</td></tr>
-        <tr><th scope="row">judges</th><td>{{ judges|length }}</td></tr>
-        <tr><th scope="row">target</th><td>{{ target }} reviews per project</td></tr>
-        <tr><th scope="row">below target</th><td>{% if short_count %}<span class="bright">{{ short_count }}</span>{% else %}none{% endif %}</td></tr>
-        <tr><th scope="row">judge groups</th><td>{% if islands <= 1 %}one connected group{% else %}<span class="bright">{{ islands }} separate groups</span> <span class="faint">(normalization cannot compare judges across them)</span>{% endif %}</td></tr>
-      </table>
-      {% if warnings %}<ul class="msgs">{% for w in warnings %}<li class="msg msg--warning">{{ w }}</li>{% endfor %}</ul>{% endif %}
-      <p class="dim">each project gets reviews up to the target from judges who cover its track, never from someone competing in the event or who declined it. load is balanced, judges are chosen at random among equals, and the seed is kept so any round can be reproduced. running again only tops up what is missing.</p>
+      <div class="stats">
+        <div class="stat"><span class="stat__value">{{ reviews_in }}<span class="faint">/{{ reviews_wanted }}</span></span><span class="stat__label">reviews in</span></div>
+        <div class="stat{% if short_count %} stat--warn{% endif %}"><span class="stat__value">{{ short_count }}</span><span class="stat__label">projects needing a judge</span></div>
+        <div class="stat"><span class="stat__value">{{ judges|length }}</span><span class="stat__label">judges</span></div>
+        <div class="stat{% if islands > 1 %} stat--warn{% endif %}"><span class="stat__value">{{ islands|default:1 }}</span><span class="stat__label">judge group{{ islands|pluralize }}</span></div>
+      </div>
+      {% if warnings or stuck_count %}
+      <ul class="msgs">
+        {% if stuck_count %}<li class="msg msg--warning">{{ stuck_count }} project{{ stuck_count|pluralize }} need{{ stuck_count|pluralize:"s," }} a judge but nobody is left who may take {{ stuck_count|pluralize:"it,them" }}. <a href="{% url 'organizer:event' event.slug %}#judges">add or invite a judge</a>, then press assign.</li>{% endif %}
+        {% for w in warnings %}<li class="msg msg--warning">{{ w }}</li>{% endfor %}
+      </ul>
+      {% endif %}
       {% include "_form_errors.html" %}
       <form class="form" method="post" novalidate>
         {% csrf_token %}
-        <div class="grid-3">
-          {% include "_field.html" with field=form.target cmd="assign --reviews" short=1 %}
+        <div class="assign-form">
+          {% include "_field.html" with field=form.target cmd="--reviews-per-project" short=1 %}
           {% include "_field.html" with field=form.max_load cmd="--max-per-judge" short=1 %}
-          {% include "_field.html" with field=form.seed cmd="--seed" short=1 %}
+          <div class="actions"><button class="btn" type="submit"{% if window.is_closed %} disabled{% endif %}>assign</button></div>
         </div>
-        <div class="actions"><button class="btn" type="submit"{% if window.is_closed %} disabled{% endif %}>assign</button>{% if window.is_closed %}<span class="faint">judging has ended: <a href="{% url 'organizer:event' event.slug %}#judging">extend judging</a> to change assignments.</span>{% endif %}</div>
+        <details class="more">
+          <summary>advanced: reproduce a round</summary>
+          {% include "_field.html" with field=form.seed cmd="--seed" short=1 %}
+        </details>
       </form>
+      {% if window.is_closed %}<p class="faint">judging has ended, so assignments are frozen. <a href="{% url 'organizer:event' event.slug %}#judging">extend judging</a> to change them.</p>{% endif %}
+      <details class="more">
+        <summary>how assignment works</summary>
+        <p class="dim">assign fills every project up to the reviews-per-project target, and only tops up what is missing, so pressing it again is safe. a judge only gets projects in tracks they cover, never one they declined, and loads are balanced; among equal judges the choice is random, with the seed saved so a round can be reproduced exactly.</p>
+      </details>
     </div>
   </section>
 
   {% if declined %}
   <section class="frame" id="declined">
-    <header class="frame__bar"><h2 class="frame__title">declined: conflict of interest</h2><span class="frame__meta">only organizers see the reasons</span></header>
+    <header class="frame__bar"><h2 class="frame__title">declined</h2><span class="frame__meta">{% if open_declines %}{{ open_declines }} waiting &middot; {% endif %}only organizers see the reasons</span></header>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
-        <thead><tr><th>project</th><th>judge</th><th>reason</th><th>when</th><th>now</th></tr></thead>
+        <thead><tr><th>project</th><th>declined by</th><th>reason</th><th>next</th></tr></thead>
         <tbody>
-        {% for a, covered in declined %}
+        {% for a, step in declined %}
           <tr>
-            <td><a href="#project-{{ a.project_id }}">{{ a.project.name }}</a></td>
+            <td><a href="#project-{{ a.project_id }}">{{ a.project.name }}</a><br><span class="faint">{{ a.status_changed_at|utc }}</span></td>
             <td>{{ a.judge.user.name }}</td>
             <td class="dim">{{ a.decline_reason }}</td>
-            <td class="faint">{{ a.status_changed_at|utc }}</td>
-            <td>{% if covered %}<span class="badge">reassigned</span>{% else %}<span class="badge badge--warn">needs a judge</span>{% endif %}</td>
+            <td>
+              {% if step == "covered" %}<span class="badge">reassigned</span>
+              {% elif step == "assign" %}<span class="badge badge--warn">needs a judge</span> <span class="faint">press assign</span>
+              {% else %}<span class="badge badge--warn">no judge left</span> <a href="{% url 'organizer:event' event.slug %}#judges">add or invite one</a>{% endif %}
+            </td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    <div class="frame__body"><p class="faint">press assign above to fill these gaps; the judge who declined is never given the project again.</p></div>
   </section>
   {% endif %}
 
   <section class="frame" id="projects">
-    <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">below target first</span></header>
-    <div class="frame__body frame__body--flush table-wrap">
-      <table class="table">
-        <thead><tr><th>project</th><th class="num">reviews</th><th>judges</th><th>add a judge</th></tr></thead>
-        <tbody>
-        {% for r in rows %}
-          <tr id="project-{{ r.project.pk }}">
-            <td>{{ r.project.name }}<br><span class="faint">{{ r.project.track.name|default:"no track" }}</span></td>
-            <td class="num{% if r.count < target %} bright{% endif %}">{{ r.count }}/{{ target }}<br><span class="faint">{{ r.submitted }} in</span></td>
-            <td>
-              {% for a in r.assignments %}
-              <div class="assignee">
-                <span>{{ a.judge.user.name }} <span class="badge{% if a.review == 'submitted' %} badge--on{% endif %}">{{ a.review }}</span>{% if a.source == 'import' %} <span class="faint">imported</span>{% endif %}</span>
-                {% if a.review == "not started" and not window.is_closed %}
-                <form class="inline-form" method="post" action="{% url 'organizer:assignment_move' event.slug a.pk %}">
-                  {% csrf_token %}
-                  <label class="visually-hidden" for="move-{{ a.pk }}">move to</label>
-                  <select id="move-{{ a.pk }}" name="judge" class="select--small">{% for j in r.eligible %}<option value="{{ j.pk }}">{{ j.user.name }} ({{ load|get_item:j.pk|default:0 }})</option>{% endfor %}</select>
-                  <button class="btn btn--small btn--ghost" type="submit"{% if not r.eligible %} disabled{% endif %}>move</button>
-                </form>
-                <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
+    <header class="frame__bar"><h2 class="frame__title">projects</h2><span class="frame__meta">{{ rows|length }} &middot; the ones needing a judge first</span></header>
+    <div class="assign-list">
+    {% for r in rows %}
+      <article class="assign-row" id="project-{{ r.project.pk }}">
+        <div class="assign-row__head">
+          <div><span class="bright">{{ r.project.name }}</span> <span class="faint">{{ r.project.track.name|default:"no track" }}</span></div>
+          <div class="assign-row__count">{{ r.submitted }} of {{ target }} review{{ target|pluralize }} in</div>
+          <div class="assign-row__state">
+            {% if r.state == "done" %}<span class="badge badge--on">done</span>
+            {% elif r.state == "assigned" %}<span class="badge">fully assigned</span>
+            {% elif r.state == "fillable" %}<span class="badge badge--warn">needs {{ r.needed }} more</span>
+            {% else %}<span class="badge badge--warn">needs {{ r.needed }} more &middot; no judge left</span>{% endif %}
+          </div>
+        </div>
+        <div class="chips">
+          {% for a in r.assignments %}<span class="chip{% if a.review == 'submitted' %} chip--on{% endif %}">{{ a.judge.user.name }} <span class="faint">&middot; {{ a.review }}</span></span>{% empty %}<span class="faint">no judge yet</span>{% endfor %}
+        </div>
+        {% if not window.is_closed %}
+        <details class="manage">
+          <summary>manage</summary>
+          <div class="stack">
+            {% for a in r.assignments %}
+              <div class="manage__line">
+                <span>{{ a.judge.user.name }} <span class="faint">&middot; {{ a.review }}</span></span>
+                {% if a.review == "not started" %}
+                  {% if r.candidates %}
+                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_move' event.slug a.pk %}">
+                    {% csrf_token %}
+                    <label class="visually-hidden" for="move-{{ a.pk }}">move to</label>
+                    <select id="move-{{ a.pk }}" name="judge" class="select--small">{% for c in r.candidates %}<option value="{{ c.judge.pk }}">{{ c.judge.user.name }} &middot; {{ c.load }} assigned</option>{% endfor %}</select>
+                    <button class="btn btn--small btn--ghost" type="submit">move</button>
+                  </form>
+                  {% endif %}
+                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
+                {% else %}
+                  <span class="faint">started: stays with this judge</span>
                 {% endif %}
               </div>
-              {% empty %}<span class="faint">nobody yet</span>{% endfor %}
-            </td>
-            <td>
-              {% if r.eligible and not window.is_closed %}
-              <form class="inline-form" method="post" action="{% url 'organizer:assignment_add' event.slug %}">
-                {% csrf_token %}
-                <input type="hidden" name="project" value="{{ r.project.pk }}">
-                <label class="visually-hidden" for="add-{{ r.project.pk }}">judge</label>
-                <select id="add-{{ r.project.pk }}" name="judge" class="select--small">{% for j in r.eligible %}<option value="{{ j.pk }}">{{ j.user.name }} ({{ load|get_item:j.pk|default:0 }})</option>{% endfor %}</select>
-                <button class="btn btn--small" type="submit">add</button>
-              </form>
-              {% else %}<span class="faint">{% if window.is_closed %}frozen{% else %}no other eligible judge{% endif %}</span>{% endif %}
-            </td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="4" class="faint">no submitted projects yet.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
+            {% endfor %}
+            {% if r.candidates %}
+            <form class="inline-form manage__line" method="post" action="{% url 'organizer:assignment_add' event.slug %}">
+              {% csrf_token %}
+              <input type="hidden" name="project" value="{{ r.project.pk }}">
+              <label for="add-{{ r.project.pk }}" class="faint">add</label>
+              <select id="add-{{ r.project.pk }}" name="judge" class="select--small">{% for c in r.candidates %}<option value="{{ c.judge.pk }}">{{ c.judge.user.name }} &middot; {{ c.load }} assigned</option>{% endfor %}</select>
+              <button class="btn btn--small" type="submit">add judge</button>
+            </form>
+            {% else %}
+            <p class="faint">no other judge can take this project: everyone who covers {{ r.project.track.name|default:"it" }} is already on it or declined it. <a href="{% url 'organizer:event' event.slug %}#judges">add or invite a judge</a> to move or add reviews.</p>
+            {% endif %}
+          </div>
+        </details>
+        {% endif %}
+      </article>
+    {% empty %}
+      <p class="faint assign-row">no submitted projects yet.</p>
+    {% endfor %}
     </div>
-    <div class="frame__body"><p class="faint">numbers in brackets are each judge's current load. a judge who has started a review keeps it: only unstarted reviews can be moved or withdrawn.</p></div>
   </section>
 
   {% if rounds %}
-  <section class="frame" id="rounds">
-    <header class="frame__bar"><h2 class="frame__title">rounds</h2><span class="frame__meta">latest first</span></header>
+  <details class="frame more" id="rounds">
+    <summary class="frame__bar"><span class="frame__title">round history</span><span class="frame__meta">{{ rounds|length }}</span></summary>
     <div class="frame__body frame__body--flush table-wrap">
       <table class="table">
         <thead><tr><th>round</th><th>kind</th><th class="num">target</th><th class="num">added</th><th class="num">still missing</th><th>seed</th><th>by</th></tr></thead>
@@ -124,7 +151,7 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
   {% endif %}
 
   <p class="actions">

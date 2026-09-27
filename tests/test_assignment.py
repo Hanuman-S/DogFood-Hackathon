@@ -271,7 +271,7 @@ def test_assigning_from_the_page(build, client_for):
     response = client.post(f"/organizer/events/{event.slug}/assignments", {"target": "2", "max_load": "", "seed": "7"}, follow=True)
     assert b"6 reviews assigned" in response.content and b"seed 7" in response.content
     page = client.get(f"/organizer/events/{event.slug}/assignments").content.decode()
-    assert "2/2" in page and "not started" in page
+    assert "0 of 2 reviews in" in page and "fully assigned" in page and "not started" in page
 
 
 def test_manual_changes_from_the_page(build, client_for):

@@ -760,3 +760,34 @@ progress.meter::-moz-progress-bar { background: var(--accent); }
   }
 }
 
+
+/* --- assignment page: stat strip, compact rows, collapsible drawers -------- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.stat { display: grid; gap: 2px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.stat__value { font-size: 22px; color: var(--fg-bright); text-shadow: var(--glow); }
+.stat__label { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 1px; }
+.stat--warn { border-color: var(--err); }
+.stat--warn .stat__value { color: var(--err); }
+.assign-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 18px; align-items: end; }
+.assign-list { display: grid; }
+.assign-row { display: grid; gap: 8px; padding: 14px 18px; border-bottom: 1px dashed var(--line-soft); }
+.assign-row:last-child { border-bottom: 0; }
+.assign-row__head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 18px; align-items: baseline; }
+.assign-row__count { font-size: 13px; color: var(--fg-dim); white-space: nowrap; }
+.assign-row__state { text-align: right; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--fg-bright); }
+.chip--on { border-color: var(--accent); }
+details.manage > summary, details.more > summary { cursor: pointer; font-size: 12px; color: var(--fg-dim); list-style: none; width: fit-content; }
+details.manage > summary::before, details.more > summary::before { content: "[+] "; }
+details.manage[open] > summary::before, details.more[open] > summary::before { content: "[-] "; }
+details.manage > summary:hover, details.more > summary:hover { color: var(--fg-bright); }
+details.manage[open] { padding: 10px 0 2px; }
+details.manage > .stack { margin-top: 10px; padding-left: 14px; border-left: 1px dashed var(--line); }
+.manage__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+details.frame > summary.frame__bar { cursor: pointer; list-style: none; }
+details.frame > summary.frame__bar::-webkit-details-marker, details.manage > summary::-webkit-details-marker, details.more > summary::-webkit-details-marker { display: none; }
+@media (max-width: 640px) {
+  .assign-row__head { grid-template-columns: 1fr; }
+  .assign-row__state { text-align: left; }
+}

@@ -1,7 +1,7 @@
 DOGFOOD 2026 acceptance report
 portal: http://localhost:8080
 claimed: T1
-fixtures: C:\Users\anura\Desktop\DogFood\DogFood_Hackathon\acceptance\fixtures.json
+fixtures: C:\Users\anura\Desktop\DogFood\dogfood-clean\acceptance\fixtures.json
 
 T1  gallery is public ................. PASS
 T1  project from fixtures shown ....... PASS

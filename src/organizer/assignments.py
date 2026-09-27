@@ -62,32 +62,58 @@ def _page(request, event, form=None, status=200):
     rows = []
     for project in board.projects:
         live = assignments[project.pk]
+        # Judges who may still take this project: they cover its track, are not on it already,
+        # and did not decline it. The same list serves "add" and "move to".
+        candidates = [
+            {"judge": judges[j], "load": board.load.get(j, 0)} for j in board.eligible(project)
+        ]
+        candidates.sort(key=lambda c: (c["load"], c["judge"].user.name.lower()))
+        needed = max(0, target - len(live))
+        submitted = sum(1 for a in live if a.review == "submitted")
+        if needed == 0:
+            state = "done" if submitted >= target else "assigned"
+        else:
+            state = "fillable" if candidates else "stuck"
         rows.append({
             "project": project,
             "assignments": live,
-            "count": len(live),
-            "submitted": sum(1 for a in live if a.review == "submitted"),
-            "eligible": [judges[j] for j in board.eligible(project)],
+            "assigned": len(live),
+            "submitted": submitted,
+            "needed": needed,
+            "candidates": candidates,
+            "state": state,
         })
-    rows.sort(key=lambda r: (r["count"] >= target, r["project"].track.name if r["project"].track else "", r["project"].name))
+    order = {"stuck": 0, "fillable": 1, "assigned": 2, "done": 3}
+    rows.sort(key=lambda r: (order[r["state"]], r["project"].track.name if r["project"].track else "",
+                             r["project"].name.lower()))
+    by_project = {r["project"].pk: r for r in rows}
     islands = board.islands(board.active)
-    declined = (
-        Assignment.objects.filter(project__event=event, status=AssignmentStatus.DECLINED)
-        .select_related("judge__user", "project").order_by("-status_changed_at")
-    )
-    covered = {r["project"].pk: r["count"] >= target for r in rows}
+    declined = []
+    for a in (Assignment.objects.filter(project__event=event, status=AssignmentStatus.DECLINED)
+              .select_related("judge__user", "project").order_by("-status_changed_at")):
+        row = by_project.get(a.project_id)
+        if row is None or row["needed"] == 0:
+            next_step = "covered"
+        elif row["candidates"]:
+            next_step = "assign"
+        else:
+            next_step = "no_judge"
+        declined.append((a, next_step))
     return render(request, "organizer/assignments.html", {
         "event": event,
         "form": form or AssignmentRunForm(initial={"target": target}),
         "target": target,
         "rows": rows,
-        "short_count": sum(1 for r in rows if r["count"] < target),
+        "short_count": sum(1 for r in rows if r["needed"]),
+        "stuck_count": sum(1 for r in rows if r["state"] == "stuck"),
+        "reviews_in": sum(min(r["submitted"], target) for r in rows),
+        "reviews_wanted": target * len(rows),
         "judges": board.judges,
-        "load": board.load,
         "warnings": capacity_warnings(board, target, None),
         "islands": len(islands),
         "rounds": event.assignment_rounds.select_related("created_by")[:10],
-        "declined": [(a, covered.get(a.project_id, False)) for a in declined],
+        "declined": declined,
+        "open_declines": sum(1 for _, step in declined if step != "covered"),
         "window": judging_window(event),
     }, status=status)
 
