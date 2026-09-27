@@ -1,0 +1,106 @@
+# One command to a working, migrated, seeded portal:
+#
+#     docker compose up
+#
+# No .env file is required. Every variable below has a working default inline, and
+# .env.example documents the same set for anyone who wants to override them. Compose reads a
+# .env file automatically if one happens to exist, so an operator can drop one in without
+# editing this file.
+#
+# Runtime network use: none. Both containers talk to each other over the compose network and
+# to nothing else. Building the web image pulls base images and pinned wheels; that is the
+# only step that needs the internet, and the README says so.
+
+name: dogfood
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dogfood}
+      POSTGRES_USER: ${POSTGRES_USER:-dogfood}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dogfood}
+      # Deterministic collation for the gallery's name sort, independent of the host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-d`/`-U` matter: the bare default probes a `postgres` database and role that do not
+      # exist here, which reports healthy-ish for the wrong target.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dogfood} -d ${POSTGRES_DB:-dogfood}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    # The database port is deliberately NOT published to the host. Nothing outside the
+    # compose network needs it, and publishing 5432 with a default password would be an
+    # invitation. Use `docker compose exec db psql` for a shell.
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # --- database ---
+      POSTGRES_DB: ${POSTGRES_DB:-dogfood}
+      POSTGRES_USER: ${POSTGRES_USER:-dogfood}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dogfood}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+
+      # --- django ---
+      # This key is insecure ON PURPOSE and is documented as such. A real deployment must
+      # set DJANGO_SECRET_KEY; see README.md and .env.example.
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-compose-default-change-me-before-production}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],0.0.0.0,web}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      DJANGO_STATIC_ROOT: /app/staticfiles
+      DJANGO_MEDIA_ROOT: /app/media
+      # Plain http on localhost, so secure cookies would break login here. Set to 1 behind
+      # TLS.
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+
+      # --- portal ---
+      # 1 = seed demo accounts with published passwords and fixed API tokens. Convenient for
+      # a judge, unacceptable for a real event. Set to 0 in production.
+      DEMO_MODE: ${DEMO_MODE:-1}
+      FIXTURES_PATH: /app/acceptance/fixtures.json
+
+    ports:
+      # 8080 on the host because that is what .dogfood.toml and the README advertise;
+      # gunicorn itself listens on 8000 inside the container.
+      - "${PORTAL_PORT:-8080}:8000"
+
+    volumes:
+      # Uploaded project images. A named volume rather than a bind mount so the non-root
+      # container user owns it regardless of host permissions, and so image uploads survive
+      # `docker compose up --build`. (`down -v` removes it, as documented.)
+      - media:/app/media
+      # The organizer fixture file, read-only. Mounted rather than baked into the image so
+      # that the file the portal imports is provably the one in the repo -- and so the
+      # container cannot modify the organizers' file even if it tried.
+      - ./acceptance/fixtures.json:/app/acceptance/fixtures.json:ro
+
+    healthcheck:
+      # /healthz touches the database, so "healthy" means the portal can actually serve a
+      # page, not merely that gunicorn bound a port. No curl in the slim image, so this uses
+      # Python, which is certain to be present.
+      test:
+        ["CMD-SHELL",
+         "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 40s
+
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:

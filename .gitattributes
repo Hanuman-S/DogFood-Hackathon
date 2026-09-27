@@ -1,0 +1,25 @@
+# Line endings are normalized to LF in the repository and on checkout, on every platform.
+#
+# This is not cosmetic. `docker/entrypoint.sh` runs inside a Linux container: if Git checks it
+# out with CRLF endings on a Windows clone, the shebang becomes `#!/bin/sh\r` and the container
+# dies with a baffling "no such file or directory". Anyone who clones this repo on Windows and
+# runs `docker compose up` would hit that, which is exactly the adoption path that has to work.
+* text=auto eol=lf
+
+# Shell scripts must be LF regardless of any local core.autocrlf setting.
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+
+# Keep the vendored minified assets byte-identical to upstream so the licence NOTICE claim
+# ("unmodified from upstream") stays true and a checksum against the published file matches.
+src/static/vendor/*.css -text
+src/static/vendor/*.js -text
+
+# The organizer files are inputs we must not alter in any way, including line endings.
+acceptance/** -text
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary

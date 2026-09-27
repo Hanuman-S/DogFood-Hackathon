@@ -1,0 +1,24 @@
+.git/
+.gitignore
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+staticfiles/
+media/
+.pytest_cache/
+.coverage
+htmlcov/
+
+.env
+
+# the fixtures file is bind-mounted read-only by compose, not baked into the image
+acceptance/
+
+*.md
+!README.md
+
+.idea/
+.vscode/

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Inline SVG favicon so the browser never requests an icon from anywhere else. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dogfood portal">
+  <rect width="64" height="64" rx="12" fill="#1d6b2b"/>
+  <path d="M16 34l10 10 22-24" fill="none" stroke="#ffffff" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

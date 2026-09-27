@@ -1,1 +1,2 @@
-# DogFood-Hackathon
+# DogFood_Hackathon
+DogFood Hackathon
