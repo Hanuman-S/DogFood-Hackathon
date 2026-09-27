@@ -102,10 +102,11 @@ class InviteAccountForm(SignupForm):
 
     duplicate_email_message = "An account with this email already exists. Log in instead."
 
-    def __init__(self, *args, email, **kwargs):
+    def __init__(self, *args, email=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["email"].initial = email
-        self.fields["email"].disabled = True
+        if email:  # an invite for one person; an open link (email=None) lets them type their own
+            self.fields["email"].initial = email
+            self.fields["email"].disabled = True
         self.fields["name"].widget.attrs["placeholder"] = "your name as organizers should see it"
 
 

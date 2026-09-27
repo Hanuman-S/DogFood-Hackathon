@@ -243,16 +243,18 @@ def judge_invite_problem(event, user):
     return ""
 
 
-def create_judge_invite(request, event, email, tracks=()):
-    """A one-time link that makes whoever holds it -- signed in as `email` -- a judge of `event`.
+def create_judge_invite(request, event, email="", tracks=()):
+    """A one-time link that makes its holder a judge of `event`.
 
-    Returns (invite, raw_token). Only the token's SHA-256 digest is stored, so the link can be
-    shown exactly once. Inviting the same email again revokes the pending link first.
+    With `email`, only that person can accept it; inviting the same email again revokes their
+    pending link first. With no email it is an **open** link that the first person to accept it
+    uses up (see JudgeInvite). Returns (invite, raw_token). Only the token's SHA-256 digest is
+    stored, so the link can be shown exactly once.
     """
     from accounts.models import digest_token, normalize_email
 
-    email = normalize_email(email)
-    existing = User.objects.filter(email=email).first()
+    email = normalize_email(email) if (email or "").strip() else ""
+    existing = User.objects.filter(email=email).first() if email else None
     if existing is not None:
         problem = judge_invite_problem(event, existing)
         if problem:
@@ -262,7 +264,7 @@ def create_judge_invite(request, event, email, tracks=()):
     with transaction.atomic():
         replaced = JudgeInvite.objects.filter(
             event=event, email=email, accepted_at__isnull=True, revoked_at__isnull=True
-        ).update(revoked_at=now)
+        ).update(revoked_at=now) if email else 0
         invite = JudgeInvite.objects.create(
             event=event, email=email, digest=digest_token(raw), created_by=request.user,
             expires_at=now + INVITE_TTL,
@@ -270,7 +272,7 @@ def create_judge_invite(request, event, email, tracks=()):
         invite.tracks.set(tracks)
     audit.record(
         AuditAction.JUDGE_INVITED, request=request, subject=event.slug, email=email,
-        tracks=[t.name for t in tracks], expires=invite.expires_at.isoformat(),
+        open_link=not email, tracks=[t.name for t in tracks], expires=invite.expires_at.isoformat(),
         replaced_pending=replaced, has_account=existing is not None,
     )
     return invite, raw
@@ -322,7 +324,7 @@ def accept_judge_invite(request, raw, user):
             state = judge_invite_state(invite)
             if state != "open":
                 raise _InviteRefused(invite, f"This invite link has been {state}.")
-            if user.email != invite.email:
+            if invite.email and user.email != invite.email:
                 raise _InviteRefused(
                     invite, f"This invite is for {invite.email}. Log out, then open the link again."
                 )
@@ -352,6 +354,7 @@ def accept_judge_invite(request, raw, user):
     audit.record(
         AuditAction.JUDGE_INVITE_ACCEPTED, request=request, actor=user, subject=invite.event.slug,
         email=user.email, invited_by=getattr(invite.created_by, "email", ""),
+        open_link=not invite.email,
     )
     audit.record(
         AuditAction.JUDGE_ADDED, request=request, actor=user, subject=invite.event.slug,
@@ -365,7 +368,8 @@ def revoke_judge_invite(request, event, invite):
         raise EventRuleError("That invite is no longer pending.")
     invite.revoked_at = timezone.now()
     invite.save(update_fields=["revoked_at"])
-    audit.record(AuditAction.JUDGE_INVITE_REVOKED, request=request, subject=event.slug, email=invite.email)
+    audit.record(AuditAction.JUDGE_INVITE_REVOKED, request=request, subject=event.slug,
+                 email=invite.email, open_link=not invite.email)
 
 
 def remove_judge(request, event, membership):

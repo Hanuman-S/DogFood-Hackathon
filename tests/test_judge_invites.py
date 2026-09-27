@@ -194,3 +194,73 @@ def test_a_weak_password_is_refused_and_nothing_is_created(event, client_for):
     assert response.status_code == 400
     assert not User.objects.filter(email="new.judge@example.org").exists()
     assert judge_invite_is_open(path)
+
+
+# --- open links (no email) ------------------------------------------------------------------------
+
+
+def test_an_open_link_needs_no_email_and_is_marked_as_open(event, client_for):
+    response, path = create_invite(client_for(event.organizer), event, email="")
+    assert response.status_code == 200 and path is not None
+    assert b"anyone with the link" in response.content
+    invite = JudgeInvite.objects.get()
+    assert invite.email == "" and invite.is_open_link
+    assert AuditLog.objects.filter(action=AuditAction.JUDGE_INVITED, detail__open_link=True).exists()
+    page = client_for(event.organizer).get(f"/organizer/events/{event.slug}/").content.decode()
+    assert "open link" in page
+
+
+def test_several_open_links_can_be_pending_at_once(event, client_for):
+    client = client_for(event.organizer)
+    _, first = create_invite(client, event, email="")
+    _, second = create_invite(client, event, email="")
+    assert first != second and Client().get(first).status_code == 200 and Client().get(second).status_code == 200
+
+
+def test_a_new_person_uses_an_open_link_with_their_own_email(event, client_for):
+    _, path = create_invite(client_for(event.organizer), event, email="")
+    page = Client().get(path)
+    assert b"whoever accepts this link first" in page.content and b"log in" in page.content
+    client = Client()
+    response = client.post(path, {"name": "Grace", "email": "grace@example.org",
+                                  "password1": NEW_PASSWORD, "password2": NEW_PASSWORD})
+    assert response.status_code == 302
+    grace = User.objects.get(email="grace@example.org")
+    assert EventMembership.objects.filter(event=event, user=grace, role=Role.JUDGE).exists()
+    assert JudgeInvite.objects.get().accepted_by == grace
+    page = client_for(event.organizer).get(f"/organizer/events/{event.slug}/").content.decode()
+    assert "used by grace@example.org" in page
+
+
+def test_an_open_link_works_once(event, client_for, make_user):
+    _, path = create_invite(client_for(event.organizer), event, email="")
+    first, second = make_user(email="first@example.org"), make_user(email="second@example.org")
+    assert client_for(first).post(path).status_code == 302
+    client_for(second).post(path)
+    assert not EventMembership.objects.filter(event=event, user=second, role=Role.JUDGE).exists()
+    assert Client().get(path).status_code == 410
+
+
+def test_an_existing_account_accepts_an_open_link_directly(event, client_for, make_user):
+    ada = make_user(email="ada@example.org")
+    _, path = create_invite(client_for(event.organizer), event, email="")
+    client = client_for(ada)
+    assert b"accept: judge" in client.get(path).content
+    assert client.post(path).status_code == 302
+    assert EventMembership.objects.filter(event=event, user=ada, role=Role.JUDGE).exists()
+
+
+def test_an_open_link_still_refuses_a_competitor(event, client_for, make_user, make_team):
+    competitor = make_user(email="competitor@example.org")
+    make_team(event, captain=competitor)
+    _, path = create_invite(client_for(event.organizer), event, email="")
+    client = client_for(competitor)
+    assert b"conflict of interest" in client.get(path).content
+    client.post(path)
+    assert not EventMembership.objects.filter(event=event, user=competitor, role=Role.JUDGE).exists()
+    assert judge_invite_is_open(path)
+
+
+def test_add_judge_still_needs_an_email(event, client_for):
+    response = client_for(event.organizer).post(f"/organizer/events/{event.slug}/judges", {"email": ""})
+    assert response.status_code == 400 and b"invite by link" in response.content

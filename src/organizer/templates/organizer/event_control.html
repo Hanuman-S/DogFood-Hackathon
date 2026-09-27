@@ -343,7 +343,7 @@
         <div class="actions">
           <button class="btn" type="submit">add judge</button>
           <button class="btn btn--ghost" type="submit" formaction="{% url 'organizer:judge_invite_create' event.slug %}">invite by link</button>
-          <span class="faint">add judge: the email already has an account. invite by link: a one-time link, valid 7 days, that also lets them create the account.</span>
+          <span class="faint">add judge: the email of an existing account. invite by link: a one-time link, valid 7 days, that also lets them create an account; leave the email empty for an open link that anyone you send it to can use once.</span>
         </div>
       </form>
     </div>
@@ -354,7 +354,7 @@
         <tbody>
         {% for inv, state in judge_invites %}
           <tr>
-            <td>{{ inv.email }}</td>
+            <td>{% if inv.email %}{{ inv.email }}{% else %}<span class="dim">open link</span>{% if inv.accepted_by %} <span class="faint">&middot; used by {{ inv.accepted_by.email }}</span>{% endif %}{% endif %}</td>
             <td class="dim">{% for t in inv.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td>
             <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span> <span class="faint">{{ inv.accepted_at|utc }}</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
             <td class="dim">{{ inv.created_by.name|default:"--" }}</td>

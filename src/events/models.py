@@ -252,8 +252,14 @@ class JudgeInviteQuerySet(models.QuerySet):
 
 
 class JudgeInvite(models.Model):
-    """A one-time link that makes whoever opens it (and signs up or logs in as `email`) a judge
-    of `event`, covering `tracks` (none = every track).
+    """A one-time link that makes its holder a judge of `event`, covering `tracks` (none = every
+    track).
+
+    With an `email`, only that person can accept it (they log in as it, or create it from the
+    link). Without one it is an **open** link: the first person to accept it -- any account, or a
+    new one made from the link -- becomes the judge, and the link is then used up. Open links are
+    for organizers who do not know a judge's email; the trade-off is that whoever holds the link
+    can use it, so it is shown once, expires, can be revoked, and says who accepted it.
 
     Only a SHA-256 digest of the token is stored, like API tokens: the raw link is shown to the
     organizer once. Accepting, revoking and expiry are timestamps, never deletes, so the audit
@@ -261,7 +267,8 @@ class JudgeInvite(models.Model):
     """
 
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="judge_invites")
-    email = models.EmailField(max_length=254)
+    # Empty for an open link (anyone may accept it, once).
+    email = models.EmailField(max_length=254, blank=True)
     tracks = models.ManyToManyField("Track", blank=True, related_name="+")
     digest = models.CharField(max_length=64, unique=True)
     created_by = models.ForeignKey(
@@ -281,9 +288,10 @@ class JudgeInvite(models.Model):
         ordering = ["-created_at", "-id"]
         constraints = [
             # One pending invite per person per event: re-inviting revokes the old link first.
+            # Open links (no email) are not limited.
             models.UniqueConstraint(
                 fields=["event", "email"],
-                condition=Q(accepted_at__isnull=True, revoked_at__isnull=True),
+                condition=Q(accepted_at__isnull=True, revoked_at__isnull=True) & ~Q(email=""),
                 name="judge_invite_one_pending_per_email",
             ),
             models.CheckConstraint(
@@ -293,7 +301,11 @@ class JudgeInvite(models.Model):
         ]
 
     def __str__(self):
-        return f"judge invite for {self.email} to {self.event.slug}"
+        return f"judge invite for {self.email or 'anyone (open link)'} to {self.event.slug}"
+
+    @property
+    def is_open_link(self):
+        return not self.email
 
 
 class Track(models.Model):

@@ -11,11 +11,15 @@
     </div>
     <p class="msg msg--warning">copy it now: this is the only time the link is shown. only a hash of it is stored.</p>
     <table class="kv">
-      <tr><th scope="row">for</th><td>{{ invite.email }}</td></tr>
+      <tr><th scope="row">for</th><td>{% if invite.email %}{{ invite.email }}{% else %}anyone with the link <span class="faint">(open link)</span>{% endif %}</td></tr>
       <tr><th scope="row">tracks</th><td>{% for t in invite.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>
       <tr><th scope="row">valid until</th><td>{{ invite.expires_at|utc }}</td></tr>
     </table>
+    {% if invite.email %}
     <p class="dim">send it to them however you like. it works once, only for {{ invite.email }}: they log in as that email, or create the account from the link. inviting the same email again cancels this link.</p>
+    {% else %}
+    <p class="dim">an open link: the first person to accept it becomes a judge, with their own account or one they create from the link, and then it stops working. send it only to the judge; if it leaks, revoke it from the judges list. the list shows who accepted it.</p>
+    {% endif %}
     <div class="actions"><a class="btn" href="{% url 'organizer:event' event.slug %}#judges">back to {{ event.name }}</a></div>
   </div>
 </section>

@@ -17,7 +17,7 @@
       <tr><th scope="row">event</th><td>{{ event.name }}</td></tr>
       <tr><th scope="row">role</th><td>judge</td></tr>
       <tr><th scope="row">tracks</th><td>{% for t in tracks %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td></tr>
-      <tr><th scope="row">for</th><td>{{ invite.email }}</td></tr>
+      <tr><th scope="row">for</th><td>{% if open_link %}whoever accepts this link first <span class="faint">(single use)</span>{% else %}{{ invite.email }}{% endif %}</td></tr>
       <tr><th scope="row">invited by</th><td>{{ invite.created_by.name|default:"an organizer" }}</td></tr>
       <tr><th scope="row">valid until</th><td>{{ invite.expires_at|utc }}</td></tr>
     </table>
@@ -34,7 +34,11 @@
       <p class="dim">{{ invite.email }} already has an account. log in as {{ invite.email }}, and you will come back here to accept.</p>
       <div class="actions"><a class="btn" href="{{ login_url }}">log in</a></div>
     {% else %}
+      {% if open_link %}
+      <p class="dim">already have an account? <a href="{{ login_url }}">log in</a> and you will come back here to accept. otherwise, create one:</p>
+      {% else %}
       <p class="dim">create your account to accept. the email is the one you were invited as.</p>
+      {% endif %}
       {% include "_form_errors.html" %}
       <form class="form" method="post" novalidate>
         {% csrf_token %}

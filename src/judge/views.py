@@ -55,6 +55,9 @@ def invite(request, token):
     * signed out, and the email already has an account: a link to log in and come back;
     * signed out, no account yet: a form to create one (email fixed), which accepts in one step.
       This works even when public sign-up is closed: the organizer's invite is the permission.
+
+    An **open** link (no email) takes anyone, once: a signed-in account can accept it directly,
+    and a visitor either logs in or creates an account with their own email from the link.
     """
     invite = event_services.find_judge_invite(token)
     state = event_services.judge_invite_state(invite) if invite else "invalid"
@@ -63,22 +66,24 @@ def invite(request, token):
                       status=404 if invite is None else 410)
 
     user = request.user if request.user.is_authenticated else None
-    has_account = user is not None or User.objects.filter(email=invite.email).exists()
+    open_link = not invite.email
+    has_account = user is not None or (not open_link and User.objects.filter(email=invite.email).exists())
     problem = ""
     if user is not None:
-        if user.email != invite.email:
+        if not open_link and user.email != invite.email:
             problem = (f"this invite is for {invite.email}, and you are logged in as {user.email}. "
                        "log out, then open the link again.")
         else:
             problem = event_services.judge_invite_problem(invite.event, user)
-    form = None if has_account else InviteAccountForm(request.POST or None, email=invite.email)
+    form = None if has_account else InviteAccountForm(request.POST or None, email=invite.email or None)
     status = 200
 
     if request.method == "POST":
         if user is None and form is not None:
             if form.is_valid():
                 user = account_services.register_participant(
-                    request, name=form.cleaned_data["name"], email=invite.email,
+                    request, name=form.cleaned_data["name"],
+                    email=invite.email or form.cleaned_data["email"],
                     password=form.cleaned_data["password1"],
                 )
             else:
@@ -95,6 +100,7 @@ def invite(request, token):
     return render(request, "judge/invite.html", {
         "state": state, "invite": invite, "event": invite.event, "tracks": list(invite.tracks.all()),
         "user_here": user, "has_account": has_account, "problem": problem, "form": form,
+        "open_link": open_link,
         "login_url": f"{reverse('accounts:login')}?next={request.path}",
     }, status=status)
 

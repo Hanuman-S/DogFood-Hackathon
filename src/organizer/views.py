@@ -281,6 +281,9 @@ def organizer_remove(request, slug, link_id):
 def judge_add(request, slug):
     event = services.get_managed_event(request.user, slug)
     form = AddJudgeForm(request.POST, event=event)
+    if form.is_valid() and not form.cleaned_data["email"]:
+        form.add_error("email", "add judge needs the email of an existing account. to invite someone "
+                                "without it, use invite by link.")
     if not form.is_valid():
         return _control(request, event, status=400, judge_form=form)
     try:

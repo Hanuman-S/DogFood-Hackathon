@@ -247,7 +247,13 @@ class AddOrganizerForm(forms.Form):
 
 
 class AddJudgeForm(forms.Form):
-    email = forms.EmailField(widget=forms.EmailInput(attrs={"placeholder": "e.g. ada@example.org"}))
+    """One form, two buttons: "add judge" needs the email of an existing account; "invite by
+    link" takes an email (a link only that person can use) or none (an open, single-use link)."""
+
+    email = forms.EmailField(
+        required=False,
+        widget=forms.EmailInput(attrs={"placeholder": "e.g. ada@example.org (optional for a link)"}),
+    )
     tracks = forms.ModelMultipleChoiceField(
         queryset=None, required=False, widget=forms.CheckboxSelectMultiple,
         help_text="leave all unticked to judge every track",
