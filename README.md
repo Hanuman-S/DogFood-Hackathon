@@ -12,9 +12,15 @@ claimed T1, verified T1
 ```
 
 That block is from [`acceptance-report.txt`](acceptance-report.txt), committed from a real run of
-the organizers' own `acceptance/run.py` against a clean clone. The four T2 lines in that file read
-**FAIL**, because T2 does not exist. There are no stub endpoints anywhere in this repository that
-fake a pass.
+the organizers' own `acceptance/run.py` against a **fresh clone of this repository**. The four T2
+lines in that file read **FAIL**, because T2 does not exist. There are no stub endpoints anywhere in
+this repository that fake a pass.
+
+[`acceptance-report-offline.txt`](acceptance-report-offline.txt) is the same three checks passing
+with both containers on a Docker network that has **no route off it** — no DNS, no PyPI, no CDN.
+Reproduce it with `./scripts/offline-check.sh`. Its `portal:` line reads `http://web:8000` rather
+than `localhost:8080` because an isolated network cannot publish ports, so the checker runs inside
+it; everything else about the two runs is identical.
 
 ## Run it
 
@@ -35,8 +41,8 @@ docker compose down -v   # stop and forget the data (including uploaded images)
 the pinned wheels in `requirements.txt` from PyPI. The *running* portal then uses no network at all:
 every CSS and JS asset is vendored in `src/static/vendor/`, there is no CDN link, no web font and no
 outbound request. A build with the network off fails at `pip install`; `docker compose up` against
-an already-built image works offline, which is how the clean-clone check in `acceptance-report.txt`
-was run.
+an already-built image works with no network at all, which is what
+[`acceptance-report-offline.txt`](acceptance-report-offline.txt) demonstrates.
 
 Requirements: Docker with Compose v2. Nothing else — no Python, no Node, no Postgres on the host.
 
@@ -186,6 +192,7 @@ participation records, no embeddable widget, no bulk import/export beyond the fi
 ./scripts/test.sh                        # the full suite in the container (556 tests)
 ./scripts/test.sh tests/test_gallery.py -vv
 ./scripts/acceptance.sh                  # the organizers' checker -> acceptance-report.txt
+./scripts/offline-check.sh               # the same checks with the network sealed off
 ```
 
 Tests run in the container so the Python version, the pinned dependencies and the database are the

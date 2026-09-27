@@ -628,49 +628,97 @@ strings all 200; `?q=sig` finds 2 projects and `?q="glass signal"` finds 1; `?ta
 per-event gallery 200s; `/api/projects?sort=name` reports `count 40 pages 1 page_size 50` in
 alphabetical order; an `HX-Request` GET returns the bare results region.
 
-## ▶ Handoff — start of phase 7
+### Phase 7a — submittable T1 checkpoint ✅ (2026-09-26)
 
-State: phases 1-6 committed. 556 tests green. **Acceptance: `claimed T1, verified T1`** — all three
-T1 checks pass; the four T2 checks FAIL because T2 is not built, which is the intended output.
+Documentation and verification only; no behaviour changed. Phase 7b (full documentation) is
+deliberately deferred until T2 exists, at the user's instruction.
 
-Phase 7 is documentation and the final honest run. No new features.
+Written:
 
-- **`acceptance-report.txt`**: committed from a real run against a stack built from a clean
-  `docker compose down -v && up --build`. The current file is already that, but regenerate it last,
-  after any final change, and do not hand-edit it.
-- **README.md** — currently a two-line stub, so this is the biggest writing job:
-  - What it is, and `docker compose up` → http://localhost:8080 with no `.env` needed.
-  - The demo credentials and fixed API tokens (`DEMO_MODE=1`), and how to turn them off
-    (`DEMO_MODE=0`, `SEED_FIXTURES=0`).
-  - **The build needs network access** even though the running portal does not: the image installs
-    pinned wheels from PyPI. Say so plainly — "no runtime network" is the claim, not "no network
-    ever".
-  - **"Not done yet"**, which must include: no T2 judging at all (scores, CSV export, judge
-    assignment); no API for editing or submitting a project (create only); no submission withdrawal
-    and no organizer path from `submitted` back to `draft`; no live duplicate detection on submit
-    (organizers flag by hand); orphaned media files are possible if the process dies between commit
-    and unlink, with no cleanup command; no password reset and no outbound email; custom-question
-    answers stored as text for every kind; `pg_trgm` and `btree_gist` need a database role that may
-    create extensions (fine on the bundled Postgres, may need a DBA on a managed one).
-  - The fixture summaries are identical across many projects, so search relevance looks odd on
-    fixture data. State it rather than tuning weights around it.
-- **ARCHITECTURE.md**: the service-layer rule, the check order
-  (authenticate → resolve → deadline → permission → validation), the injectable clock, why bearer
-  auth skips CSRF, the viewer-independent gallery scoper versus `visible_projects`, protected media,
-  and the create-only importer.
-- **DATA-MODEL.md**: Mermaid ER diagram plus the fixture mapping (`external_id` per model, which
-  fixture fields are synthesized and which are absent).
-- **JUDGING.md**: what exists (`scoring` models, imported criteria and scores,
-  `assert_judging_open` raising `NotImplementedError`, `can_view_project_scores` returning False)
-  and what does not. It is the file a judge reads to confirm T2 is genuinely absent rather than
-  half-built.
-- **LICENSE** is already MIT, copyright Anurag V Rao. Check it is referenced from the README.
-- Final check with **the network off**: `docker compose down -v`, disconnect, `docker compose up`
-  from the built image, load the gallery and a project page, confirm nothing external is requested.
-  Note in the README that a *fresh build* cannot be done offline.
+- **README.md** — was a two-line stub. Now: the verified acceptance block up front, one-command run,
+  the demo credentials and fixed tokens, the four flags that matter each with its production warning,
+  what works today, the "Not done yet" list, the first-build-needs-network caveat, the Windows and
+  Git Bash notes, the layout map and the licence.
+- **ARCHITECTURE.md** and **DATA-MODEL.md**, both headed **"T1 snapshot; expanded after T2"** so
+  neither describes code that does not exist. Architecture covers the component picture, the
+  five-step check order (including why argument evaluation order is part of it), the
+  service/permission/clock layers, error-to-status translation, uploads, search, the importer's
+  honest bypass, and what the test suite actually guarantees. Data model has a Mermaid ER diagram,
+  all 19 non-Django tables with the constraints that carry the guarantees, and the fixture mapping.
+- **JUDGING.md** — the honest stub. Three scoring tables, what the fixture loads into them, then the
+  list of what is absent, the two deliberate placeholders (`assert_judging_open` raising
+  `NotImplementedError`, `can_view_project_scores` returning `False` for everyone), the three T2
+  routes that 404 today, and a six-step order for T2 to start in.
+- `.dogfood.toml` needed no change: already `claimed = ["T1"]` with the T2 routes listed to fail.
 
-**Stop for go-ahead after phase 7.** Nothing in T2 may be started without it, and `.dogfood.toml`
-must keep claiming only `["T1"]`.
+Every number in those files was read from the running database or the fixture file rather than from
+memory. That caught one invented claim before it shipped: a draft said fixture scores carry an
+`scr_` external_id. They carry no id at all — the importer matches them on `(judge, project)`, which
+is the model's unique key and therefore idempotent anyway.
 
-Environment gotchas: see CLAUDE.md (Git Bash path mangling — `MSYS_NO_PATHCONV=1` for anything with
-a `/path` argument, including `docker compose exec ... /app/src/manage.py`; python3 Store shim).
+**Clean-clone verification**, done from the **remote** rather than a copy of the working tree, so
+that anything untracked or gitignored that the build secretly depended on would have failed:
+
+1. `git clone --depth 1 https://github.com/AnuragVRao/DogFood_Hackathon.git` into a fresh directory.
+   `.dogfood.toml`, `.gitattributes`, `.dockerignore` and `.env.example` all present;
+   `docker/entrypoint.sh` arrives as `POSIX shell script, ASCII text executable` — LF, not CRLF.
+2. `docker compose build` with the network on: clean build, no missing files.
+3. **Offline run.** `docker-compose.offline.yml` marks the compose network `internal: true`, which
+   removes its gateway. Verified sealed from inside: `pypi.org`, `cdn.jsdelivr.net` and
+   `fonts.googleapis.com` all fail DNS resolution, a raw connection to `1.1.1.1` is unreachable, and
+   `http://web:8000/healthz` returns 200. The portal migrated, imported, seeded and served every page
+   with no route off the network, and all three T1 checks PASS —
+   `acceptance-report-offline.txt`.
+4. **Host run**, same clone and image with ports published: all three T1 checks PASS —
+   `acceptance-report.txt`, which is what an organizer reproduces with the documented command.
+
+**One deviation from the instruction, stated plainly.** The plan was to disable the network and run
+the checker from the host. An internal Docker network also disables port publishing, so the host
+cannot reach `:8080` — the checker has to run *inside* the sealed network, against
+`http://web:8000`. That is why there are two report files rather than one: the offline report proves
+the no-network claim, and the localhost report is the artifact an organizer can reproduce
+byte-for-byte with `docker compose up && ./scripts/acceptance.sh`. Both come from the same clone and
+the same image. Neither was hand-edited. `scripts/offline-check.sh` makes the offline run repeatable
+and re-asserts the isolation each time, so the claim is not a one-off screenshot.
+
+Tests: **556 green**, unchanged — this phase added no code.
+
+Tagged `t1-complete` and pushed.
+
+## ▶ Handoff — phase 7b and T2
+
+State: **T1 complete, verified and tagged `t1-complete`.** 556 tests green. Acceptance:
+`claimed T1, verified T1`, plus the same three checks passing with the network sealed off.
+
+### Phase 7b — deferred, on purpose
+
+The full documentation pass waits until T2 exists, so it can describe one system once instead of
+being written twice. What is deliberately *not* yet written:
+
+- Expanding ARCHITECTURE.md and DATA-MODEL.md past their "T1 snapshot" headers — the judging layer,
+  the scoring flow, the normalization method, and the ER diagram's scoring half.
+- A threat model (there is a bonus challenge for it in the brief).
+- Deployment guidance beyond the production checklist in the README: TLS termination, a reverse-proxy
+  example, `TRUST_PROXY_HEADERS`, backups.
+- Screenshots or a walkthrough.
+
+Both snapshot files carry the "expanded after T2" note, so a reader is not misled in the meantime.
+
+### If T2 is next
+
+Read **JUDGING.md** first — it ends with a six-step order that exists so each step makes the next one
+testable: criteria management, assignment, `assert_judging_open`, score entry, then
+`can_view_project_scores`, and CSV export last. Then read CLAUDE.md's numbered conventions; T2 is
+where they are easiest to break, particularly:
+
+- Guards run before any transaction opens, so a refusal's audit row survives the raise (§10).
+- One clock read per request, passed to both the guard and any timestamp stored (§10).
+- 404, not 403, for anything a caller may not know exists — which is the whole judge-isolation
+  question in one line (§5).
+- No write path may answer 500; translate `ValidationError` and `IntegrityError` deliberately (§9).
+
+`.dogfood.toml` must keep claiming `["T1"]` until every T2 check actually passes, and
+`acceptance-report.txt` must be regenerated from a real run at that point — never hand-edited.
+
+Environment gotchas: see CLAUDE.md (Git Bash path mangling — `MSYS_NO_PATHCONV=1` for anything with a
+`/path` argument, including `docker compose exec ... /app/src/manage.py`; python3 Store shim).
