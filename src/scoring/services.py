@@ -3,10 +3,12 @@ so they cannot enforce different rules. Each write leaves an audit row.
 
 The rubric rules
 ----------------
-* **Weights are percentages** of the final score, and an event's weights add up to exactly
-  100. What the organizer types is what is stored and what judges see. The whole rubric is
-  saved in one go (`save_rubric`), because adding, removing or reweighting one criterion changes
-  the total; a half-saved rubric that adds up to 80 never exists.
+* **Weights are relative**: each is a number above 0, and a criterion's share of the score is
+  its weight divided by the sum (1 / 1 / 1 is three equal thirds, exactly; 2 / 1 / 1 is half and
+  two quarters). Pages show the share as a percentage (`weight_shares`); the scoring engine
+  normalises the same way. Nothing has to add up to 100, so equal weights stay exactly equal --
+  a rounded 33.334 / 33.333 / 33.333 would quietly favour the first criterion. The whole rubric
+  is saved in one go (`save_rubric`).
 * **Locked from the submission close.** From `submissions_close_at` on (by the database clock,
   like the deadline), anything that changes the ranking is refused: weights, the scale's min and
   max, and adding or removing criteria. An extension for everyone moves the close, and the lock
@@ -41,7 +43,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, connection, transaction
@@ -71,8 +73,8 @@ from .errors import (FinalOverrideRefused, InvalidConfig, JudgingOpen, ScoringCo
 
 FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
-WEIGHT_TOTAL = Decimal("100")
 WEIGHT_STEP = Decimal("0.001")  # Criterion.weight has three decimal places
+WEIGHT_MAX = Decimal("999.999")  # Criterion.weight: max_digits=6, decimal_places=3
 SCALE_MIN, SCALE_MAX = 0, 10  # a written anchor per level stays readable up to 11 levels
 
 
@@ -108,34 +110,27 @@ def _refuse_if_locked(request, event, what):
 
 
 def split_equally(n):
-    """`n` weights that add up to exactly 100.000, as equal as three decimals allow.
-
-    The leftover thousandths go to the first criteria: 3 -> 33.334, 33.333, 33.333.
-    """
-    if n <= 0:
-        return []
-    units = int(WEIGHT_TOTAL / WEIGHT_STEP)
-    base, extra = divmod(units, n)
-    return [(base + (1 if i < extra else 0)) * WEIGHT_STEP for i in range(n)]
+    """`n` equal relative weights: 1 each (each criterion then counts exactly 1/n)."""
+    return [Decimal(1)] * max(n, 0)
 
 
-def as_percentages(weights):
-    """Rescale arbitrary non-negative weights to percentages that add up to exactly 100.000.
-
-    Used once, to convert rubrics stored before weights became percentages. Proportions are
-    kept; rounding leftovers go to the largest weights first. All-zero weights split equally.
-    """
-    weights = [Decimal(w) for w in weights]
-    total = sum(weights)
+def weight_shares(criteria):
+    """{criterion pk: its share of the score as a percentage, one decimal} -- for display. The
+    stored weights are relative; this is weight / sum of the event's weights."""
+    criteria = list(criteria)
+    total = sum((Decimal(c.weight) for c in criteria), Decimal(0))
     if total <= 0:
-        return split_equally(len(weights))
-    exact = [w * WEIGHT_TOTAL / total for w in weights]
-    rounded = [e.quantize(WEIGHT_STEP, rounding=ROUND_DOWN) for e in exact]
-    left = int((WEIGHT_TOTAL - sum(rounded)) / WEIGHT_STEP)
-    order = sorted(range(len(weights)), key=lambda i: (-weights[i], i))
-    for i in order[:left]:
-        rounded[i] += WEIGHT_STEP
-    return rounded
+        return {c.pk: None for c in criteria}
+    return {c.pk: (Decimal(c.weight) * 100 / total).quantize(Decimal("0.1")) for c in criteria}
+
+
+def with_shares(criteria):
+    """The criteria as a list, each with `.share` (percentage) set, for templates."""
+    criteria = list(criteria)
+    shares = weight_shares(criteria)
+    for c in criteria:
+        c.share = shares[c.pk]
+    return criteria
 
 
 # --- the standard rubric -----------------------------------------------------------------------
@@ -234,8 +229,10 @@ def validate_rows(rows):
         if row.key in keys:
             raise RubricError(f"two criteria share the key '{row.key}'; keys must differ.")
         keys.add(row.key)
-        if row.weight is None or row.weight < 0:
-            raise RubricError(f"'{row.label}': a weight cannot be negative.")
+        if row.weight is None or row.weight <= 0:
+            raise RubricError(f"'{row.label}': a weight must be a number above 0.")
+        if row.weight > WEIGHT_MAX:
+            raise RubricError(f"'{row.label}': a weight can be at most {WEIGHT_MAX}.")
         if row.weight != row.weight.quantize(WEIGHT_STEP):
             raise RubricError(f"'{row.label}': weights have at most three decimal places.")
         row.weight = row.weight.quantize(WEIGHT_STEP)  # as stored: 60 -> 60.000
@@ -244,12 +241,6 @@ def validate_rows(rows):
                 f"'{row.label}': the scale must run from a lower to a higher whole number, "
                 f"within {SCALE_MIN}-{SCALE_MAX}."
             )
-    total = sum(r.weight for r in kept)
-    if total != WEIGHT_TOTAL:
-        raise RubricError(
-            f"weights add up to {total.normalize():f}%, not 100%. "
-            "adjust them, or use 'split equally'."
-        )
     return kept
 
 
@@ -859,7 +850,7 @@ def judge_progress(membership):
 
     Read-only: nothing is created here (an event without a rubric simply has no criteria yet)."""
     event = membership.event
-    criteria = list(Criterion.objects.filter(event=event).order_by("order", "key"))
+    criteria = with_shares(Criterion.objects.filter(event=event).order_by("order", "key"))
     queue = list(judge_queue(membership))
     scores = {
         s.project_id: s

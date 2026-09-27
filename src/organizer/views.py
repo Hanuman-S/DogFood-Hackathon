@@ -24,7 +24,7 @@ from events.forms import (
 from events.models import CustomQuestion, Event, JudgeInvite, Prize, Track
 from projects.models import Project, Status
 from core.judging import judging_window
-from scoring.services import rubric_locked
+from scoring.services import rubric_locked, with_shares
 from teams.models import Team, TeamExtension
 
 PARTS = {
@@ -88,7 +88,7 @@ def _control(request, event, status=200, **forms):
         "prizes": event.prizes.select_related("track"),
         "questions": event.questions.annotate(n=Count("answers")),
         "organizer_links": event.memberships.filter(role=Role.ORGANIZER).select_related("user"),
-        "criteria": event.criteria.all(),
+        "criteria": with_shares(event.criteria.all()),
         "rubric_locked": rubric_locked(event),
         "publish_blockers": services.publish_blockers(event),
         "judge_invites": [

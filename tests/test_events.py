@@ -179,7 +179,6 @@ def ready_to_publish(event):
     ("tagline", "add a tagline"),
     ("description", "add a description"),
     ("rubric", "set up the rubric"),
-    ("weights", "must add up to 100%"),
 ])
 def test_an_incomplete_event_cannot_be_published(make_event, client_for, missing, sentence):
     event = ready_to_publish(make_event(published=False))

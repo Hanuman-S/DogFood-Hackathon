@@ -45,7 +45,7 @@
       <div class="frame__body stack">
         {% for c in progress.criteria %}
         <div>
-          <p><span class="bright">{{ c.label }}</span> <span class="faint">· scale: {{ c.min_value }}&ndash;{{ c.max_value }} · weight: {{ c.weight.normalize }}%</span></p>
+          <p><span class="bright">{{ c.label }}</span> <span class="faint">· scale: {{ c.min_value }}&ndash;{{ c.max_value }} · {{ c.share }}% of the score</span></p>
           {% if c.description %}<p class="dim">{{ c.description }}</p>{% endif %}
         </div>
         {% if not forloop.last %}<hr class="rule">{% endif %}

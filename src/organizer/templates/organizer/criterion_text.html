@@ -4,7 +4,7 @@
 <section class="frame">
   <header class="frame__bar">
     <h1 class="frame__title">{{ criterion.label }}</h1>
-    <span class="frame__meta">{{ event.name }} &middot; {{ criterion.weight|floatformat:"-3" }}% &middot; scale {{ criterion.min_value }}&ndash;{{ criterion.max_value }}</span>
+    <span class="frame__meta">{{ event.name }} &middot; weight {{ criterion.weight|floatformat:"-3" }} ({{ criterion.share }}% of the score) &middot; scale {{ criterion.min_value }}&ndash;{{ criterion.max_value }}</span>
   </header>
   <div class="frame__body">
     <p class="dim">what judges read for this criterion. a written description for each level makes a 3 mean the same thing to every judge; leave a level empty to skip it.</p>

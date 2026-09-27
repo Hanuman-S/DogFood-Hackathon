@@ -359,10 +359,9 @@ def test_build_input_uses_the_events_weights():
     event = fixture_event()
     Criterion.objects.filter(event=event, key="functionality").update(weight=2.5)
     weights = {c.id: c.weight for c in services.build_input(event).rubric.criteria}
-    # the importer's equal split, as percentages: 33.334 / 33.333 / 33.333 (functionality edited here)
-    assert weights == {"functionality": 2.5, "quality": 33.333, "innovation": 33.333}
+    assert weights == {"functionality": 2.5, "quality": 1.0, "innovation": 1.0}
     overridden = {c.id: c.weight for c in services.build_input(event, weights={"quality": 3}).rubric.criteria}
-    assert overridden == {"functionality": 2.5, "quality": 3.0, "innovation": 33.333}
+    assert overridden == {"functionality": 2.5, "quality": 3.0, "innovation": 1.0}
     with pytest.raises(InvalidConfig):
         services.build_input(event, weights={"speed": 1})
 
@@ -426,10 +425,7 @@ def test_judging_cannot_be_extended_once_a_final_exists(scored_event, at, monkey
 def test_database_result_equals_the_file_result():
     event = fixture_event()
     db = pipeline.compare(services.build_input(event), ["m2", "raw_mean", "zscore"], config={"cv_seed": LAB_SEED})
-    # The same weights on both sides: the database stores the fixture's equal split as percentages
-    # (33.334 / 33.333 / 33.333), which is not exactly equal thirds.
-    weights = {c.key: float(c.weight) for c in Criterion.objects.filter(event=event)}
-    file_input, _ = load_organizer_file(FIXTURES, weights=weights)
+    file_input, _ = load_organizer_file(FIXTURES)          # equal weights on both sides: 1 / 1 / 1
     fl = pipeline.compare(file_input, ["m2", "raw_mean", "zscore"], config={"cv_seed": LAB_SEED})
     project_id = {str(r.object_id): r.external_id
                   for r in FixtureRef.objects.filter(kind="project", duplicate_of="")}

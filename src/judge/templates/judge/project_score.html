@@ -123,7 +123,7 @@
           {% csrf_token %}
           {% for item in criteria_data %}
           <fieldset class="field">
-            <legend class="field__label bright"><b>{{ item.criterion.label }}</b> <span class="faint">· weight {{ item.criterion.weight.normalize }}%</span></legend>
+            <legend class="field__label bright"><b>{{ item.criterion.label }}</b> <span class="faint">· {{ item.criterion.share }}% of the score</span></legend>
             {% if item.criterion.description %}<p class="field__help">{{ item.criterion.description }}</p>{% endif %}
             <div class="rating-group">
               {% for v in item.range %}

@@ -319,8 +319,7 @@ class Importer:
                 if key not in keys:
                     keys.append(key)
         criteria = {}
-        # The file gives no weights, so every criterion counts equally: weights are percentages
-        # that add up to 100, and three decimals make that 33.334 / 33.333 / 33.333.
+        # The file gives no weights, so every criterion counts equally: relative weight 1 each.
         weights = split_equally(len(keys))
         for order, (key, weight) in enumerate(zip(keys, weights), start=1):
             criterion, created = Criterion.objects.get_or_create(

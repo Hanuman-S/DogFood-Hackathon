@@ -40,24 +40,32 @@
     setInterval(tick, 1000);
   }
 
-  // Rubric editor: keep <span data-weight-total> equal to the sum of the [data-weight] inputs
-  // (rows ticked for removal excluded), in thousandths so 33.334 + 33.333 + 33.333 is 100.
-  var weightTotal = document.querySelector("[data-weight-total]");
-  if (weightTotal) {
-    var weights = document.querySelectorAll("[data-weight]");
+  // Rubric editor: show each row's share of the score (weight / sum of the weights of the rows
+  // being kept) in its <span data-weight-share>, as the organizer types. Weights are relative.
+  var weights = document.querySelectorAll("[data-weight]");
+  if (weights.length) {
     var removal = function (input) {
       return document.querySelector("[name='" + input.name.replace(/weight$/, "DELETE") + "']");
     };
+    var shareOf = function (input) {
+      var row = input.closest("tr");
+      return row ? row.querySelector("[data-weight-share]") : null;
+    };
     var recount = function () {
-      var units = 0;
+      var total = 0;
       weights.forEach(function (input) {
         var remove = removal(input);
-        if (remove && remove.checked) return;
         var value = parseFloat(input.value);
-        if (!isNaN(value)) units += Math.round(value * 1000);
+        if ((!remove || !remove.checked) && value > 0) total += value;
       });
-      weightTotal.textContent = String(units / 1000);
-      weightTotal.classList.toggle("weight-total--off", units !== 100000);
+      weights.forEach(function (input) {
+        var share = shareOf(input);
+        if (!share) return;
+        var remove = removal(input);
+        var value = parseFloat(input.value);
+        share.textContent = (total > 0 && value > 0 && !(remove && remove.checked))
+          ? (Math.round(value / total * 1000) / 10) + "%" : "\u2013";
+      });
     };
     weights.forEach(function (input) {
       input.addEventListener("input", recount);

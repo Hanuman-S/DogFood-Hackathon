@@ -12,7 +12,7 @@
       </span>
     </header>
     <div class="frame__body stack">
-      <p class="dim">weights are percentages of each review's score and add up to exactly 100. judges score every criterion on its scale; the weighted average is what the results use.</p>
+      <p class="dim">weights are relative: each is a number above 0, and a criterion's share of the score is its weight over the sum (1 / 1 / 1 is three exact thirds; 2 / 1 / 1 is a half and two quarters). the share is shown as a percentage. judges score every criterion on its scale; the weighted average is what the results use.</p>
       {% if locked %}
         <p class="dim">locked since submissions closed ({{ event.submissions_close_at|utc }}): weights, scales and the set of criteria are fixed for judging. labels, descriptions and level descriptions can still be edited, and every edit is logged.</p>
       {% else %}
@@ -30,7 +30,7 @@
           <tr>
             <td>{{ c.label }}</td>
             <td class="dim">{{ c.key }}</td>
-            <td class="num bright">{{ c.weight|floatformat:"-3" }}%</td>
+            <td class="num bright">{{ c.weight|floatformat:"-3" }} <span class="faint">({{ c.share }}%)</span></td>
             <td class="num">{{ c.min_value }}&ndash;{{ c.max_value }}</td>
             <td class="num dim">{{ c.level_descriptions|length }}/{{ c.levels_total }}</td>
             <td class="num"><a class="btn btn--small btn--ghost" href="{% url 'organizer:criterion_text' event.slug c.pk %}">edit text</a></td>
@@ -39,7 +39,6 @@
           <tr><td colspan="6" class="faint">no rubric: this event closed without one, so there is nothing for judges to score against.</td></tr>
         {% endfor %}
         </tbody>
-        {% if criteria %}<tfoot><tr><td colspan="2" class="dim">total</td><td class="num bright">{{ total|floatformat:"-3" }}%</td><td colspan="3"></td></tr></tfoot>{% endif %}
       </table>
     </div>
 
@@ -60,13 +59,14 @@
       {% for e in formset.non_form_errors %}<p class="field__error">{{ e }}</p>{% endfor %}
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table">
-          <thead><tr><th>label</th><th>key</th><th class="num">weight %</th><th class="num">min</th><th class="num">max</th><th class="num">remove</th><th class="num"><span class="visually-hidden">text</span></th></tr></thead>
+          <thead><tr><th>label</th><th>key</th><th class="num">weight</th><th class="num">share</th><th class="num">min</th><th class="num">max</th><th class="num">remove</th><th class="num"><span class="visually-hidden">text</span></th></tr></thead>
           <tbody>
           {% for form in formset %}
             <tr{% if form.errors %} class="field--invalid"{% endif %}>
               <td>{{ form.id }}<label class="visually-hidden" for="{{ form.label.id_for_label }}">label</label>{{ form.label }}{% for e in form.label.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td><label class="visually-hidden" for="{{ form.key.id_for_label }}">key</label>{{ form.key }}{% for e in form.key.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
-              <td class="num"><label class="visually-hidden" for="{{ form.weight.id_for_label }}">weight percent</label>{{ form.weight }}{% for e in form.weight.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+              <td class="num"><label class="visually-hidden" for="{{ form.weight.id_for_label }}">relative weight</label>{{ form.weight }}{% for e in form.weight.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
+              <td class="num dim"><span data-weight-share>&ndash;</span></td>
               <td class="num"><label class="visually-hidden" for="{{ form.min_value.id_for_label }}">lowest score</label>{{ form.min_value }}{% for e in form.min_value.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td class="num"><label class="visually-hidden" for="{{ form.max_value.id_for_label }}">highest score</label>{{ form.max_value }}{% for e in form.max_value.errors %}<p class="field__error">{{ e }}</p>{% endfor %}</td>
               <td class="num"><label class="check" for="{{ form.DELETE.id_for_label }}">{{ form.DELETE }}<span class="visually-hidden">remove</span></label></td>
@@ -74,14 +74,13 @@
             </tr>
           {% endfor %}
           </tbody>
-          <tfoot><tr><td colspan="2" class="dim">total</td><td class="num bright"><span data-weight-total>{{ total|floatformat:"-3" }}</span>%</td><td colspan="4" class="faint">must be exactly 100</td></tr></tfoot>
         </table>
       </div>
       <div class="frame__body">
         <div class="actions">
           <button class="btn" type="submit" name="action" value="save">save rubric</button>
           <button class="btn btn--ghost" type="submit" name="action" value="split">split equally</button>
-          <span class="faint">split equally fills the weights in for you to check; it saves nothing. the empty row adds a criterion.</span>
+          <span class="faint">split equally sets every weight to 1 for you to check; it saves nothing. the empty row adds a criterion.</span>
         </div>
       </div>
     </form>
@@ -94,7 +93,7 @@
     <div class="frame__body stack">
       {% for c in criteria %}
         <div>
-          <p class="section-title">{{ c.label }} <span class="faint">&middot; {{ c.weight|floatformat:"-3" }}% &middot; {{ c.min_value }}&ndash;{{ c.max_value }}</span></p>
+          <p class="section-title">{{ c.label }} <span class="faint">&middot; {{ c.share }}% of the score &middot; {{ c.min_value }}&ndash;{{ c.max_value }}</span></p>
           {% if c.description %}<p class="dim">{{ c.description }}</p>{% endif %}
           {% if c.level_descriptions %}
           <table class="kv kv--prose">

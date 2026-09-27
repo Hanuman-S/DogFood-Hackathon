@@ -17,18 +17,16 @@ from scoring.models import Criterion
 
 
 def _page(request, event, formset=None, error="", status=200):
-    criteria = list(event.criteria.all())
+    criteria = services.with_shares(event.criteria.all())
     for c in criteria:
         c.levels_total = c.max_value - c.min_value + 1
     locked = services.rubric_locked(event)
-    total = sum((c.weight for c in criteria), start=0)
     if formset is None and not locked:
         formset = RubricFormSet(initial=rubric_initial(criteria), prefix="rubric")
     return render(request, "organizer/rubric.html", {
         "event": event,
         "criteria": criteria,
         "locked": locked,
-        "total": total,
         "formset": formset,
         "error": error,
     }, status=status)
@@ -96,6 +94,7 @@ def criterion_text(request, slug, criterion_id):
         else:
             messages.success(request, f"'{criterion.label}' saved.")
             return redirect("organizer:rubric", slug=event.slug)
+    criterion.share = services.weight_shares(event.criteria.all()).get(criterion.pk)
     return render(request, "organizer/criterion_text.html", {
         "event": event, "criterion": criterion, "form": form,
         "locked": services.rubric_locked(event),

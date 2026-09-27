@@ -28,9 +28,11 @@ The shape below is driven by what the fixture actually contains:
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -42,6 +44,9 @@ class Criterion(models.Model):
     `weight` is stored per criterion because the brief's central complaint about existing
     platforms is that "the market leader cannot weight judging criteria". Weighting has to be
     data, not code.
+
+    Weights are **relative**: a criterion's share is its weight over the sum of the event's
+    weights (1 / 1 / 1 = exact thirds). They must be above 0 (a CHECK constraint).
 
     **Locked from the submission close onward** (`scoring.services.rubric_locked`): weights, the
     min/max of the scale and the set of criteria cannot change once judging can start, because
@@ -57,11 +62,11 @@ class Criterion(models.Model):
     weight = models.DecimalField(
         max_digits=6,
         decimal_places=3,
-        default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
-        help_text="Percentage of the final score; an event's weights add up to exactly 100 "
-        "(scoring.services.save_rubric). Decimal, not float: 33.334 + 33.333 + 33.333 must "
-        "still be 100.000 after being read back.",
+        default=1,
+        validators=[MinValueValidator(Decimal("0.001"))],
+        help_text="Relative weight, above 0: the criterion's share of the score is its weight over "
+        "the sum of the event's weights (1 / 1 / 1 = exact thirds). Decimal, not float, so what "
+        "the organizer typed is exactly what is stored.",
     )
     min_value = models.SmallIntegerField(default=1)
     max_value = models.SmallIntegerField(default=5)
@@ -84,11 +89,12 @@ class Criterion(models.Model):
                 condition=Q(min_value__lt=models.F("max_value")),
                 name="criterion_min_below_max",
             ),
+            models.CheckConstraint(condition=Q(weight__gt=0), name="criterion_weight_positive"),
         ]
         verbose_name_plural = "criteria"
 
     def __str__(self) -> str:
-        return f"{self.label} ({self.weight.normalize():f}%)"
+        return f"{self.label} (weight {self.weight.normalize():f})"
 
 
 class Score(models.Model):

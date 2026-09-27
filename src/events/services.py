@@ -86,8 +86,6 @@ def publish_blockers(event):
     criteria = list(event.criteria.all())
     if not criteria:
         blockers.append("set up the rubric (judges need it, and it locks when submissions close).")
-    elif sum(c.weight for c in criteria) != 100:
-        blockers.append("the rubric's weights must add up to 100%.")
     return blockers
 
 

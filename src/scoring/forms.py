@@ -1,5 +1,7 @@
-"""Rubric forms. They only shape and type-check input: the rules (weights add up to 100, the
+"""Rubric forms. They only shape and type-check input: the rules (weights above 0, the
 lock, keys unique, scored criteria stay) live in `scoring.services`, so any API enforces the same."""
+
+from decimal import Decimal
 
 from django import forms
 
@@ -16,8 +18,8 @@ class CriterionRowForm(forms.Form):
         widget=forms.TextInput(attrs={"placeholder": "made from the label"}),
     )
     weight = forms.DecimalField(
-        max_digits=6, decimal_places=3, min_value=0, max_value=100,
-        widget=forms.NumberInput(attrs={"step": "0.001", "min": 0, "max": 100, "data-weight": ""}),
+        max_digits=6, decimal_places=3, min_value=Decimal("0.001"),
+        widget=forms.NumberInput(attrs={"step": "0.001", "min": "0.001", "data-weight": ""}),
     )
     min_value = forms.IntegerField(
         min_value=SCALE_MIN, max_value=SCALE_MAX, initial=1,

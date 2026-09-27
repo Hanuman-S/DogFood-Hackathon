@@ -136,7 +136,7 @@ def project_score(request, slug, project_id):
     assignment = queue[positions[project_id]]
     project = assignment.project
     following = queue[positions[project_id] + 1].project if positions[project_id] + 1 < len(queue) else None
-    criteria = list(Criterion.objects.filter(event=event).order_by("order", "key"))
+    criteria = scoring.with_shares(Criterion.objects.filter(event=event).order_by("order", "key"))
 
     if request.method == "POST":
         try:

@@ -59,30 +59,26 @@ def req(event):
 
 
 @pytest.mark.parametrize("n", [1, 2, 3, 6, 7, 11])
-def test_split_equally_always_adds_up_to_exactly_100(n):
+def test_split_equally_gives_exactly_equal_weights(n):
     weights = services.split_equally(n)
-    assert len(weights) == n and sum(weights) == D("100")
-    assert max(weights) - min(weights) <= D("0.001")
+    assert weights == [D(1)] * n     # exactly equal: no criterion is favoured, not even by 0.001
 
 
-def test_three_criteria_split_as_33_334_33_333_33_333():
-    assert [str(w) for w in services.split_equally(3)] == ["33.334", "33.333", "33.333"]
-
-
-@pytest.mark.parametrize("given, expected", [
-    ([1, 1, 1], ["33.334", "33.333", "33.333"]),
-    ([2, 1, 1], ["50.000", "25.000", "25.000"]),
-    ([0, 0], ["50.000", "50.000"]),
-    ([1, 2], ["33.333", "66.667"]),
+@pytest.mark.parametrize("weights, shares", [
+    ([1, 1, 1], ["33.3", "33.3", "33.3"]),
+    ([2, 1, 1], ["50.0", "25.0", "25.0"]),
+    ([50, 30, 20], ["50.0", "30.0", "20.0"]),
+    ([1, 2], ["33.3", "66.7"]),
 ])
-def test_old_relative_weights_convert_keeping_their_proportions(given, expected):
-    assert [str(w) for w in services.as_percentages(given)] == expected
+def test_shares_are_computed_from_relative_weights(weights, shares):
+    criteria = [Criterion(pk=i, weight=D(w)) for i, w in enumerate(weights)]
+    assert [str(v) for v in services.weight_shares(criteria).values()] == shares
 
 
 # --- saving -----------------------------------------------------------------------------------------
 
 
-def test_a_rubric_that_adds_up_to_100_saves(open_event):
+def test_a_rubric_of_relative_weights_saves_whatever_they_add_up_to(open_event):
     services.save_rubric(req(open_event), open_event, [row("Functionality", 50), row("Quality", "30.5"), row("Innovation", "19.5")])
     saved = {c.key: c.weight for c in open_event.criteria.all()}
     assert saved == {"functionality": D("50"), "quality": D("30.5"), "innovation": D("19.5")}
@@ -90,9 +86,9 @@ def test_a_rubric_that_adds_up_to_100_saves(open_event):
 
 
 @pytest.mark.parametrize("rows, message", [
-    ([row("A", 50), row("B", "49.999")], "add up to 99.999%"),
-    ([row("A", 100), row("B", 1)], "add up to 101%"),
-    ([row("A", 110), row("B", -10)], "cannot be negative"),
+    ([row("A", 110), row("B", -10)], "above 0"),
+    ([row("A", 1), row("B", 0)], "above 0"),
+    ([row("A", "1000")], "at most 999.999"),
     ([row("A", 50), row("A", 50)], "share the key"),
     ([row("A", 100, lo=5, hi=5)], "scale"),
     ([row("A", 100, lo=0, hi=11)], "scale"),
@@ -118,7 +114,7 @@ def test_editing_reweights_renames_removes_and_audits_old_and_new(open_event):
         "functionality": ("Functionality", D("60")), "quality": ("Code quality", D("40")),
     }
     updated = AuditLog.objects.filter(action=AuditAction.CRITERION_UPDATED, detail__key="functionality").get()
-    assert updated.detail["changed"]["weight"] == ["33.334", "60.000"]
+    assert updated.detail["changed"]["weight"] == ["1.000", "60.000"]
     assert AuditLog.objects.filter(action=AuditAction.CRITERION_REMOVED, detail__key="innovation").exists()
 
 
@@ -161,7 +157,7 @@ def test_the_standard_rubric_is_three_equal_criteria_with_level_descriptions(ope
     services.use_standard_rubric(req(open_event), open_event)
     criteria = list(open_event.criteria.order_by("order"))
     assert [c.key for c in criteria] == ["functionality", "quality", "innovation"]
-    assert sum(c.weight for c in criteria) == 100
+    assert [c.weight for c in criteria] == [D(1), D(1), D(1)]   # exactly equal
     assert all(sorted(c.level_descriptions) == ["1", "2", "3", "4", "5"] for c in criteria)
     with pytest.raises(RubricError, match="already has a rubric"):
         services.use_standard_rubric(req(open_event), open_event)
@@ -206,19 +202,29 @@ def test_a_level_outside_the_scale_is_refused(open_event):
 # --- the one-time conversion ---------------------------------------------------------------------
 
 
-def test_the_migration_turns_old_relative_weights_into_percentages(open_event, make_event):
+def test_the_relative_weights_migration_undoes_the_equal_percentage_split(open_event, make_event):
+    """0003 had turned 1 / 1 / 1 into 33.334 / 33.333 / 33.333; 0006 puts such equal splits back to
+    1 each and leaves every other rubric's numbers alone (they are valid relative weights)."""
     Criterion.objects.bulk_create([
-        Criterion(event=open_event, key=k, label=k, weight=1, order=n) for n, k in enumerate("abc", 1)
+        Criterion(event=open_event, key=k, label=k, weight=D(w), order=n)
+        for n, (k, w) in enumerate(zip("abc", ("33.334", "33.333", "33.333")), 1)
     ])
-    already = make_event()
+    other = make_event()
     Criterion.objects.bulk_create([
-        Criterion(event=already, key="x", label="x", weight=D("70"), order=1),
-        Criterion(event=already, key="y", label="y", weight=D("30"), order=2),
+        Criterion(event=other, key="x", label="x", weight=D("70"), order=1),
+        Criterion(event=other, key="y", label="y", weight=D("30"), order=2),
     ])
-    migration = importlib.import_module("scoring.migrations.0003_weights_are_percentages")
-    migration.convert_weights(apps, None)
-    assert [str(c.weight) for c in open_event.criteria.order_by("order")] == ["33.334", "33.333", "33.333"]
-    assert [c.weight for c in already.criteria.order_by("order")] == [D("70"), D("30")]
+    migration = importlib.import_module("scoring.migrations.0006_relative_weights")
+    migration.to_relative(apps, None)
+    assert [c.weight for c in open_event.criteria.order_by("order")] == [D(1), D(1), D(1)]
+    assert [c.weight for c in other.criteria.order_by("order")] == [D("70"), D("30")]
+
+
+def test_the_database_refuses_a_weight_of_zero(open_event):
+    from django.db import IntegrityError, transaction
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Criterion.objects.create(event=open_event, key="z", label="z", weight=0)
 
 
 # --- the pages --------------------------------------------------------------------------------------
@@ -259,21 +265,30 @@ def test_saving_through_the_page(open_event, client_for):
     assert sorted(open_event.criteria.values_list("weight", flat=True)) == [D("40"), D("60")]
 
 
-def test_a_total_that_is_not_100_is_shown_back_and_nothing_saves(open_event, client_for):
+def test_a_zero_weight_is_shown_back_and_nothing_saves(open_event, client_for):
     response = client_for(open_event.organizer).post(
-        f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 60), line("B", 30)])
+        f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 60), line("B", 0)])
     )
     assert response.status_code == 400
-    assert b"add up to 90%" in response.content
     assert not open_event.criteria.exists()
+
+
+def test_weights_need_not_add_up_to_100(open_event, client_for):
+    response = client_for(open_event.organizer).post(
+        f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 2), line("B", 1)])
+    )
+    assert response.status_code == 302
+    page = client_for(open_event.organizer).get(f"/organizer/events/{open_event.slug}/rubric")
+    assert b"66.7%" in page.content and b"33.3%" in page.content
 
 
 def test_split_equally_fills_the_weights_in_without_saving(open_event, client_for):
     response = client_for(open_event.organizer).post(
-        f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 0), line("B", 0), line("C", 0)], action="split")
+        f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 5), line("B", 2), line("C", 1)], action="split")
     )
     assert response.status_code == 200
-    assert b'value="33.334"' in response.content and response.content.count(b'value="33.333"') == 2
+    for i in range(3):
+        assert f'name="rubric-{i}-weight" value="1"'.encode() in response.content
     assert not open_event.criteria.exists()
 
 
@@ -302,4 +317,4 @@ def test_level_descriptions_can_be_edited_while_locked(closed_event, client_for)
 def test_the_event_page_summarises_the_rubric(open_event, client_for):
     services.use_standard_rubric(req(open_event), open_event)
     page = client_for(open_event.organizer).get(f"/organizer/events/{open_event.slug}/")
-    assert b"33.334%" in page.content and b"edit rubric" in page.content
+    assert b"33.3%" in page.content and b"edit rubric" in page.content

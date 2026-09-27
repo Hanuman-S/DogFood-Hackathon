@@ -299,7 +299,7 @@
     <div class="frame__body stack">
       {% if criteria %}
       <table class="kv">
-        {% for c in criteria %}<tr><th scope="row">{{ c.label }}</th><td><span class="bright">{{ c.weight|floatformat:"-3" }}%</span> <span class="faint">&middot; scored {{ c.min_value }}&ndash;{{ c.max_value }}</span></td></tr>{% endfor %}
+        {% for c in criteria %}<tr><th scope="row">{{ c.label }}</th><td><span class="bright">{{ c.share }}%</span> <span class="faint">(weight {{ c.weight|floatformat:"-3" }})</span> <span class="faint">&middot; scored {{ c.min_value }}&ndash;{{ c.max_value }}</span></td></tr>{% endfor %}
       </table>
       {% else %}
       <p class="faint">no rubric yet. judges need one before they can score.</p>
