@@ -39,7 +39,7 @@ fi
 
 if [ "${DEMO_MODE:-0}" != "1" ]; then
     echo "--> DEMO_MODE=0: no demo accounts. Create the first admin with:"
-    echo "    docker compose exec web python src/manage.py create_account --email you@example.org --name You --role admin"
+    echo "    docker compose exec web python src/manage.py create_account --email you@example.org --name You --admin"
 fi
 
 echo "=================================================================="

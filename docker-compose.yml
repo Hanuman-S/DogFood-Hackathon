@@ -5,7 +5,7 @@
 # No .env file is needed: every variable has a working default below. Copy .env.example to
 # .env only to override something. At runtime nothing leaves the compose network.
 
-name: dogfood
+name: dogfood-portal
 
 services:
   db:

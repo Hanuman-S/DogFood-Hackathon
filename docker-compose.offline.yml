@@ -1,0 +1,13 @@
+# Overlay that proves the running portal needs no network access.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.offline.yml up
+#
+# `internal: true` removes the network's gateway, so neither container has any route off the
+# compose network -- no DNS, no PyPI, no CDN, nothing. The portal must still come up, migrate,
+# import, seed and serve every page, because every asset it needs is vendored in the image.
+#
+# The image must already be built: a build needs PyPI. That is the documented boundary --
+# "no runtime network", not "no network ever".
+networks:
+  default:
+    internal: true
