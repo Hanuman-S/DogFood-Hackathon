@@ -1,7 +1,9 @@
 """Fill FixtureRef.event from each ref's object: event -> itself, track/team/project -> its event,
 score -> its project's event, judge -> its membership's event; user refs stay NULL (install-wide).
-A ref whose object no longer exists is left NULL and reported; 0005's constraint would then refuse,
-so such a ref is deleted here (it could not be resolved by anything anyway). The reverse is a no-op."""
+A ref whose object no longer exists is deleted here: 0005's constraint would refuse it, and nothing
+could resolve it anyway. Side effect: the fixture importer finds rows by their refs, so running
+`import_fixtures` again re-creates the row whose orphaned ref was removed (the organizers' file still
+lists it). The reverse is a no-op."""
 
 from django.db import migrations
 

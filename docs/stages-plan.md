@@ -21,6 +21,7 @@ The claim stays `["T1","T2"]`. C4 is not started.
 - **Each report lists:** files changed, migrations added, the test-count delta, decisions made, and any deviation from the plan.
 - If a phase invalidates a later phase, I stop and say so rather than work around it.
 - Every stage that adds `AuditAction`s gets **its own** core `AlterField` migration (fix 14).
+- **Never run migrations against, or otherwise modify, the user's dev database or the running stack without asking first.** Tests and throwaway databases are fine. (Added after 6a, when migrations were applied to the dev database to check the backfill on real rows.)
 
 ## Agreed decisions
 1. **"Public" means exactly what `/projects` shows an anonymous visitor.** That is the viewer-independent `projects.gallery.visible_projects()`, including whatever it does with duplicates. Comments and the embed both use only this set, and no new flags are added. Tests check that:

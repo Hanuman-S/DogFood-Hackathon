@@ -193,7 +193,7 @@ the trigger is `dogfood.voting_bypass`, set for one block by the audited `voting
 | Table | Holds |
 |---|---|
 | `core_auditlog` | every security-relevant action: who, what, subject, **IP hash** (never the address), user agent, JSON detail. Read-only in the admin, even for admins. Rate limits (logins, vote writes) are counted from it |
-| `imports_fixtureref` | `(source, kind, external_id) → object_id` for every imported row, plus `duplicate_of` and a note |
+| `imports_fixtureref` | `(source, kind, external_id) → object_id` for every imported row, plus `duplicate_of`, a note, and **`event`** (CASCADE; required by a CHECK for every kind but `user`, the one install-wide kind). `source` is `dogfood-fixtures` for the organizers' file or `bundle:<sha256>:<new slug>` for refs an event bundle brought in. Scoring finds an event's project and score refs by `event`, whatever the source. The backfill (`imports/0004`) deleted refs whose row no longer existed. Side effect: running `import_fixtures` again re-creates such a row, because the organizers' file still lists it |
 
 ## Deadline enforcement in the database **(pg)**
 
