@@ -33,6 +33,7 @@ class AuditAction(models.TextChoices):
     ORGANIZER_REMOVED = "organizer_removed", "Removed a co-organizer"
     JUDGE_ADDED = "judge_added", "Made someone a judge of an event"
     JUDGE_REMOVED = "judge_removed", "Removed a judge from an event"
+    JUDGE_REMOVE_REFUSED = "judge_remove_refused", "Refused to remove a judge (they have submitted reviews)"
     # teams
     TEAM_CREATED = "team_created", "Created a team"
     TEAM_JOINED = "team_joined", "Joined a team"

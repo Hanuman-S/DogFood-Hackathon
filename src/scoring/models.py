@@ -113,8 +113,13 @@ class Score(models.Model):
     leaving orphaned reviews attributed to a person who is no longer a judge.
     """
 
+    # RESTRICT: a judge's reviews never disappear with their membership. events.services.remove_judge
+    # refuses a judge with a submitted review and deletes drafts explicitly; this is the backstop for
+    # any other path (deleting the user, a raw ORM delete of the membership). RESTRICT rather than
+    # PROTECT so that deleting a whole event, which deletes the reviews through their projects in the
+    # same delete, still works (tests/test_scoring_services.py pins that cascade).
     judge = models.ForeignKey(
-        "events.EventMembership", on_delete=models.CASCADE, related_name="scores"
+        "events.EventMembership", on_delete=models.RESTRICT, related_name="scores"
     )
     project = models.ForeignKey(
         "projects.Project", on_delete=models.CASCADE, related_name="scores"

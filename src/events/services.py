@@ -21,6 +21,13 @@ from events.models import Event, EventMembership, JudgeInvite, JudgeTrack
 class EventRuleError(Exception):
     """A refused change, with a sentence the UI can show as-is."""
 
+    status = 409
+    code = "refused"
+
+
+class JudgeHasReviews(EventRuleError):
+    code = "judge_has_reviews"
+
 
 def can_manage(user, event):
     return is_organizer_of(user, event)
@@ -434,10 +441,45 @@ def revoke_judge_invite(request, event, invite):
 
 
 def remove_judge(request, event, membership):
-    """Take the judge role away. Their imported scores go with it (Score -> membership)."""
+    """Take the judge role away -- only while they have no submitted review, in any phase.
+
+    A submitted review is evidence the results were (or will be) computed from, and deleting it
+    cannot be undone, so a judge with one is refused (409 judge_has_reviews, audited) and
+    `Score.judge` is RESTRICT as a backstop. Drafts and assignments are deleted explicitly, first,
+    and the audit row says how many. The membership row is locked while this is decided, and a
+    review submitted in the same instant still stops the delete (the RESTRICT), so no race removes
+    submitted work."""
+    from django.db.models import ProtectedError, RestrictedError
+
+    from scoring.models import Assignment, Score, ScoreItem
+
     email = membership.user.email
-    membership.delete()
-    audit.record(AuditAction.JUDGE_REMOVED, request=request, subject=event.slug, email=email)
+
+    def refuse(submitted):
+        audit.record(AuditAction.JUDGE_REMOVE_REFUSED, request=request, subject=event.slug, email=email,
+                     submitted_reviews=submitted)
+        raise JudgeHasReviews(
+            f"{email} has {submitted} submitted review{'s' if submitted != 1 else ''}, so they cannot be removed: "
+            "their reviews are part of the results. (Leaving a judge out of the results is not implemented.)")
+
+    submitted = 0
+    try:
+        with transaction.atomic():
+            EventMembership.objects.select_for_update().filter(pk=membership.pk).first()
+            submitted = Score.objects.filter(judge=membership, submitted_at__isnull=False).count()
+            if not submitted:
+                drafts = Score.objects.filter(judge=membership, submitted_at__isnull=True)
+                draft_count = drafts.count()
+                ScoreItem.objects.filter(score__in=drafts).delete()
+                drafts.delete()
+                assignment_count = Assignment.objects.filter(judge=membership).delete()[0]
+                membership.delete()
+    except (ProtectedError, RestrictedError):
+        submitted = Score.objects.filter(judge=membership, submitted_at__isnull=False).count() or 1
+    if submitted:
+        refuse(submitted)
+    audit.record(AuditAction.JUDGE_REMOVED, request=request, subject=event.slug, email=email,
+                 drafts_deleted=draft_count, assignments_deleted=assignment_count)
 
 
 # --- deadlines and extensions ---------------------------------------------------------------

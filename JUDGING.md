@@ -105,6 +105,15 @@ values (400). `GET /api/judge/scores` returns only the caller's own reviews; `?j
 email, an account id or a fixture judge id, and answers only for the caller or for an organizer of an
 event that judge judges (everything else 403, audited).
 
+**A judge with a submitted review cannot be removed**, in any phase: the event page refuses
+(409 `judge_has_reviews`, audited, naming how many reviews). A submitted review is part of the
+results, and deleting it could not be undone. `Score.judge` is RESTRICT as well, so no other path
+(deleting the account, a database edit through the ORM) takes reviews with it. A judge with only
+drafts or assignments can be removed; the audit row records how many drafts and assignments went.
+**Leaving a judge out of the results is not implemented.** So an organizer currently has no remedy
+for a judge who turns out to be unreliable mid-event, beyond withdrawing their unstarted
+assignments. Their submitted reviews count, and M2's judge-lean correction is the only adjustment.
+
 **Public comments are visible to judges.** Comments on gallery projects are public, so a judge can read
 them while judging is open, and they may colour a review. An organizer who wants judging kept apart
 from the crowd can turn comments off for the event: no new comments are accepted, and existing ones

@@ -341,8 +341,12 @@ def judge_add(request, slug):
 def judge_remove(request, slug, membership_id):
     event = services.get_managed_event(request.user, slug)
     membership = get_object_or_404(event.memberships, pk=membership_id, role=Role.JUDGE)
-    services.remove_judge(request, event, membership)
-    messages.success(request, "judge removed.")
+    try:
+        services.remove_judge(request, event, membership)
+    except services.EventRuleError as refusal:
+        messages.error(request, str(refusal))
+    else:
+        messages.success(request, "judge removed.")
     return redirect(f"/organizer/events/{event.slug}/#judges")
 
 

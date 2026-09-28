@@ -59,14 +59,15 @@ def bundles(django_db_setup, django_db_blocker, tmp_path_factory):
                 with zipfile.ZipFile(path) as z:
                     out[slug] = {i.filename: z.read(i.filename) for i in z.infolist()}
                 os.unlink(path)
-            # The same event after a judge the final names was removed: the real export writes a
+            # The same event after a judge the final names was removed -- LEGACY / PRE-GUARD data,
+            # made with explicit deletes (the service now refuses): the real export writes a
             # missing-memberships#n placeholder, which the import must accept.
             from events.models import EventMembership
-            from events.services import remove_judge
             from scoring.models import ResultSnapshot
+            from test_bundle_export import legacy_remove_judge
             fixture = Event.objects.get(slug="sample-hack-2026")
             final = ResultSnapshot.objects.filter(event=fixture, kind="final").latest("pk")
-            remove_judge(None, fixture, EventMembership.objects.get(pk=int(final.result["judges"][0]["judge_id"])))
+            legacy_remove_judge(EventMembership.objects.get(pk=int(final.result["judges"][0]["judge_id"])))
             path = bundle.export_event(fixture, actor=None)
             with zipfile.ZipFile(path) as z:
                 out["missing-judge"] = {i.filename: z.read(i.filename) for i in z.infolist()}

@@ -393,12 +393,11 @@ def test_audit_keys_naming_a_secret_or_an_address_are_stripped_at_any_depth(key)
 @pytest.mark.django_db(transaction=True)
 def test_a_judge_removed_after_the_final_becomes_a_missing_row_not_a_failure(world):
     from events.models import EventMembership
-    from events.services import remove_judge
 
     fixture = world["fixture"]
     final = ResultSnapshot.objects.filter(event=fixture, kind="final").latest("pk")
     judge_pk = int(final.result["judges"][0]["judge_id"])
-    remove_judge(None, fixture, EventMembership.objects.get(pk=judge_pk))
+    legacy_remove_judge(EventMembership.objects.get(pk=judge_pk))
     body = body_of(export(fixture, actor=world["organizer"]))
     snapshot = body["result_snapshots"][-1]
     judges = [j["judge_id"] for j in snapshot["result"]["judges"]]
@@ -419,3 +418,15 @@ def test_an_unknown_ballot_or_tally_is_a_dangling_id(world):
         bundle.export_event(fixture, actor=world["organizer"])
     assert refused.value.code == "dangling_id"
     assert AuditLog.objects.filter(action=AuditAction.EVENT_EXPORT_REFUSED, detail__reason="dangling_id").exists()
+
+
+def legacy_remove_judge(membership):
+    """LEGACY / PRE-GUARD DATA. Before events.services.remove_judge refused judges with submitted
+    reviews (and Score.judge became PROTECT), removing a judge deleted their reviews with them. Data
+    from then can exist, so the export must still write missing-memberships#n for such a judge. This
+    reproduces that state with explicit deletes; the service itself now refuses."""
+    from scoring.models import Assignment, Score, ScoreItem
+    ScoreItem.objects.filter(score__judge=membership).delete()
+    Score.objects.filter(judge=membership).delete()
+    Assignment.objects.filter(judge=membership).delete()
+    membership.delete()
