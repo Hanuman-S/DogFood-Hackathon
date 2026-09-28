@@ -3,7 +3,9 @@ services take the actor and an `audit.Origin`, never the request.
 
 Payload (canonical JSON, records/canonical.py), for every kind:
     v 1, kind, record_id, issued_at (ISO, UTC, "Z"), kid,
-    event {slug, name, starts_at, ends_at (judging's end)}, subject {name}  -- a display name, no email
+    event {slug, name, submissions_open_at, submissions_close_at}, subject {name}  -- a display name, no email
+    (the submission window, not judging's end: the timeline freeze keeps it fixed once judging has work,
+    so extending judging reissues judge records only, whose own judging window did change)
 and by kind:
     judge_participation  reviews_submitted, judging {starts_at, ends_at}     -- never a score
     participant          team, project
@@ -12,8 +14,12 @@ and by kind:
 Who gets what, and when (organizers of the event and admins issue; 404 for anyone else):
 * judge records: once judging has closed (409 judging_open before), to each judge with at least one
   submitted review;
-* participant records: once submissions have closed (409 submissions_open), to each member of a team
-  whose project is submitted;
+* participant records: once submissions have closed (409 submissions_open), to each person who is a
+  member of a team whose project is submitted, at the moment the records are issued. Someone who left
+  before the close is not a member, so gets none. Nobody can leave after the close (the service and the
+  deadline trigger refuse it), except through an organizer's audited deadline bypass or a team extension
+  that ends before judging; a person removed that way has their record revoked on the next issue (no
+  longer eligible);
 * winner records: only from the event's active published final (409 no_published_final), to each
   member of each winning team, one record per win: (track, place, People's Choice) is the slot.
 
@@ -39,7 +45,7 @@ from .errors import (
     AlreadyRevoked, InvalidKind, InvalidRevoke, JudgingOpen, NoEvent, NoPublishedFinal, NoRecord, RateLimited,
     SigningUnavailable, SubmissionsOpen,
 )
-from .models import ForeignSigningKey, IssuedRecord, RecordKind, SigningKey, winner_slot
+from .models import ForeignSigningKey, IssuedRecord, RecordKind, RevokeCategory, SigningKey, winner_slot
 
 REVOKE_REASON_MAX = 300
 VOLATILE = ("record_id", "issued_at", "kid")
@@ -50,8 +56,10 @@ def _iso(value):
 
 
 def _event_block(event):
-    return {"slug": event.slug, "name": event.name, "starts_at": _iso(event.starts_at),
-            "ends_at": _iso(event.judging_ends_at)}
+    """The event's identity and its submission window: dates the timeline freeze makes immutable once
+    judging has work, so a record's meaning never changes because judging was extended."""
+    return {"slug": event.slug, "name": event.name, "submissions_open_at": _iso(event.submissions_open_at),
+            "submissions_close_at": _iso(event.submissions_close_at)}
 
 
 @dataclass
@@ -139,7 +147,7 @@ def issue_records(event, kind, *, actor, origin=None):
     from events.models import Event
 
     counts = {"issued": 0, "reissued": 0, "unchanged": 0, "revoked": 0}
-    written = []
+    written, superseded, not_eligible = [], [], []
     try:
         with transaction.atomic():
             Event.objects.select_for_update().filter(pk=event.pk).first()
@@ -161,13 +169,15 @@ def issue_records(event, kind, *, actor, origin=None):
                     counts["unchanged"] += 1
                     continue
                 if old is not None:
-                    _revoke(old, "reissued", actor, now)
+                    _revoke(old, "reissued", actor, now, RevokeCategory.SUPERSEDED)
+                    superseded.append(str(old.pk))
                     counts["reissued"] += 1
                 else:
                     counts["issued"] += 1
                 written.append(_sign_and_store(event, kind, want, payload, actor, now))
             for gone in active.values():  # held a record, no longer eligible
-                _revoke(gone, "no longer eligible", actor, now)
+                _revoke(gone, "no longer eligible", actor, now, RevokeCategory.NOT_ELIGIBLE)
+                not_eligible.append(str(gone.pk))
                 counts["revoked"] += 1
     except (JudgingOpen, SubmissionsOpen, NoPublishedFinal) as error:
         refuse(error, error.code)
@@ -176,9 +186,9 @@ def issue_records(event, kind, *, actor, origin=None):
     for record in written:
         audit.record(AuditAction.RECORD_ISSUED, origin=origin, actor=actor, subject=event.slug,
                      record=str(record.id), kind=record.kind, email=record.subject_user.email, kid=record.kid)
-    if counts["reissued"] or counts["revoked"]:
+    if superseded or not_eligible:
         audit.record(AuditAction.RECORD_REVOKED, origin=origin, actor=actor, subject=event.slug, kind=str(kind),
-                     reason="reissue", reissued=counts["reissued"], no_longer_eligible=counts["revoked"])
+                     reason="reissue", superseded=superseded, no_longer_eligible=not_eligible)
     return counts
 
 
@@ -206,8 +216,18 @@ def _sign_and_store(event, kind, want, payload, actor, now):
         payload_text=text.decode("utf-8"), signature=signature, kid=kid, issued_by=actor, issued_at=now)
 
 
-def _revoke(record, reason, actor, now):
-    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=now, revoked_by=actor, revoke_reason=reason)
+def _revoke(record, reason, actor, now, category):
+    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=now, revoked_by=actor, revoke_reason=reason,
+                                                     revoke_category=category)
+
+
+def replacement(record):
+    """For a superseded record, the record that replaced it (the next one in the same slot)."""
+    if record.revoke_category != RevokeCategory.SUPERSEDED:
+        return None
+    return (IssuedRecord.objects.filter(event_id=record.event_id, subject_user_id=record.subject_user_id,
+                                        kind=record.kind, slot=record.slot, issued_at__gte=record.revoked_at)
+            .exclude(pk=record.pk).order_by("issued_at").first())
 
 
 def revoke_record(record_id, reason, *, actor, origin=None):
@@ -228,7 +248,7 @@ def revoke_record(record_id, reason, *, actor, origin=None):
         fresh = IssuedRecord.objects.select_for_update().get(pk=record.pk)
         already = fresh.revoked_at is not None
         if not already:
-            _revoke(fresh, reason, actor, db_now())
+            _revoke(fresh, reason, actor, db_now(), RevokeCategory.ORGANIZER)
     if already:
         refuse(AlreadyRevoked("This record is already revoked."), "already revoked")
     audit.record(AuditAction.RECORD_REVOKED, origin=origin, actor=actor, subject=record.event.slug,

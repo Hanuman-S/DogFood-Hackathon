@@ -63,6 +63,15 @@ class RecordKind(models.TextChoices):
     WINNER = "winner", "Winner"
 
 
+class RevokeCategory(models.TextChoices):
+    """What the public is told about a revocation (the free-text reason stays with the organizers and
+    in the audit log)."""
+
+    SUPERSEDED = "superseded", "superseded by a newer record"
+    NOT_ELIGIBLE = "no_longer_eligible", "no longer eligible"
+    ORGANIZER = "organizer", "revoked by the organizer"
+
+
 def winner_slot(track, place, peoples_choice):
     """The uniqueness discriminator of a winner record: which win, by (track, place, People's Choice).
     `track` is a track name ("" for the overall ranking). Judge and participant records use ""."""
@@ -86,7 +95,8 @@ class IssuedRecord(models.Model):
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
                                    related_name="+")
-    revoke_reason = models.CharField(max_length=300, blank=True)
+    revoke_reason = models.CharField(max_length=300, blank=True)  # organizers and the audit log only
+    revoke_category = models.CharField(max_length=24, choices=RevokeCategory.choices, blank=True)  # public
 
     class Meta:
         ordering = ["-issued_at", "id"]
@@ -94,8 +104,8 @@ class IssuedRecord(models.Model):
             models.UniqueConstraint(fields=["event", "subject_user", "kind", "slot"],
                                     condition=Q(revoked_at__isnull=True), name="record_one_active_per_slot"),
             models.CheckConstraint(
-                condition=(Q(revoked_at__isnull=True, revoked_by__isnull=True, revoke_reason="")
-                           | (Q(revoked_at__isnull=False) & ~Q(revoke_reason=""))),
+                condition=(Q(revoked_at__isnull=True, revoked_by__isnull=True, revoke_reason="", revoke_category="")
+                           | (Q(revoked_at__isnull=False) & ~Q(revoke_reason="") & ~Q(revoke_category=""))),
                 name="record_revoke_fields_together"),
             models.CheckConstraint(condition=Q(kind__in=[k.value for k in RecordKind]), name="record_kind_valid"),
         ]

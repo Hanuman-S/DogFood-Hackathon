@@ -225,19 +225,35 @@ row with `retired_at` NULL. A PEM file with no row is never adopted.
 **Issuing** (`records/services.py`, organizers of the event and admins; audited; refusals too):
 - Judge records: once judging has closed (`409 judging_open`), for judges with at least one
   submitted review. The payload holds the review count and the judging window, never a score.
-- Participant records: once submissions have closed (`409 submissions_open`), for the members of
-  teams that submitted.
+- Participant records: once submissions have closed (`409 submissions_open`), for everyone who is a
+  member of a team with a submitted project **at the moment the records are issued**. Someone who
+  left before the close is not a member, so gets none. Nobody can leave after the close, because the
+  service and the deadline trigger refuse it. The exceptions are an organizer's audited deadline
+  bypass, or a team extension that ends before judging. A person removed that way has their record
+  revoked on the next issue ("no longer eligible").
 - Winner records: only from the active published final (`409 no_published_final`), one per win:
   overall places, the top of each track, People's Choice.
 - If the active key's file is missing, issuing is refused with `503 signing_unavailable`. The
   organizer Records page and the admin home then say why, and what to do: restore the `secrets`
   volume, or rotate.
 
+**The payload's event block** holds the slug, name, `submissions_open_at` and
+`submissions_close_at`. These dates are frozen once judging has work (the timeline freeze), so a
+record's meaning never changes because judging was extended.
+
 **Idempotent by meaning.** A record is compared on everything but `record_id`, `issued_at` and
-`kid`. If nothing else changed, it is kept. If something changed, the old one is revoked
-("reissued") and a new one is signed. Someone no longer eligible has theirs revoked ("no longer
-eligible"). Judge records carry the judging window, so extending judging and closing it again
-reissues them all.
+`kid`.
+- If nothing else changed, it is kept.
+- If something changed, the old one is revoked and a new one is signed. Its category is
+  `superseded`, and its page links to the newer record.
+- Someone no longer eligible has theirs revoked with the category `no_longer_eligible`.
+- The one audit row summarising a reissue lists the revoked record ids.
+- Only judge records carry the judging window, so moving the judging end reissues judge records
+  only. Participant and winner records stay as they are.
+
+**What the public sees of a revocation** is the category only: superseded (with the link), no
+longer eligible, or revoked by the organizer. The organizer's typed reason stays on the organizer's
+Records page and in the audit log.
 
 **Public endpoints:**
 - `/records/<uuid>`: the certificate, checked on the server, printable without script.
@@ -247,7 +263,10 @@ reissues them all.
 - `/.well-known/dogfood-signing-keys.json`: this install's keys only, retired ones included.
 - `/.well-known/dogfood-foreign-signing-keys.json`: other installs' keys. A record they signed is
   labelled "signed by another install (kid X)".
-- `/.well-known/dogfood-revoked.json`.
+- `/.well-known/dogfood-revoked.json`: never the ids themselves, because a record's id is its
+  certificate's address. Each revoked record appears as `record_id_sha256`, the sha256 of the
+  record_id in its usual text form (lower-case, with hyphens), UTF-8, as hex. A verifier hashes the
+  record_id it holds and looks it up.
 
 `manage.py ensure_signing_key` runs at every boot. It creates the first key, and after that only
 checks it. If the active key's file is missing, it reports that loudly without stopping the boot,

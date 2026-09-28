@@ -199,12 +199,84 @@ def test_revoking_needs_a_reason_happens_once_and_shows_everywhere(judged, clien
     with pytest.raises(AlreadyRevoked):
         services.revoke_record(record.pk, "again", actor=judged.organizer)
     page = Client().get(f"/records/{record.pk}").content.decode()
-    assert "revoked" in page and "issued to the wrong person" in page
-    listed = Client().get("/.well-known/dogfood-revoked.json").json()["revoked"]
-    assert [r["id"] for r in listed] == [str(record.pk)]
+    assert "revoked" in page and "revoked by the organizer" in page
     verdict = services.verify_bytes(record.payload_text.encode(), record.signature)
     assert verdict.state == "revoked"
-    assert Client().get(f"/records/{record.pk}.json").json()["revoked"] is True
+    data = Client().get(f"/records/{record.pk}.json").json()
+    assert data["revoked"] is True and data["revocation"]["category"] == "organizer"
+    assert data["revocation"]["replaced_by"] is None
+    # the organizer's own words stay off every public page
+    public = [page, json.dumps(data), Client().get("/.well-known/dogfood-revoked.json").content.decode(),
+              Client().post("/verify", {"payload": record.payload_text, "signature": record.signature}).content
+              .decode()]
+    assert not any("issued to the wrong person" in text for text in public)
+    organizer_page = client_for(judged.organizer).get(f"/organizer/events/{judged.slug}/records").content.decode()
+    assert "issued to the wrong person" in organizer_page
+
+
+@TX
+def test_the_revoked_list_names_hashes_never_the_ids(judged):
+    import hashlib
+    ready()
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    records = list(active(judged, RecordKind.JUDGE))
+    for record in records[:2]:
+        services.revoke_record(record.pk, "test", actor=judged.organizer)
+    body = Client().get("/.well-known/dogfood-revoked.json").content.decode()
+    for record in records:
+        assert str(record.pk) not in body and str(record.pk).replace("-", "") not in body
+    hashes = {r["record_id_sha256"] for r in json.loads(body)["revoked"]}
+    assert hashes == {hashlib.sha256(str(r.pk).encode()).hexdigest() for r in records[:2]}
+
+
+@TX
+def test_a_superseded_record_links_to_its_replacement(judged):
+    ready()
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    reopen(judged)
+    close(judged)  # judging's end moved: every judge record is reissued
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    old = IssuedRecord.objects.filter(subject_user=judged.judge_user).order_by("issued_at").first()
+    new = IssuedRecord.objects.filter(subject_user=judged.judge_user).order_by("issued_at").last()
+    assert old.revoke_category == "superseded"
+    page = Client().get(f"/records/{old.pk}").content.decode()
+    assert "superseded by a newer record" in page and f"/records/{new.pk}" in page
+    assert Client().get(f"/records/{old.pk}.json").json()["revocation"]["replaced_by"] == str(new.pk)
+
+
+@TX
+def test_moving_judgings_end_reissues_judge_records_only(judged):
+    ready()
+    publish(judged)
+    for kind in (RecordKind.JUDGE, RecordKind.PARTICIPANT, RecordKind.WINNER):
+        services.issue_records(judged, kind, actor=judged.organizer)
+    before = {k: set(active(judged, k).values_list("pk", flat=True)) for k in RecordKind}
+    Event.objects.filter(pk=judged.pk).update(judging_ends_at=judged.judging_ends_at - timedelta(minutes=5))
+    judged.refresh_from_db()
+    judge = services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    participant = services.issue_records(judged, RecordKind.PARTICIPANT, actor=judged.organizer)
+    winner = services.issue_records(judged, RecordKind.WINNER, actor=judged.organizer)
+    assert judge["reissued"] == 3
+    assert participant == {"issued": 0, "reissued": 0, "unchanged": 4, "revoked": 0}
+    assert winner["reissued"] == 0 and winner["revoked"] == 0 and winner["unchanged"] == len(before[RecordKind.WINNER])
+    for kind in (RecordKind.PARTICIPANT, RecordKind.WINNER):
+        assert set(active(judged, kind).values_list("pk", flat=True)) == before[kind]
+    payload = active(judged, RecordKind.PARTICIPANT).first().payload
+    assert set(payload["event"]) == {"slug", "name", "submissions_open_at", "submissions_close_at"}
+
+
+@TX
+def test_the_reissue_audit_row_lists_the_revoked_ids(judged):
+    ready()
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    old = {str(pk) for pk in active(judged, RecordKind.JUDGE).values_list("pk", flat=True)}
+    reopen(judged)
+    Score.objects.filter(judge__user=judged.judge_user).update(submitted_at=None)
+    close(judged)
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    row = AuditLog.objects.filter(action=AuditAction.RECORD_REVOKED, detail__reason="reissue").latest("pk")
+    assert len(row.detail["superseded"]) == 2 and len(row.detail["no_longer_eligible"]) == 1
+    assert set(row.detail["superseded"]) | set(row.detail["no_longer_eligible"]) == old
 
 
 # --- verification ------------------------------------------------------------------------------------------
@@ -347,3 +419,39 @@ def test_the_record_page_is_printable_and_has_no_script(judged):
     assert "<script>" not in html.split("</main>")[0]
     css = open("src/static/css/crt.css", encoding="utf-8").read()
     assert "@media print" in css and ".no-print" in css
+
+
+
+@TX
+def test_participant_eligibility_is_team_membership_when_issued(make_event, make_team, make_user):
+    """Members of a team whose project is submitted, as the team stands when records are issued. Someone
+    who left before the close gets none; nobody can leave after it, except through an organizer's
+    audited bypass, and then the next issue revokes theirs."""
+    from core.deadlines import SubmissionsClosed, deadline_bypass
+    from django.test import RequestFactory
+    from projects.models import Project, Status
+    from teams.models import TeamMember
+    from teams.services import leave_team
+    from test_results_flow import close_judging
+
+    ready()
+    event = make_event()
+    stays, leaves_early, removed = (make_user(email=f"{n}@example.org", name=n) for n in ("stays", "early", "removed"))
+    team = make_team(event, captain=stays, members=(leaves_early, removed))
+    Project.objects.create(team=team, name="Kept", status=Status.SUBMITTED, submitted_at=timezone.now())
+    request = RequestFactory().post("/")
+    request.user = leaves_early
+    leave_team(request, team)                     # before the close: allowed, and then not a member
+    close_judging(event)
+    request.user = removed
+    with pytest.raises(SubmissionsClosed):        # after the close: refused
+        leave_team(request, team)
+    services.issue_records(event, RecordKind.PARTICIPANT, actor=event.organizer)
+    holders = set(active(event, RecordKind.PARTICIPANT).values_list("subject_user__name", flat=True))
+    assert holders == {"stays", "removed"}
+    with deadline_bypass(None, "test: an organizer's repair", actor=event.organizer):
+        TeamMember.objects.filter(team=team, user=removed).delete()
+    counts = services.issue_records(event, RecordKind.PARTICIPANT, actor=event.organizer)
+    assert counts == {"issued": 0, "reissued": 0, "unchanged": 1, "revoked": 1}
+    gone = IssuedRecord.objects.get(subject_user=removed)
+    assert gone.revoke_category == "no_longer_eligible"

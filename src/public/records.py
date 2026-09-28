@@ -6,10 +6,17 @@
     GET  /verify   POST /verify                        paste a payload + signature
     GET  /.well-known/dogfood-signing-keys.json        this install's keys, retired ones too
     GET  /.well-known/dogfood-foreign-signing-keys.json  keys of other installs (imported records)
-    GET  /.well-known/dogfood-revoked.json             revoked record ids
+    GET  /.well-known/dogfood-revoked.json             sha256 of each revoked record's id
+
+A record's id (its uuid) is also its certificate's address: whoever has it can open the page. So the
+revoked list never names ids, only sha256(id) -- the id in its usual text form (lower-case hex with
+hyphens), UTF-8, hashed, hex. A verifier holding a record hashes its record_id and looks it up. Public
+pages show why a record was revoked only as a category (superseded, with a link to the newer record;
+no longer eligible; revoked by the organizer); the organizer's own words stay with the organizers and
+in the audit log.
 """
 
-import json
+import hashlib
 
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
@@ -38,17 +45,21 @@ def _record(record_id):
 def record_page(request, record_id):
     record = _record(record_id)
     verdict = services.verify_record(record)
-    pretty = json.dumps(record.payload, indent=2, sort_keys=True, ensure_ascii=False)
-    return render(request, "public/record.html", {"record": record, "verdict": verdict, "pretty": pretty})
+    return render(request, "public/record.html", {"record": record, "verdict": verdict,
+                                                  "replacement": services.replacement(record)})
 
 
 @never_cache
 @require_GET
 def record_json(request, record_id):
     record = _record(record_id)
+    replaced_by = services.replacement(record)
+    revocation = None if record.revoked_at is None else {
+        "revoked_at": _iso(record.revoked_at), "category": record.revoke_category,
+        "replaced_by": str(replaced_by.pk) if replaced_by else None}
     response = JsonResponse({"payload": record.payload, "payload_text": record.payload_text,
                              "signature": record.signature, "kid": record.kid, "alg": ED25519,
-                             "revoked": record.revoked_at is not None})
+                             "revoked": record.revoked_at is not None, "revocation": revocation})
     response["Content-Disposition"] = f'attachment; filename="record-{record.pk}.json"'
     return response
 
@@ -95,4 +106,12 @@ def foreign_signing_keys(request):
 @require_GET
 def revoked(request):
     rows = IssuedRecord.objects.filter(revoked_at__isnull=False).order_by("revoked_at", "id")
-    return JsonResponse({"revoked": [{"id": str(r.pk), "revoked_at": _iso(r.revoked_at)} for r in rows]})
+    return JsonResponse({
+        "hash": "sha256 of the record_id's text (lower-case, with hyphens), hex",
+        "revoked": sorted(({"record_id_sha256": revoked_id_hash(r.pk), "revoked_at": _iso(r.revoked_at)}
+                           for r in rows), key=lambda r: (r["revoked_at"], r["record_id_sha256"])),
+    })
+
+
+def revoked_id_hash(record_id):
+    return hashlib.sha256(str(record_id).lower().encode("utf-8")).hexdigest()

@@ -179,7 +179,8 @@ def test_a_record_cannot_be_changed_or_deleted(record):
 
 
 def test_a_record_is_revoked_once_and_never_unrevoked(record):
-    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=timezone.now(), revoke_reason="issued in error")
+    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=timezone.now(), revoke_reason="issued in error",
+                                                         revoke_category="organizer")
     for change in ({"revoked_at": None, "revoke_reason": ""}, {"revoke_reason": "another reason"}):
         with pytest.raises(DatabaseError), transaction.atomic():
             IssuedRecord.objects.filter(pk=record.pk).update(**change)
@@ -196,7 +197,8 @@ def test_one_active_record_per_slot_and_winner_slots_differ_by_track_place_and_p
                 payload_text="{}", signature="s", kid="k" * 16)
     with pytest.raises(IntegrityError), transaction.atomic():
         IssuedRecord.objects.create(**same)
-    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=timezone.now(), revoke_reason="reissued")
+    IssuedRecord.objects.filter(pk=record.pk).update(revoked_at=timezone.now(), revoke_reason="reissued",
+                                                         revoke_category="superseded")
     IssuedRecord.objects.create(**same)  # the slot is free again once the old one is revoked
     slots = {winner_slot("", 1, False), winner_slot("Hardware", 1, False), winner_slot("", 1, True),
              winner_slot("", 2, False)}
