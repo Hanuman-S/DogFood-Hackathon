@@ -59,6 +59,18 @@ def bundles(django_db_setup, django_db_blocker, tmp_path_factory):
                 with zipfile.ZipFile(path) as z:
                     out[slug] = {i.filename: z.read(i.filename) for i in z.infolist()}
                 os.unlink(path)
+            # The same event after a judge the final names was removed: the real export writes a
+            # missing-memberships#n placeholder, which the import must accept.
+            from events.models import EventMembership
+            from events.services import remove_judge
+            from scoring.models import ResultSnapshot
+            fixture = Event.objects.get(slug="sample-hack-2026")
+            final = ResultSnapshot.objects.filter(event=fixture, kind="final").latest("pk")
+            remove_judge(None, fixture, EventMembership.objects.get(pk=int(final.result["judges"][0]["judge_id"])))
+            path = bundle.export_event(fixture, actor=None)
+            with zipfile.ZipFile(path) as z:
+                out["missing-judge"] = {i.filename: z.read(i.filename) for i in z.infolist()}
+            os.unlink(path)
         finally:
             call_command("flush", interactive=False, verbosity=0)
     return out
@@ -366,3 +378,72 @@ def test_an_upload_over_the_cap_stops_while_copying_and_leaves_nothing(tmp_path)
     path = bundle_validate.save_upload(SimpleUploadedFile("b.zip", b"y" * 500), limit=1000)
     assert open(path, "rb").read() == b"y" * 500
     os.unlink(path)
+
+
+# --- placeholders for deleted rows: the export never writes a bundle the import refuses ------------------
+
+@pytest.mark.django_db
+def test_a_real_export_with_a_removed_judge_passes(bundles, check):
+    files = bundles["missing-judge"]
+    assert b"missing-memberships#1" in files["event.json"]
+    result = check(rezip(files, fix_manifest=False))
+    judges = [j["judge_id"] for j in result.body["result_snapshots"][-1]["result"]["judges"]]
+    assert "missing-memberships#1" in judges
+
+
+@pytest.mark.django_db
+def test_missing_project_judge_and_track_placeholders_all_pass(bundles, check):
+    def placeholders(body):
+        snapshot = body["result_snapshots"][-1]
+        row = snapshot["result"]["projects"][0]
+        row["project_id"], row["track_id"] = "missing-projects#1", "missing-tracks#1"
+        snapshot["result"]["judges"][0]["judge_id"] = "missing-memberships#1"
+        snapshot["comparison"]["rows"][0]["project_id"] = "missing-projects#1"
+        snapshot["result"]["coverage"]["reviews_by_judge"]["missing-memberships#2"] = 1
+        snapshot["result"]["excluded"].append({"kind": "review", "id": "missing-memberships#1:missing-projects#1",
+                                               "reason": "by flat judge missing-memberships#1"})
+    assert check(rezip(edit_body(bundles["sample-hack-2026"], placeholders))).body
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("value", ["missing-ballots#1", "missing-projects#0", "missing-projects#x",
+                                   "missing-memberships#1"])
+def test_a_placeholder_must_name_a_deletable_namespace_correctly(bundles, check, value):
+    """Ballots cannot be deleted, so there is no missing ballot; a placeholder is numbered from 1; and a
+    project location cannot hold a judge's placeholder."""
+    def bad(body):
+        body["result_snapshots"][-1]["result"]["projects"][0]["project_id"] = value
+    refused(check, rezip(edit_body(bundles["sample-hack-2026"], bad)), "invalid_bundle")
+
+
+# --- the schema accepts exactly the keys the export writes ------------------------------------------------
+
+@pytest.mark.django_db
+def test_the_schema_expects_exactly_the_keys_the_export_writes(bundles):
+    from imports.bundle_schema import EXTRA_KEYS, expected_fields
+
+    for slug in ("sample-hack-2026", "dogfood-archive-2026"):
+        body = json.loads(bundles[slug]["event.json"])
+        for section in bundle.SECTIONS:
+            rows = [body[section.name]] if section.one else body[section.name]
+            wanted = {n for n, _ in expected_fields(section)} | EXTRA_KEYS.get(section.name, set())
+            wanted |= set() if section.one else {"id"}
+            for row in rows:
+                if row is not None:
+                    assert set(row) == wanted, section.name
+        for user in body["users"]:
+            assert set(user) == {"id", "email", "name"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("label,change", [
+    ("a user marked superuser", lambda b: b["users"][0].update(is_superuser=True)),
+    ("a user marked staff", lambda b: b["users"][0].update(is_staff=True)),
+    ("a user marked active", lambda b: b["users"][0].update(is_active=True)),
+    ("a user marked platform admin", lambda b: b["users"][0].update(is_platform_admin=True)),
+    ("a user with a password", lambda b: b["users"][0].update(password="md5$x$y")),
+    ("a membership with an unknown role", lambda b: b["memberships"][0].update(role="superadmin")),
+    ("a membership with its generated side", lambda b: b["memberships"][0].update(side="staff")),
+])
+def test_keys_the_export_never_writes_are_refused(bundles, check, label, change):
+    refused(check, rezip(edit_body(bundles["sample-hack-2026"], change)), "invalid_bundle")
