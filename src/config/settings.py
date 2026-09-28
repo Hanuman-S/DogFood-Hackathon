@@ -184,6 +184,14 @@ VOTE_FLAG_WINDOW = timedelta(minutes=env_int("VOTE_FLAG_WINDOW_MINUTES", 10))
 VOTE_FLAG_IP_BALLOTS = env_int("VOTE_FLAG_IP_BALLOTS", 3)
 VOTE_FLAG_NEW_ACCOUNT = timedelta(minutes=env_int("VOTE_FLAG_NEW_ACCOUNT_MINUTES", 10))
 
+# Comments on gallery projects (projects/comments.py): posts and refused posts per account and per IP
+# hash, in a sliding window, counted from audit rows; an identical body from the same account within
+# COMMENT_DUPLICATE_WINDOW is refused.
+COMMENT_RATE_WINDOW = timedelta(minutes=env_int("COMMENT_RATE_WINDOW_MINUTES", 10))
+COMMENT_RATE_PER_USER = env_int("COMMENT_RATE_PER_USER", 5)
+COMMENT_RATE_PER_IP = env_int("COMMENT_RATE_PER_IP", 30)
+COMMENT_DUPLICATE_WINDOW = timedelta(minutes=10)
+
 # Only trust X-Forwarded-For behind a proxy you run; otherwise anyone can forge their IP.
 TRUST_PROXY_HEADERS = env_bool("TRUST_PROXY_HEADERS", False)
 

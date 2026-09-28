@@ -134,6 +134,15 @@ class AuditAction(models.TextChoices):
     ORGANIZER_INVITE_ACCEPTED = "organizer_invite_accepted", "Accepted a co-organizer invite"
     ORGANIZER_INVITE_REVOKED = "organizer_invite_revoked", "Revoked a co-organizer invite"
     ORGANIZER_INVITE_REFUSED = "organizer_invite_refused", "Refused a co-organizer invite"
+    # comments on gallery projects (T3)
+    COMMENT_POSTED = "comment_posted", "Posted a comment"
+    COMMENT_REFUSED = "comment_refused", "Refused a comment"
+    COMMENT_THROTTLED = "comment_throttled", "Refused a comment (rate limit)"
+    COMMENT_DELETED = "comment_deleted", "Deleted own comment"
+    COMMENT_HIDDEN = "comment_hidden", "Hid a comment"
+    COMMENT_RESTORED = "comment_restored", "Restored a hidden comment"
+    COMMENT_MODERATION_REFUSED = "comment_moderation_refused", "Refused to delete, hide or restore a comment"
+    COMMENTS_TOGGLED = "comments_toggled", "Turned an event's comments on or off"
 
 
 class AuditLog(models.Model):

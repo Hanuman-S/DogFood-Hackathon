@@ -10,6 +10,8 @@ import secrets
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Length
+from django.db.models.lookups import LessThanOrEqual
 from django.utils import timezone
 
 from events.models import CustomQuestion, Event, Track
@@ -116,3 +118,53 @@ class Answer(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["project", "question"], name="one_answer_per_question"),
         ]
+
+
+COMMENT_MAX_LENGTH = 2000
+
+
+class Comment(models.Model):
+    """A comment on a project in the public gallery. Never edited: an author can delete their own
+    (soft, `deleted_at`), and an organizer of the event or a platform admin can hide one with a
+    reason and restore it. Hidden and deleted comments are shown to nobody but organizers and admins.
+    Every write goes through projects/comments.py."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="comments")
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    body = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+    hidden_at = models.DateTimeField(null=True, blank=True)
+    hidden_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    )
+    hide_reason = models.CharField(max_length=300, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(LessThanOrEqual(Length("body"), COMMENT_MAX_LENGTH)) & ~Q(body=""),
+                name="comment_body_length",
+            ),
+            # hidden <=> who hid it and why are recorded
+            models.CheckConstraint(
+                condition=(
+                    Q(hidden_at__isnull=True, hidden_by__isnull=True, hide_reason="")
+                    | (Q(hidden_at__isnull=False, hidden_by__isnull=False) & ~Q(hide_reason=""))
+                ),
+                name="comment_hidden_fields_together",
+            ),
+        ]
+        indexes = [models.Index(fields=["project", "-created_at", "-id"], name="comment_project_newest_idx")]
+
+    def __str__(self):
+        return f"comment #{self.pk} on {self.project_id}"
+
+    @property
+    def is_hidden(self):
+        return self.hidden_at is not None
+
+    @property
+    def is_deleted(self):
+        return self.deleted_at is not None

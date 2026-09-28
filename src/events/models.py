@@ -80,6 +80,9 @@ class Event(models.Model):
     )
     max_team_size = models.PositiveSmallIntegerField(default=4)
     is_published = models.BooleanField(default=False)
+    # Comments on this event's gallery projects (projects/comments.py). Organizers can turn them off;
+    # existing comments stay, and no new ones are accepted.
+    comments_enabled = models.BooleanField(default=True)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+"
