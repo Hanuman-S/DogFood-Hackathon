@@ -154,6 +154,15 @@ class AuditAction(models.TextChoices):
     EVENT_IMPORT_REFUSED = "event_import_refused", "Refused an event bundle import"
 
 
+class AuditLogQuerySet(models.QuerySet):
+    def live(self):
+        """Rows this install wrote. Leaves out history an event bundle brought in (marked
+        `detail.source_history`): those rows describe another install and must never feed a decision
+        here -- a rate limit, a throttle, a cap. `has_key`, not `= true`: negating a JSON key comparison
+        would also drop every row that has no such key."""
+        return self.exclude(detail__has_key="source_history")
+
+
 class AuditLog(models.Model):
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
     # SET_NULL + an email snapshot: the trail must outlive the account it describes.
@@ -171,6 +180,8 @@ class AuditLog(models.Model):
     ip_hash = models.CharField(max_length=64, blank=True)
     user_agent = models.CharField(max_length=300, blank=True)
     detail = models.JSONField(default=dict, blank=True)
+
+    objects = AuditLogQuerySet.as_manager()
 
     class Meta:
         ordering = ["-created_at", "-id"]

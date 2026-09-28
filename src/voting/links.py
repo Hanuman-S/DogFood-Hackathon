@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import re
 import secrets
 
 from django.core import signing
@@ -53,6 +54,9 @@ def is_open_token(config, token) -> bool:
 
 # --- the open-link cookie ------------------------------------------------------------------------
 
+VOTER_ID = re.compile(r"[0-9a-f]{32}")
+
+
 def cookie_name(event):
     return f"dogfood_vote_{event.pk}"
 
@@ -71,7 +75,12 @@ def cookie_voter_id(event, value) -> str:
         return ""
     if not isinstance(data, dict) or data.get("e") != event.pk or not isinstance(data.get("v"), str):
         return ""
-    return data["v"][:64]
+    # Only the form new_cookie_value issues (32 hex). An imported ballot's voter is a pseudonym
+    # ("v_" + 16 hex) stored in the same column; this makes sure no cookie -- even one signed with
+    # this install's key -- can ever name it.
+    if not VOTER_ID.fullmatch(data["v"]):
+        return ""
+    return data["v"]
 
 
 # --- the allowlist ---------------------------------------------------------------------------------

@@ -28,7 +28,7 @@ def is_throttled(email, ip_hash):
     window_start = now - settings.LOGIN_FAILURE_WINDOW
 
     last_success = (
-        AuditLog.objects.filter(
+        AuditLog.objects.live().filter(
             action=AuditAction.LOGIN_OK, subject=email, ip_hash=ip_hash, created_at__gte=window_start
         )
         .order_by("-created_at")
@@ -37,13 +37,13 @@ def is_throttled(email, ip_hash):
     )
     since = max(window_start, last_success) if last_success else window_start
 
-    per_account = AuditLog.objects.filter(
+    per_account = AuditLog.objects.live().filter(
         action=AuditAction.LOGIN_FAILED, subject=email, ip_hash=ip_hash, created_at__gt=since
     ).count()
     if per_account >= settings.LOGIN_FAILURE_LIMIT:
         return True
 
-    per_ip = AuditLog.objects.filter(
+    per_ip = AuditLog.objects.live().filter(
         action=AuditAction.LOGIN_FAILED, ip_hash=ip_hash, created_at__gte=window_start
     ).count()
     return per_ip >= settings.LOGIN_IP_FAILURE_LIMIT

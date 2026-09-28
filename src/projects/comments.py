@@ -81,7 +81,7 @@ def _refuse_anonymous(project_id, origin):
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [f"comment-anon:{ip_hash}"])
         since = db_now() - settings.COMMENT_RATE_WINDOW
-        recent = AuditLog.objects.filter(ip_hash=ip_hash, created_at__gte=since)
+        recent = AuditLog.objects.live().filter(ip_hash=ip_hash, created_at__gte=since)
         if recent.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).count() < settings.COMMENT_ANON_RATE_PER_IP:
             audit.record(AuditAction.COMMENT_ANONYMOUS_REFUSED, origin=origin, subject=subject,
                          project=str(project_id), reason="not logged in")
