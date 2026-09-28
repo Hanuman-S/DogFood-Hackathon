@@ -257,6 +257,14 @@ STORAGES = {
 MEDIA_ROOT = Path(env("DJANGO_MEDIA_ROOT", str(BASE_DIR.parent / "media")))
 MEDIA_URL = "/media/"
 MAX_IMAGE_BYTES = env_int("MAX_IMAGE_BYTES", 5 * 1024 * 1024)
+
+# Event bundles (imports/bundle.py writes them, the import reads them). The export refuses anything
+# the import would refuse, so every bundle this install writes can be taken back in.
+BUNDLE_MAX_BYTES = env_int("BUNDLE_MAX_BYTES", 100 * 1024 * 1024)                 # the zip itself
+BUNDLE_MAX_TOTAL_BYTES = env_int("BUNDLE_MAX_TOTAL_BYTES", 300 * 1024 * 1024)     # uncompressed
+BUNDLE_MAX_EVENT_JSON_BYTES = env_int("BUNDLE_MAX_EVENT_JSON_BYTES", 50 * 1024 * 1024)
+BUNDLE_MAX_MEDIA_BYTES = MAX_IMAGE_BYTES                                           # per image
+BUNDLE_MAX_ENTRIES = env_int("BUNDLE_MAX_ENTRIES", 2000)
 MAX_IMAGE_PIXELS = 40_000_000             # refuse decompression bombs before decoding them
 MAX_PROJECT_IMAGES = env_int("MAX_PROJECT_IMAGES", 8)
 MAX_PROJECT_TAGS = env_int("MAX_PROJECT_TAGS", 50)

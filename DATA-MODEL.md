@@ -275,3 +275,140 @@ from each event's control page in the organizer portal.
 - Every CSV goes through one writer (`core/csvfile.py`): UTF-8 with a BOM, and text cells starting
   with `=`, `+`, `-`, `@`, a tab or a carriage return are prefixed with `'` so a spreadsheet shows them
   instead of running them. Every download is audited.
+
+## Event bundle (export; the import follows in C1b/C1c)
+
+One zip that carries a whole event to another install: `imports/bundle.py`. Organizers of the event
+and platform admins download it from the event page ("download event bundle",
+`GET /organizer/events/<slug>/bundle`), from `GET /api/events/<slug>/bundle`, or on the host with
+`manage.py export_event <slug> <file>`. Every download is audited (`event_exported`, with the zip's
+sha256); every refusal too (`event_export_refused`).
+
+### Files
+
+| path | what |
+|---|---|
+| `manifest.json` | `format` = `"dogfood-event-bundle"`, `version` = 1, `generator`, `created_at` (database clock, ISO 8601), `source_event` (the slug), and `files`: `{path: sha256}` for **every other file and only those** |
+| `event.json` | the event and everything in it (below) |
+| `media/<sha256>.<ext>` | thumbnails and gallery images, named by the sha256 of their bytes; `ext` is `jpg`, `png` or `webp` |
+
+Every file is UTF-8 JSON written with sorted keys and no whitespace (`ensure_ascii` off, so every
+string round-trips exactly). Zip entries are sorted, with a fixed timestamp (1980-01-01). The zip is
+refused before it is written if the import could not take it back:
+- more than `BUNDLE_MAX_ENTRIES` (2000) files;
+- `event.json` over `BUNDLE_MAX_EVENT_JSON_BYTES` (50 MB);
+- an image over `BUNDLE_MAX_MEDIA_BYTES` (5 MB);
+- over `BUNDLE_MAX_TOTAL_BYTES` (300 MB) uncompressed;
+- a zip over `BUNDLE_MAX_BYTES` (100 MB).
+
+The zip is written to a temporary file, never held in memory.
+
+### event.json
+
+**Layout.** Top-level keys are `format`, `version`, then one key per section. Rows are lists in
+primary-key order. One-per-event sections (`event`, `scoring_config`, `result_settings`,
+`voting_config`) are a single object or `null`.
+
+**Bundle ids.** Each row of a list carries `id`, a **bundle id** `"<section>#<n>"`, numbered 1..n in
+that order, so no source primary key travels. Every reference to another row is that row's bundle
+id. References to the event itself are left out, because every row belongs to it. References to
+accounts are `"users#<n>"`.
+
+**Values.**
+- Datetimes are ISO 8601 with their offset.
+- Decimals are strings (`"4.50"`).
+- Files are `media/...` paths (or `""`).
+- Tags are a sorted list of names.
+
+| section | model | notes |
+|---|---|---|
+| `event` | events.Event | every column but the primary key |
+| `tracks`, `prizes`, `questions` | Track, Prize, CustomQuestion | |
+| `memberships` | EventMembership | `user`, `role`, `added_by`, `added_at` (`side` is generated, left out) |
+| `judge_tracks` | JudgeTrack | `membership`, `track` |
+| `teams` | Team | **no `invite_token`** (the import makes new ones) |
+| `team_members`, `team_extensions` | TeamMember, TeamExtension | |
+| `projects` | Project | `thumbnail` is a media path, `tags` a list of names |
+| `project_images`, `answers` | ProjectImage, Answer | |
+| `comments` | Comment | hidden and deleted comments too, with who hid them and why |
+| `criteria` | Criterion | `level_descriptions` keys are rubric levels ("1".."5"), not ids |
+| `assignment_rounds`, `assignments` | AssignmentRound, Assignment | `summary` ids remapped (below) |
+| `scores`, `score_items` | Score, ScoreItem | drafts too |
+| `scoring_config`, `result_settings` | EventScoringConfig, EventResultSettings | |
+| `voting_config` | VotingConfig | **no `ballot_secret`, no `open_link_nonce`** (the import makes new ones) |
+| `ballots` | Ballot | **`voter` is a pseudonym**; no voter account, link or cookie, **no IP hashes** |
+| `ballot_lines` | BallotLine | |
+| `tally_snapshots` | VoteTallySnapshot | JSON ids remapped; `input_hash` is the source install's |
+| `result_snapshots` | ResultSnapshot | JSON ids remapped; `input_hash` is the source install's |
+| `publications` | Publication | |
+| `fixture_refs` | imports.FixtureRef | only `project` and `score` refs of this event's rows, selected by (kind, object_id); `object` is the row's bundle id |
+| `audit` | core.AuditLog | rows with `subject` = the slug or `detail.event` = the slug; see below |
+| `users` | accounts.User | `{id, email, name}` of every account the rows above reference, **except accounts that appear only as voters** |
+
+**Never in a bundle:**
+- password hashes;
+- sessions;
+- API tokens;
+- judge and organizer invites (and their digests);
+- team invite tokens;
+- voter links (their nonces and digests);
+- the vote's ballot secret and open-link nonce;
+- any IP hash;
+- audit user agents;
+- SECRET_KEY and every key derived from it.
+
+`tests/test_bundle_export.py` greps the bundle's bytes for each of them.
+
+**Voter pseudonyms.** Each ballot's voter is `"v_" + HMAC-SHA256(salt, identity)[:16]`.
+- The salt is 32 random bytes made for this one export and then discarded.
+- The identity is the voter's account, link or open-link cookie.
+- The same pseudonym replaces that voter in the voting audit rows: the actor and `actor_email` of
+  ballot-opened and vote-cast/changed/refused/throttled rows, and `detail.voter` / `detail.email`
+  where an organizer voided, restored or revoked.
+
+Ballots can be grouped by voter within one bundle, but never tied to an account. Two exports give
+different pseudonyms.
+
+**Audit rows** are source history: `{id, created_at, action, actor, actor_email, subject, detail}`.
+- `detail` keeps the source install's ids as they were (a ballot number, a project number). They are
+  labelled source history, not remapped.
+- Keys naming secrets or addresses (`*token*`, `*prefix*`, `*digest*`, `*secret*`, `*nonce*`, `ip`,
+  `ip_hash`, `user_agent`) are dropped at any depth.
+
+### Ids inside JSON columns
+
+Results, tallies and assignment summaries store database ids as data. `imports/bundle_ids.py`
+declares every location, with one kind each, and rewrites them to bundle ids. The import rewrites
+them to the new primary keys.
+
+| kind | meaning |
+|---|---|
+| `plain` | one id of a namespace (projects, memberships, tracks, ballots, tally_snapshots, result_snapshots): `"25"` becomes `"projects#3"`, `4` becomes `"ballots#2"` |
+| `composite` | a review id `"<judge>:<project>"`: both halves remapped (`"memberships#16:projects#33"`) |
+| `external` | kept byte for byte: a fixture id (`"dup:prj_41"`, the engine's name for a folded duplicate), a criterion key, a rubric level, the judges' weight |
+
+Rules for particular values:
+- A project reference is `plain` unless it is a `dup:` id, which is external.
+- An exclusion's `id` follows its `kind`: review → composite, project → plain (external for
+  `dup:`), judge → plain.
+- The duplicate filter's four `reason` templates name the kept project ("kept: 33") and are
+  remapped. Other prose is kept as written.
+
+| column | declared locations |
+|---|---|
+| ResultSnapshot `result`, and `comparison.results.<method>` | `projects[].project_id`, `projects[].track_id`, `judges[].judge_id`, `excluded[].id`, `excluded[].reason`, `flags.reviews[].judge`, `flags.reviews[].project`, `coverage.projects_with_no_reviews[]`, `coverage.projects_below_min_reviews[]`, `coverage.reviews_by_judge` (judge ids as keys), `diagnostics.method.components[].sd_floored_judges[]` |
+| ResultSnapshot `comparison` | `rows[].project_id`, `rows[].track_id`, `movers[].project_id` |
+| ResultSnapshot `combined` | `[].project_id` |
+| ResultSnapshot `diagnostics` | `vote_tally.id`, `vote_tally.previous`, `vote_tally.voided_since_previous[]`, `vote_tally.restored_since_previous[]`, `previous_final.id`, `live_tally[].project_id` |
+| ResultSnapshot `rubric`, `final_weights` | `criteria[].id` (external), `judge` (external) |
+| VoteTallySnapshot | `rows[].project_id`, `voided_ballot_ids[]`, `voided_since_previous[]`, `restored_since_previous[]` |
+| AssignmentRound `summary` | `short` (project ids as keys), `excluded_judges[]` |
+
+**The guard.** These fail the export (`400 unknown_id_field`, audited, no file written):
+- anywhere else in these columns (and in `EventScoringConfig.overrides`), a key that looks like an
+  id (`id`, `*_id`, `*_ids`, `ids`, `project`, `judge`, `ballot`);
+- any digit-string dict key outside a declared location;
+- a declared id that names no row of the event.
+
+A new engine output with ids in it must be declared here before an event that uses it can be
+exported.

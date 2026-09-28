@@ -146,6 +146,11 @@ class AuditAction(models.TextChoices):
     COMMENT_RESTORED = "comment_restored", "Restored a hidden comment"
     COMMENT_MODERATION_REFUSED = "comment_moderation_refused", "Refused to delete, hide or restore a comment"
     COMMENTS_TOGGLED = "comments_toggled", "Turned an event's comments on or off"
+    # event bundles (C1)
+    EVENT_EXPORTED = "event_exported", "Downloaded an event bundle"
+    EVENT_EXPORT_REFUSED = "event_export_refused", "Refused an event bundle download"
+    EVENT_IMPORTED = "event_imported", "Imported an event bundle"
+    EVENT_IMPORT_REFUSED = "event_import_refused", "Refused an event bundle import"
 
 
 class AuditLog(models.Model):
