@@ -406,6 +406,10 @@ class ResultSnapshot(models.Model):
     engine_config = models.JSONField()
     rubric = models.JSONField()
     input_hash = models.CharField(max_length=64)
+    # The sha256 of the event bundle this row was imported from; NULL for a snapshot computed here. Set
+    # only at INSERT (the table is immutable), never exported. An imported snapshot's input_hash is the
+    # source install's, so the next final's scores_changed_since_last_final is NULL ("unknown").
+    imported_from = models.CharField(max_length=64, null=True, blank=True)
     result = models.JSONField()
     comparison = models.JSONField()
     diagnostics = models.JSONField(default=dict)

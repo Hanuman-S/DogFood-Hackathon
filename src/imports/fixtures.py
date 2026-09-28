@@ -98,6 +98,17 @@ def load(path):
     return data
 
 
+def event_of(kind, obj):
+    """The event a referenced row belongs to (None for a user, the one install-wide kind)."""
+    if kind == "user":
+        return None
+    if kind == "event":
+        return obj.pk
+    if kind == "score":
+        return obj.project.event_id
+    return obj.event_id  # track, team, project, judge (an EventMembership)
+
+
 class Importer:
     def __init__(self, data, report=None):
         self.data = data
@@ -110,7 +121,8 @@ class Importer:
         return FixtureRef.objects.filter(source=SOURCE, kind=kind, external_id=external_id).first()
 
     def remember(self, kind, external_id, obj, **extra):
-        FixtureRef.objects.create(source=SOURCE, kind=kind, external_id=external_id, object_id=obj.pk, **extra)
+        FixtureRef.objects.create(source=SOURCE, kind=kind, external_id=external_id, object_id=obj.pk,
+                                  event_id=event_of(kind, obj), **extra)
 
     # --- the import -------------------------------------------------------------------------
 

@@ -616,7 +616,10 @@ def freeze_tally(event, *, actor):
     return VoteTallySnapshot.objects.create(
         event=event, created_at=db_now(), created_by=actor, created_by_email=actor.email, method=config.method,
         budget=config.budget, rows=rows, counts=ballot_counts(event), voided_ballot_ids=voided, input_hash=digest,
-        previous=previous, changed_since_previous=previous is not None and previous.input_hash != digest,
+        previous=previous,
+        # None ("unknown") after an imported tally: its input_hash is over the source install's ids.
+        changed_since_previous=(None if previous is not None and previous.imported_from is not None
+                                else previous is not None and previous.input_hash != digest),
         voided_since_previous=sorted(set(voided) - before), restored_since_previous=sorted(before - set(voided)),
     )
 

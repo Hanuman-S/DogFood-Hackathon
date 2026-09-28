@@ -302,7 +302,8 @@ def judged(world, clock):
 
     clock(during(world["event"]))
     services.save_review(None, world["membership"], world["projects"][0], FULL, "mine", submit=True)
-    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_99", object_id=world["membership"].pk)
+    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_99", object_id=world["membership"].pk,
+                              event_id=world["membership"].event_id)
     return world
 
 
@@ -320,7 +321,8 @@ def test_a_judge_naming_anyone_else_is_refused_and_audited(judged, make_user, na
 
     other = make_user(role=Role.JUDGE, email="judge.two@example.org")
     other_membership = EventMembership.objects.create(user=other, event=judged["event"], role=Role.JUDGE)
-    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_98", object_id=other_membership.pk)
+    FixtureRef.objects.create(kind=FixtureRef.Kind.JUDGE, external_id="jdg_98", object_id=other_membership.pk,
+                              event_id=other_membership.event_id)
     before = AuditLog.objects.filter(action=AuditAction.ACCESS_DENIED).count()
     response = api(judged["judge"]).get("/api/judge/scores", {"judge": name.format(other_pk=other.pk)})
     assert response.status_code == 403

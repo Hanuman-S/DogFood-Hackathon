@@ -234,8 +234,13 @@ class VoteTallySnapshot(models.Model):
     counts = models.JSONField(default=dict)
     voided_ballot_ids = models.JSONField(default=list)
     input_hash = models.CharField(max_length=64)
+    # The sha256 of the event bundle this row was imported from; NULL for a tally computed here. Set
+    # only at INSERT (the table is immutable), never exported. An imported tally's input_hash is the
+    # source install's, so the next tally cannot compare with it (changed_since_previous is NULL).
+    imported_from = models.CharField(max_length=64, null=True, blank=True)
     previous = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
-    changed_since_previous = models.BooleanField(default=False)
+    # True / False, or NULL for "unknown": the previous tally was imported, so the hashes are not comparable.
+    changed_since_previous = models.BooleanField(default=False, null=True)
     voided_since_previous = models.JSONField(default=list)
     restored_since_previous = models.JSONField(default=list)
 

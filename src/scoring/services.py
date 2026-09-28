@@ -83,7 +83,6 @@ from .errors import (AlreadyPublished, ConcurrentFinal, FinalOverrideRefused, Fi
                      InvalidWeights, JudgingOpen, NoSuchSnapshot, NotFinal, NotLatestFinal, NotPublished,
                      NoVoteForCommunityWeight, ScoringConfigLocked, SnapshotInsideTransaction, WeightsLocked)
 
-FIXTURE_SOURCE = "dogfood-fixtures"  # imports.fixtures.SOURCE
 
 WEIGHT_STEP = Decimal("0.001")  # Criterion.weight has three decimal places
 WEIGHT_MAX = Decimal("999.999")  # Criterion.weight: max_digits=6, decimal_places=3
@@ -669,7 +668,8 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
 
     # Duplicates folded in by the importer: project ref with duplicate_of -> the kept project row.
     duplicate_of_pk = {}   # fixture id of the duplicate -> kept project's pk
-    for ref in FixtureRef.objects.filter(source=FIXTURE_SOURCE, kind=FixtureRef.Kind.PROJECT).exclude(duplicate_of=""):
+    # By event, whatever the source: the organizers' fixture file, or refs an event bundle carried in.
+    for ref in FixtureRef.objects.filter(event=event, kind=FixtureRef.Kind.PROJECT).exclude(duplicate_of=""):
         if str(ref.object_id) in projects:
             duplicate_of_pk[ref.external_id] = str(ref.object_id)
     duplicates = {}
@@ -683,7 +683,7 @@ def build_input(event, *, weights: dict | None = None) -> EngineInput:
     )
     moved = {}  # score pk -> duplicate engine id, for reviews the importer took off a duplicate
     if duplicate_of_pk:
-        refs = FixtureRef.objects.filter(source=FIXTURE_SOURCE, kind=FixtureRef.Kind.SCORE,
+        refs = FixtureRef.objects.filter(event=event, kind=FixtureRef.Kind.SCORE,
                                          object_id__in=[s.pk for s in scores])
         for ref in refs:
             project_external = ref.external_id.rsplit(":", 1)[-1]
@@ -720,7 +720,7 @@ def display_labels(event, inp: EngineInput) -> dict:
     rows = {str(p.pk): p for p in Project.objects.filter(event=event)}
     fixture_ids = {
         str(ref.object_id): ref.external_id
-        for ref in FixtureRef.objects.filter(source=FIXTURE_SOURCE, kind=FixtureRef.Kind.PROJECT,
+        for ref in FixtureRef.objects.filter(event=event, kind=FixtureRef.Kind.PROJECT,
                                              duplicate_of="", object_id__in=[p.pk for p in rows.values()])
     }
     projects = {pk: f"{p.name} ({fixture_ids.get(pk, f'#{pk}')})" for pk, p in rows.items()}
@@ -841,10 +841,13 @@ def compute_snapshot(event, kind, *, actor, method=None, config=None, weights=No
                             .order_by("-created_at", "-id").first())
                 diagnostics["previous_final"] = None if previous is None else {
                     "id": previous.pk, "created_at": previous.created_at.isoformat(),
-                    "input_hash": previous.input_hash,
+                    "input_hash": previous.input_hash, "imported": previous.imported_from is not None,
                 }
+                # true / false, or None ("unknown") when the previous final was imported: its input_hash
+                # was computed from the source install's ids, so the two cannot be compared.
                 diagnostics["scores_changed_since_last_final"] = (
-                    previous is not None and previous.input_hash != digest
+                    None if previous is not None and previous.imported_from is not None
+                    else previous is not None and previous.input_hash != digest
                 )
             snapshot = ResultSnapshot.objects.create(
                 event=event, kind=kind, created_at=db_now(), created_by=actor,

@@ -234,7 +234,8 @@ def test_fixture_refs_are_selected_by_kind_and_object_id(world):
     project = Project.objects.filter(event=fixture).order_by("pk").first()
     user = User.objects.create_user("same-number@example.org", None, name="Same Number")
     FixtureRef.objects.create(source="elsewhere", kind="user", external_id="usr_x", object_id=project.pk)
-    FixtureRef.objects.create(source="elsewhere", kind="judge", external_id="jdg_x", object_id=project.pk)
+    FixtureRef.objects.create(source="elsewhere", kind="judge", external_id="jdg_x", object_id=project.pk,
+                              event=fixture)
     body = body_of(export(fixture))
     assert {r["kind"] for r in body["fixture_refs"]} == {"project", "score"}
     assert not [r for r in body["fixture_refs"] if r["external_id"] in ("usr_x", "jdg_x")]

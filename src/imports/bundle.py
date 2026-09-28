@@ -131,8 +131,8 @@ SECTIONS = [
     Section("ballots", "voting.Ballot", "event",
             exclude=("voter_user", "voter_link", "voter_cookie", "ip_hash", "created_ip_hash")),
     Section("ballot_lines", "voting.BallotLine", "ballot__event"),
-    Section("tally_snapshots", "voting.VoteTallySnapshot", "event"),
-    Section("result_snapshots", "scoring.ResultSnapshot", "event"),
+    Section("tally_snapshots", "voting.VoteTallySnapshot", "event", exclude=("imported_from",)),
+    Section("result_snapshots", "scoring.ResultSnapshot", "event", exclude=("imported_from",)),
     Section("publications", "scoring.Publication", "event"),
 ]
 BY_MODEL = {s.model: s for s in SECTIONS}
