@@ -310,8 +310,11 @@ primary-key order. One-per-event sections (`event`, `scoring_config`, `result_se
 `voting_config`) are a single object or `null`.
 
 **Bundle ids.** Each row of a list carries `id`, a **bundle id** `"<section>#<n>"`, numbered 1..n in
-that order, so no source primary key travels. Every reference to another row is that row's bundle
-id. References to the event itself are left out, because every row belongs to it. References to
+that order. No source primary key is used as a bundle id, as a reference between rows, or in any
+declared id location inside JSON (below). Source ids do still appear in two places, by design or
+because they cannot be known: audit rows' `detail` (kept as source history, see below), and free
+text people wrote (a description or a comment that mentions "#12" is not examined). Every
+reference to another row is that row's bundle id. References to the event itself are left out, because every row belongs to it. References to
 accounts are `"users#<n>"`.
 
 **Values.**
@@ -372,8 +375,12 @@ different pseudonyms.
 **Audit rows** are source history: `{id, created_at, action, actor, actor_email, subject, detail}`.
 - `detail` keeps the source install's ids as they were (a ballot number, a project number). They are
   labelled source history, not remapped.
-- Keys naming secrets or addresses (`*token*`, `*prefix*`, `*digest*`, `*secret*`, `*nonce*`, `ip`,
-  `ip_hash`, `user_agent`) are dropped at any depth.
+- Keys naming secrets or addresses are dropped at any depth. A key is split into its
+  `_`-separated segments (lower-cased) and dropped if any segment is one of `token`, `tokens`,
+  `prefix`, `digest`, `secret`, `nonce`, `password`, `ip`, or if it contains the pair `user`,
+  `agent`. Whole segments only, never substrings: `ip_hash`, `created_ip_hash`, `token_prefix`,
+  `token_digest`, `ballot_secret`, `open_link_nonce` and `user_agent` are dropped, while
+  `description`, `recipient`, `skip` and `tokenizer` are kept (`tests/test_bundle_export.py`).
 
 ### Ids inside JSON columns
 
@@ -391,8 +398,26 @@ Rules for particular values:
 - A project reference is `plain` unless it is a `dup:` id, which is external.
 - An exclusion's `id` follows its `kind`: review → composite, project → plain (external for
   `dup:`), judge → plain.
-- The duplicate filter's four `reason` templates name the kept project ("kept: 33") and are
-  remapped. Other prose is kept as written.
+- Prose that names ids: the engine's stored reason templates that interpolate an id are listed in
+  `bundle_ids.TEXT_TEMPLATES`, and an exclusion `reason` that fully matches one has each id field
+  remapped:
+  - `review of duplicate submission {dup} (kept: {project})`
+  - `judge also reviewed {project}, the kept submission; that review is used`
+  - `duplicate submission of {project}; {what}` (where `{what}` is "excluded with its reviews" or
+    `its reviews merged into {project}`)
+  - `by flat judge {judge}`
+
+  `tests/test_bundle_ids_prose.py` reads the engine's source (and the assignment planner's, whose
+  warnings are stored) and fails if an f-string outside a `raise` interpolates an id-like name
+  without being listed. Other prose (notes, explanations, warnings, which name tracks and counts)
+  is kept as written.
+- **Rows deleted after a snapshot named them.** A snapshot is immutable, but a judge can be removed
+  (the membership is deleted, at any time), and a preview taken while submissions were open can name
+  a project or a track that was deleted afterwards. Such an id becomes `"missing-<namespace>#<n>"`
+  (numbered within the bundle, carrying no source number), counted in the export's audit row, and
+  kept as is by the import and by any later export. Ballots, tallies and result snapshots cannot be
+  deleted (PROTECT foreign keys, the voting trigger, a read-only database admin), so an unknown one
+  is an inconsistency, and the export fails with `400 dangling_id`.
 
 | column | declared locations |
 |---|---|
@@ -407,8 +432,10 @@ Rules for particular values:
 **The guard.** These fail the export (`400 unknown_id_field`, audited, no file written):
 - anywhere else in these columns (and in `EventScoringConfig.overrides`), a key that looks like an
   id (`id`, `*_id`, `*_ids`, `ids`, `project`, `judge`, `ballot`);
-- any digit-string dict key outside a declared location;
-- a declared id that names no row of the event.
+- any digit-string dict key outside a declared location.
+
+A declared id of a ballot, tally or result snapshot that names no row fails it too, with
+`400 dangling_id`.
 
 A new engine output with ids in it must be declared here before an event that uses it can be
 exported.

@@ -24,9 +24,18 @@ The guard: anywhere else, a key that looks like an id (`id`, `*_id`, `*_ids`, `i
 `judge`, `ballot`) or any digit-string dict key fails the export. An id in an undeclared place would
 otherwise travel unmapped and silently point at the wrong row after import.
 
-Free text is not an id location, with one declared exception: an exclusion `reason` from the
-engine's duplicate filter names the kept project ("kept: 33"); those four templates are remapped.
-Everything else in prose (notes, explanations, warnings) is kept verbatim.
+Prose: the engine writes a few reason strings that name ids ("kept: 33", "by flat judge 16"). Every
+such template is listed in TEXT_TEMPLATES, with the namespace of each field; an exclusion `reason`
+that matches one is rewritten, field by field. tests/test_bundle_ids_prose.py reads the engine's
+source and fails if a stored f-string interpolates an id-like name and is not listed. Other prose
+(notes, explanations, assignment warnings, which name tracks and counts) is kept verbatim.
+
+Rows that no longer exist: a snapshot is immutable, but a judge can be removed (their membership is
+deleted), and a preview taken while submissions were open can name a project, or a track, that was
+deleted afterwards. Such an id becomes "missing-<namespace>#<n>" (numbered per bundle, no source
+number) rather than failing the export for ever, and is kept as is by the import and by a re-export.
+Ballots, tallies and result snapshots cannot be deleted (PROTECT foreign keys and the triggers), so
+an unknown one is a real inconsistency: the export fails with `dangling_id`.
 
 `input_hash` is not remapped: it stays the source install's hash of the source install's input.
 """
@@ -47,7 +56,12 @@ class UnknownIdField(Exception):
 
 
 class DanglingId(Exception):
-    """A declared id that names no row of this event."""
+    """A declared id that names no row of this event, in a namespace whose rows cannot be deleted."""
+
+
+# Namespaces whose rows can be deleted after a snapshot names them (see the module docstring).
+DELETABLE = frozenset({PROJECT, MEMBERSHIP, TRACK})
+MISSING_PREFIX = "missing-"
 
 
 # One engine result (a method's output): at snapshot.result and at each comparison.results.<method>.
@@ -111,13 +125,53 @@ TABLE = {
 # Paths under "results.{method}" match any method name; everything else matches literally.
 _METHOD = re.compile(r"^results\.[^.\[\]{}]+\.")
 
-# The duplicate filter's reason templates (scoring/engine/filters.py), each naming the kept project.
-REASON_PROJECT = [
-    re.compile(r"(?<=\(kept: )(\d+)(?=\))"),
-    re.compile(r"(?<=judge also reviewed )(\d+)(?=, the kept submission)"),
-    re.compile(r"(?<=duplicate submission of )(\d+)(?=;)"),
-    re.compile(r"(?<=its reviews merged into )(\d+)$"),
-]
+# Every stored string template in the engine that names an id: (where, template). A field is
+# {project} (a project id), {judge} (a membership id), {dup} (a dup:<fixture id>, external), {what}
+# (another template's text) or, for the composite review id itself, {judge_id}:{project_id}.
+TEXT_TEMPLATES = (
+    ("scoring/engine/filters.py review_id", "{judge_id}:{project_id}"),
+    ("scoring/engine/filters.py exclude_duplicate_submissions", "review of duplicate submission {dup} (kept: {project})"),
+    ("scoring/engine/filters.py exclude_duplicate_submissions", "judge also reviewed {project}, the kept submission; that review is used"),
+    ("scoring/engine/filters.py exclude_duplicate_submissions", "its reviews merged into {project}"),
+    ("scoring/engine/filters.py exclude_duplicate_submissions", "duplicate submission of {project}; {what}"),
+    ("scoring/engine/filters.py exclude_flat_judges", "by flat judge {judge}"),
+)
+_FIELD = re.compile(r"\{(\w+)\}")
+_FIELD_PATTERN = {"project": r"\d+|missing-projects#\d+", "judge": r"\d+|missing-memberships#\d+",
+                  "dup": r"dup:\S+?", "what": r".*"}
+_FIELD_NAMESPACE = {"project": PROJECT, "judge": MEMBERSHIP}
+
+
+def _compile(template):
+    out, last = "", 0
+    for m in _FIELD.finditer(template):
+        out += re.escape(template[last:m.start()]) + f"(?P<{m.group(1)}>{_FIELD_PATTERN[m.group(1)]})"
+        last = m.end()
+    return re.compile(out + re.escape(template[last:]))
+
+
+_REASONS = [(template, _compile(template)) for _, template in TEXT_TEMPLATES if "{judge_id}" not in template]
+
+
+def rewrite_text(text, mapper):
+    """A reason string with the ids of the first template it fully matches remapped; any other text
+    unchanged."""
+    for _, pattern in _REASONS:
+        m = pattern.fullmatch(text)
+        if m is None:
+            continue
+        pieces, last = [], 0
+        for name in pattern.groupindex:
+            start, end = m.span(name)
+            value = m.group(name)
+            if name in _FIELD_NAMESPACE:
+                value = str(mapper(_FIELD_NAMESPACE[name], value, str))
+            elif name == "what":
+                value = rewrite_text(value, mapper)
+            pieces += [text[last:start], value]
+            last = end
+        return "".join(pieces) + text[last:]
+    return text
 
 
 def _spec(specs, path):
@@ -161,7 +215,8 @@ def _walk(value, path, specs, mapper, where):
             if spec is not None and _scalar(item):
                 out[new_key] = _apply(spec, item, value, mapper)
                 continue
-            if spec is None and key_spec is None and ID_LIKE_KEY.search(key_str) and item not in (None, [], {})                     and _spec(specs, child + "[]") is None:
+            undeclared = spec is None and key_spec is None and _spec(specs, child + "[]") is None
+            if undeclared and ID_LIKE_KEY.search(key_str) and item not in (None, [], {}):
                 raise UnknownIdField(f"{where}: id-like key {child!r} is not a declared id location")
             out[new_key] = _walk(item, child, specs, mapper, where)
         return out
@@ -191,10 +246,7 @@ def _apply(spec, item, parent, mapper):
             return mapper(MEMBERSHIP, item, typ)
         return item if str(item).startswith("dup:") else mapper(PROJECT, item, typ)
     if kind == "reason_text":
-        text = item
-        for pattern in REASON_PROJECT:
-            text = pattern.sub(lambda m: str(mapper(PROJECT, m.group(1), str)), text)
-        return text
+        return rewrite_text(item, mapper)
     raise AssertionError(kind)
 
 

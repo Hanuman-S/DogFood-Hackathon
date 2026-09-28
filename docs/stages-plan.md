@@ -284,6 +284,15 @@ Then the imported results page must show the same projects, order, ranks and tie
 - A same-install import gets a suffixed slug.
 - A non-admin import creates placeholders and attaches no existing account.
 
+### Phase 6 amendment: pin `cv_seed` (approved after C1a)
+M2's default cross-validation seed is derived from the slug. When the imported event's slug differs
+from the source's (a clash gave it a suffix), the import writes the source's resolved seed into the
+imported event's `EventScoringConfig.overrides["cv_seed"]`, unless the overrides already set one, so a
+recompute uses the same seed.
+- Only when the slug differs. The fresh-install round trip, where the slug is kept, must not gain a
+  `cv_seed` override; the round-trip test asserts this.
+- The pinned seed (or `null` when nothing was pinned) goes in the `EVENT_IMPORTED` audit detail.
+
 ### Phase 6 amendments (Finding 1, `FixtureRef`)
 **The per-import source is unique per import:** `bundle:<sha>:<new-slug>`, so importing the same bundle twice on one install cannot clash on `fixture_ref_unique`. `source` is max_length 60. `Event.slug` is `SlugField(max_length=60)` (`events/models.py`), so the string is at most 7 (`bundle:`) + 64 (sha256 hex) + 1 + 60 = **132 characters**. The Phase 6 migration widens `FixtureRef.source` to 160 characters. That is an ALTER only, with no row updates.
 

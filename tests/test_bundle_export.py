@@ -370,3 +370,52 @@ def test_the_command_writes_the_same_bundle(world, tmp_path):
     assert set(json.loads(files["manifest.json"])["files"]) == set(files) - {"manifest.json"}
     entry = AuditLog.objects.filter(action=AuditAction.EVENT_EXPORTED).latest("pk")
     assert entry.actor is None and entry.subject == ARCHIVE
+
+
+# --- audit detail keys, rows deleted after a snapshot ------------------------------------------------
+
+@pytest.mark.parametrize("key", ["description", "recipient", "skip", "zip", "tipped", "tokenizer", "agent",
+                                 "user", "prefixed_by", "hashes"])
+def test_audit_keys_that_merely_contain_a_word_survive(key):
+    assert not bundle.scrubbed_key(key)
+    assert bundle._scrub({key: 1}) == {key: 1}
+
+
+@pytest.mark.parametrize("key", ["ip", "ip_hash", "created_ip_hash", "token_prefix", "voter_token", "digest",
+                                 "token_digest", "secret", "ballot_secret", "open_link_nonce", "password",
+                                 "user_agent", "IP_Hash"])
+def test_audit_keys_naming_a_secret_or_an_address_are_stripped_at_any_depth(key):
+    assert bundle.scrubbed_key(key)
+    detail = {"description": "kept", "nested": [{key: "x", "recipient": "kept"}], key: "x"}
+    assert bundle._scrub(detail) == {"description": "kept", "nested": [{"recipient": "kept"}]}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_judge_removed_after_the_final_becomes_a_missing_row_not_a_failure(world):
+    from events.models import EventMembership
+    from events.services import remove_judge
+
+    fixture = world["fixture"]
+    final = ResultSnapshot.objects.filter(event=fixture, kind="final").latest("pk")
+    judge_pk = int(final.result["judges"][0]["judge_id"])
+    remove_judge(None, fixture, EventMembership.objects.get(pk=judge_pk))
+    body = body_of(export(fixture, actor=world["organizer"]))
+    snapshot = body["result_snapshots"][-1]
+    judges = [j["judge_id"] for j in snapshot["result"]["judges"]]
+    assert "missing-memberships#1" in judges
+    assert all(j.startswith(("memberships#", "missing-memberships#")) for j in judges)
+    entry = AuditLog.objects.filter(action=AuditAction.EVENT_EXPORTED).latest("pk")
+    assert entry.detail["missing"] == {"memberships": 1}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_an_unknown_ballot_or_tally_is_a_dangling_id(world):
+    fixture = world["fixture"]
+    base = ResultSnapshot.objects.filter(event=fixture).latest("pk")
+    _inject(fixture, diagnostics={**base.diagnostics, "vote_tally": {"id": 999999, "previous": None,
+                                                                    "voided_since_previous": [],
+                                                                    "restored_since_previous": []}})
+    with pytest.raises(bundle.BundleError) as refused:
+        bundle.export_event(fixture, actor=world["organizer"])
+    assert refused.value.code == "dangling_id"
+    assert AuditLog.objects.filter(action=AuditAction.EVENT_EXPORT_REFUSED, detail__reason="dangling_id").exists()

@@ -26,7 +26,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import secrets
 import tempfile
 import zipfile
@@ -61,7 +60,17 @@ VOTER_DETAIL_ACTIONS = {
     AuditAction.BALLOT_RESTORE_REFUSED, AuditAction.VOTER_LINK_REVOKED, AuditAction.VOTER_LINKS_ADDED,
 }
 # Keys dropped from every exported audit detail, at any depth: secrets, partial secrets, addresses.
-SCRUBBED_DETAIL_KEY = re.compile(r"token|prefix|digest|secret|nonce|password|(^|_)ip(_|$)|ip_hash|user_agent")
+# Matched on whole "_"-separated segments of the lower-cased key, never on substrings: "ip" drops
+# `ip`, `ip_hash` and `created_ip_hash` but keeps `description`, `recipient` and `skip`; "token" drops
+# `token_prefix` but keeps `tokenizer`. `user_agent` is matched as the two-segment pair.
+SCRUBBED_SEGMENTS = frozenset({"token", "tokens", "prefix", "digest", "secret", "nonce", "password", "ip"})
+SCRUBBED_PAIRS = frozenset({("user", "agent")})
+
+
+def scrubbed_key(key):
+    segments = str(key).lower().split("_")
+    return bool(SCRUBBED_SEGMENTS.intersection(segments)) or any(
+        pair == tuple(segments[i:i + 2]) for pair in SCRUBBED_PAIRS for i in range(len(segments) - 1))
 
 
 class BundleError(Exception):
@@ -154,6 +163,7 @@ class _Export:
     user_rows: list = field(default_factory=list)
     media: dict = field(default_factory=dict)    # bundle path -> bytes
     pseudonyms: dict = field(default_factory=dict)
+    missing: dict = field(default_factory=dict)  # namespace -> {source pk: "missing-<ns>#<n>"}
     voter_labels: dict = field(default_factory=dict)  # organizer-facing label -> identity
 
     def bundle_id(self, section, n):
@@ -180,11 +190,22 @@ class _Export:
         return self.pseudonyms[identity]
 
     def json_mapper(self, namespace, value, typ):
+        if str(value).startswith(bundle_ids.MISSING_PREFIX):
+            return value  # already a missing row's name (an imported event exported again)
         try:
             pk = int(value)
         except (TypeError, ValueError):
             raise bundle_ids.DanglingId(f"{namespace}: {value!r} is not a database id") from None
-        return self.ref(namespace, pk)
+        if pk in self.ids[namespace]:
+            return self.ids[namespace][pk]
+        if namespace not in bundle_ids.DELETABLE:
+            raise bundle_ids.DanglingId(f"{namespace} row {pk} is named in a snapshot but does not exist; "
+                                        f"{namespace} rows cannot be deleted, so this is an inconsistency")
+        # A row deleted after the snapshot named it: a stable name within this bundle, no source number.
+        names = self.missing.setdefault(namespace, {})
+        if pk not in names:
+            names[pk] = f"{bundle_ids.MISSING_PREFIX}{namespace}#{len(names) + 1}"
+        return names[pk]
 
 
 def _ballot_identity(ballot):
@@ -250,7 +271,7 @@ def _media(export, fieldfile):
 
 def _scrub(detail):
     if isinstance(detail, dict):
-        return {k: _scrub(v) for k, v in detail.items() if not SCRUBBED_DETAIL_KEY.search(str(k))}
+        return {k: _scrub(v) for k, v in detail.items() if not scrubbed_key(k)}
     if isinstance(detail, list):
         return [_scrub(v) for v in detail]
     return detail
@@ -368,9 +389,12 @@ def export_event(event, *, actor, origin=None):
     atomic = _consistent_read()
     try:
         body, export = build(event)
-    except (bundle_ids.UnknownIdField, bundle_ids.DanglingId) as error:
+    except bundle_ids.UnknownIdField as error:
         atomic.__exit__(None, None, None)
         refuse(BundleError("unknown_id_field", str(error)))
+    except bundle_ids.DanglingId as error:
+        atomic.__exit__(None, None, None)
+        refuse(BundleError("dangling_id", str(error)))
     except BundleError as error:
         atomic.__exit__(None, None, None)
         refuse(error)
@@ -413,6 +437,7 @@ def export_event(event, *, actor, origin=None):
         raise
     audit.record(AuditAction.EVENT_EXPORTED, origin=origin, actor=actor, subject=event.slug, event=event.slug,
                  sha256=digest, bytes=size, media=len(export.media),
+                 missing={ns: len(names) for ns, names in export.missing.items()},
                  rows={s.name: (1 if body[s.name] else 0) if s.one else len(body[s.name]) for s in SECTIONS})
     return path
 
