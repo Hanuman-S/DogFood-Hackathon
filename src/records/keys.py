@@ -38,9 +38,7 @@ from .models import SigningKey
 LOCK = "dogfood:signing-key"
 
 
-class SigningUnavailable(Exception):
-    status = 503
-    code = "signing_unavailable"
+from .errors import SigningUnavailable  # noqa: E402 -- one class, answered as 503 everywhere
 
 
 def _ed25519():
@@ -107,7 +105,20 @@ def load_private(kid):
 
 
 def active():
+    """The signing key, read from the database on every call: nothing caches it, so a rotation takes
+    effect for the very next signature in every process."""
     return SigningKey.objects.filter(retired_at__isnull=True).first()
+
+
+def status():
+    """("ok" | "missing" | "mismatch" | "none", kid or None), without changing anything: for the
+    banners that say why signing is unavailable."""
+    row = active()
+    if row is None:
+        return "none", None
+    if load_private(row.kid) is not None:
+        return "ok", row.kid
+    return ("missing" if not os.path.exists(pem_path(row.kid)) else "mismatch"), row.kid
 
 
 def _lock():

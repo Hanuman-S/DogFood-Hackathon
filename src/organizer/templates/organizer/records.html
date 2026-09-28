@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · records{% endblock %}
+{% block content %}
+<div class="stack">
+  {% include "_signing_banner.html" %}
+  <section class="frame">
+    <header class="frame__bar"><h1 class="frame__title">signed records</h1><span class="frame__meta">{{ event.name }}{% if signing_kid and signing_state == "ok" %} · key {{ signing_kid }}{% endif %}</span></header>
+    <div class="frame__body stack">
+      <p class="faint">each record is a signed statement anyone can check at its own page and at /verify. judge records: after judging closes, for judges with a submitted review (never a score). participant records: after submissions close, for members of teams that submitted. winner records: from the published final only. issuing again brings every record up to date: unchanged ones are kept, changed ones are revoked and reissued, and people no longer eligible have theirs revoked.</p>
+      <div class="actions">
+      {% for value, label in kinds %}<form method="post" action="{% url 'organizer:records_issue' event.slug %}" class="form--inline">{% csrf_token %}<input type="hidden" name="kind" value="{{ value }}"><button class="btn btn--small" type="submit"{% if signing_state != "ok" %} disabled{% endif %}>issue {{ label|lower }} records</button></form>{% endfor %}
+      </div>
+    </div>
+  </section>
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">issued</h2><span class="frame__meta">{{ records|length }}</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col">kind</th><th scope="col">person</th><th scope="col">what</th><th scope="col">issued</th><th scope="col">state</th><th scope="col">revoke</th></tr></thead>
+        <tbody>
+        {% for r in records %}
+          <tr>
+            <td>{{ r.get_kind_display }}</td>
+            <td><a href="{% url 'public:record' r.pk %}">{{ r.subject_user.name }}</a></td>
+            <td class="dim">{% if r.kind == "winner" %}{% if r.payload.peoples_choice == "yes" %}people's choice #{{ r.payload.place }}{% elif r.payload.track %}top of {{ r.payload.track }}{% else %}#{{ r.payload.place }} overall{% endif %}{% elif r.kind == "judge_participation" %}{{ r.payload.reviews_submitted }} review{{ r.payload.reviews_submitted|pluralize }}{% else %}{{ r.payload.project }}{% endif %}</td>
+            <td class="dim">{{ r.issued_at|utc }}</td>
+            <td>{% if r.revoked_at %}<span class="badge">revoked</span> <span class="faint">{{ r.revoke_reason }}</span>{% else %}<span class="badge badge--on">active</span>{% endif %}</td>
+            <td>{% if not r.revoked_at %}<form method="post" action="{% url 'organizer:record_revoke' event.slug r.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="revoke-{{ r.pk }}">reason for revoking this record</label><input id="revoke-{{ r.pk }}" name="reason" required maxlength="300" placeholder="reason"><button class="btn btn--small btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+          </tr>
+        {% empty %}<tr><td colspan="6" class="faint">none yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <p class="actions"><a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to the event</a></p>
+</div>
+{% endblock %}

@@ -40,6 +40,7 @@
         <p class="actions"><a class="btn btn--small" href="{% url 'organizer:results' event.slug %}">results</a><span class="faint">compute, publish, choose who sees them, winners.csv</span></p>
         <p class="actions"><a class="btn btn--small" href="{% url 'organizer:voting' event.slug %}">community vote</a><span class="faint">set up voting, end it, the live tally (organizers only)</span></p>
         <p class="actions"><a class="btn btn--small" href="{% url 'organizer:comments' event.slug %}">comments</a><span class="faint">comments on the gallery projects: hide, restore, turn off</span></p>
+        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:records' event.slug %}">signed records</a><span class="faint">certificates for judges, participants and winners, verifiable by anyone</span></p>
         <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:event_bundle' event.slug %}">download event bundle</a><span class="faint">the whole event as one zip, to move it to another install. no passwords, tokens, invite links, voting secrets or ip hashes; voters are pseudonymised.</span></p>
         <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'api_export_zip' %}?event={{ event.slug }}">export all (.zip)</a><a class="faint" href="#export">or one sheet</a></p>
         <table class="kv">

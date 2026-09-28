@@ -1,0 +1,15 @@
+{% comment %}
+  Shown when this install cannot sign records. Context: signing_state ("ok" | "missing" | "mismatch" |
+  "none") and signing_kid. Used by the organizer Records page and the admin home.
+{% endcomment %}
+{% if signing_state and signing_state != "ok" %}
+<section class="frame" role="alert">
+  <header class="frame__bar"><h2 class="frame__title">signing unavailable</h2><span class="frame__meta"><span class="badge badge--warn">records cannot be issued</span></span></header>
+  <div class="frame__body stack">
+    {% if signing_state == "none" %}<p>this install has no signing key yet. one is made at boot (<code>manage.py ensure_signing_key</code>); run that, or <code>manage.py rotate_signing_key</code>.</p>
+    {% elif signing_state == "missing" %}<p>why: the active key <code>{{ signing_kid }}</code> has no private key file in the secrets volume.</p>
+    {% else %}<p>why: the file for the active key <code>{{ signing_kid }}</code> is there but holds a different key.</p>{% endif %}
+    {% if signing_state != "none" %}<p class="faint">what to do: restore the <code>secrets</code> volume from a backup (the key comes back as it was), or run <code>docker compose exec web python src/manage.py rotate_signing_key</code> to make a new key. records already issued keep verifying either way: their public keys stay published.</p>{% endif %}
+  </div>
+</section>
+{% endif %}

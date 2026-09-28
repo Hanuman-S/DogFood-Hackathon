@@ -222,6 +222,33 @@ mode 0600, in a 0700 directory. In compose that directory is `/app/secrets/signi
 `secrets` named volume, never in the repo or the image. The database decides which key signs: the one
 row with `retired_at` NULL. A PEM file with no row is never adopted.
 
+**Issuing** (`records/services.py`, organizers of the event and admins; audited; refusals too):
+- Judge records: once judging has closed (`409 judging_open`), for judges with at least one
+  submitted review. The payload holds the review count and the judging window, never a score.
+- Participant records: once submissions have closed (`409 submissions_open`), for the members of
+  teams that submitted.
+- Winner records: only from the active published final (`409 no_published_final`), one per win:
+  overall places, the top of each track, People's Choice.
+- If the active key's file is missing, issuing is refused with `503 signing_unavailable`. The
+  organizer Records page and the admin home then say why, and what to do: restore the `secrets`
+  volume, or rotate.
+
+**Idempotent by meaning.** A record is compared on everything but `record_id`, `issued_at` and
+`kid`. If nothing else changed, it is kept. If something changed, the old one is revoked
+("reissued") and a new one is signed. Someone no longer eligible has theirs revoked ("no longer
+eligible"). Judge records carry the judging window, so extending judging and closing it again
+reissues them all.
+
+**Public endpoints:**
+- `/records/<uuid>`: the certificate, checked on the server, printable without script.
+- `/records/<uuid>.json`.
+- `/verify`: accepts only canonical bytes, needs a CSRF token, and is limited per IP hash, counted
+  from `AuditLog.objects.live()`.
+- `/.well-known/dogfood-signing-keys.json`: this install's keys only, retired ones included.
+- `/.well-known/dogfood-foreign-signing-keys.json`: other installs' keys. A record they signed is
+  labelled "signed by another install (kid X)".
+- `/.well-known/dogfood-revoked.json`.
+
 `manage.py ensure_signing_key` runs at every boot. It creates the first key, and after that only
 checks it. If the active key's file is missing, it reports that loudly without stopping the boot,
 and signing is refused until `manage.py rotate_signing_key`. Rotation writes the new file, then, in

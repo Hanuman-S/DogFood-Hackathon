@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}verify a record{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar"><h1 class="frame__title">verify a record</h1><span class="frame__meta">Ed25519</span></header>
+    <div class="frame__body stack">
+      <p class="faint">paste a record's payload (the exact canonical JSON) and its signature. the payload names the key (kid); this install checks it against its published keys, and against the revoked list.</p>
+      {% if error %}<p class="field__error" role="alert">{{ error }}</p>{% endif %}
+      {% if verdict %}<p role="status">{% if verdict.state == "valid" %}<span class="badge badge--on">valid</span>{% elif verdict.state == "foreign_valid" %}<span class="badge">signed by another install</span>{% else %}<span class="badge badge--warn">{{ verdict.state|cut:"_" }}</span>{% endif %} <span class="bright">{{ verdict.label }}</span>{% if verdict.record %} · <a href="{% url 'public:record' verdict.record.pk %}">the record</a>{% endif %}</p>{% endif %}
+      <form method="post" class="stack">
+        {% csrf_token %}
+        <div class="field"><label class="field__label" for="payload"><span class="ps1">$</span> <span class="cmd">verify --payload</span></label><textarea id="payload" name="payload" rows="6" maxlength="20000" required>{{ payload }}</textarea></div>
+        <div class="field"><label class="field__label" for="signature"><span class="ps1">$</span> <span class="cmd">--signature</span></label><input id="signature" name="signature" maxlength="200" required value="{{ signature }}"></div>
+        <div class="actions"><button class="btn" type="submit">verify</button></div>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}

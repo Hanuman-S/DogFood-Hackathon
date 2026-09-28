@@ -206,3 +206,42 @@ def test_one_active_record_per_slot_and_winner_slots_differ_by_track_place_and_p
         IssuedRecord.objects.create(**winners, slot=slot)
     with pytest.raises(IntegrityError), transaction.atomic():
         IssuedRecord.objects.create(**winners, slot=winner_slot("Hardware", 1, False))
+
+
+# --- review items: both key tables, no caching, negative integers --------------------------------------
+
+@pytest.mark.parametrize("model_name", ["SigningKey", "ForeignSigningKey"])
+def test_neither_key_table_lets_public_key_or_kid_change(model_name):
+    from records import models as m
+    model = getattr(m, model_name)
+    extra = {"imported_from": "a" * 64} if model_name == "ForeignSigningKey" else {}
+    key = model.objects.create(kid="d" * 16, public_key="original", **extra)
+    for change in ({"public_key": "swapped"}, {"kid": "e" * 16}, {"alg": "RSA"},
+                   {"public_key": "swapped", "retired_at": timezone.now()}):
+        with pytest.raises(DatabaseError), transaction.atomic():
+            model.objects.filter(pk=key.pk).update(**change)
+    with pytest.raises(DatabaseError), transaction.atomic():
+        model.objects.filter(pk=key.pk).delete()
+    model.objects.filter(pk=key.pk).update(retired_at=timezone.now())  # the one change allowed
+    with pytest.raises(DatabaseError), transaction.atomic():
+        model.objects.filter(pk=key.pk).update(retired_at=timezone.now())  # and only once
+    assert model.objects.get(pk=key.pk).public_key == "original"
+
+
+def test_signing_right_after_a_rotation_uses_the_new_key_with_no_restart():
+    keys.ensure_signing_key()
+    first, _ = keys.sign(b"a")
+    _, new = keys.rotate()
+    second, signature = keys.sign(b"b")
+    assert second == new != first
+    assert keys.verify(SigningKey.objects.get(kid=new).public_key, b"b", signature)
+    call_command("rotate_signing_key", stdout=StringIO())
+    third, _ = keys.sign(b"c")
+    assert third == SigningKey.objects.get(retired_at__isnull=True).kid not in (first, second)
+
+
+def test_canonical_refuses_integers_beyond_the_exact_range_either_side():
+    assert canonical([2 ** 53 - 1, -(2 ** 53 - 1)]) == b"[9007199254740991,-9007199254740991]"
+    for value in (2 ** 53, -(2 ** 53), -(2 ** 63)):
+        with pytest.raises(CanonicalError):
+            canonical({"n": value})

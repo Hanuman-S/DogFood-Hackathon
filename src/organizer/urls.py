@@ -1,6 +1,6 @@
 from django.urls import path, register_converter
 
-from organizer import assignments, bundle, comments, progress, results, rubric, views, voting
+from organizer import assignments, bundle, comments, progress, records, results, rubric, views, voting
 
 
 class PartKind:
@@ -54,6 +54,9 @@ urlpatterns = [
     path("events/<slug:slug>/results/winners.csv", results.winners_csv, name="winners_csv"),
     path("events/<slug:slug>/results/results.csv", results.results_csv, name="results_csv"),
     path("events/<slug:slug>/bundle", bundle.bundle_download, name="event_bundle"),
+    path("events/<slug:slug>/records", records.records_page, name="records"),
+    path("events/<slug:slug>/records/issue", records.records_issue, name="records_issue"),
+    path("events/<slug:slug>/records/<uuid:record_id>/revoke", records.record_revoke, name="record_revoke"),
     path("events/<slug:slug>/comments", comments.comments_page, name="comments"),
     path("events/<slug:slug>/comments/toggle", comments.comments_toggle, name="comments_toggle"),
     path("events/<slug:slug>/comments/<int:comment_id>/hide", comments.comment_hide, name="comment_hide"),

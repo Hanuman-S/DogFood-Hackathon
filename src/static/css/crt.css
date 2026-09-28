@@ -828,3 +828,23 @@ input:disabled, select:disabled, textarea:disabled {
 .comment__meta { margin: 0 0 4px; }
 .comment__body > :last-child { margin-bottom: 0; }
 .comment--gone { opacity: 0.6; }
+
+/* Signed records: the certificate page. On screen it is an ordinary page; printed, it is plain black
+   on white, without the portal's chrome, the proof section kept (the raw payload and signature let
+   anyone check the paper copy). Works without any script. */
+.certificate__name { font-size: 1.6rem; margin: 0; }
+.certificate__raw { white-space: pre-wrap; word-break: break-all; margin: 0; }
+
+@media print {
+  :root { color-scheme: light; }
+  html, body, .screen, .main { background: #fff !important; color: #000 !important; }
+  .topbar, .nav, .statusbar, .msgs, .no-print, .cursor { display: none !important; }
+  * { text-shadow: none !important; box-shadow: none !important; animation: none !important; }
+  .frame { border: 1px solid #000; break-inside: avoid; }
+  .frame__bar { border-bottom: 1px solid #000; }
+  .badge { border: 1px solid #000; color: #000; }
+  a { color: #000; text-decoration: underline; }
+  .certificate__card { margin-bottom: 2rem; }
+  .certificate__name { font-size: 2rem; }
+  .certificate__raw { font-size: 0.7rem; }
+}

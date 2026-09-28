@@ -259,6 +259,9 @@ MEDIA_ROOT = Path(env("DJANGO_MEDIA_ROOT", str(BASE_DIR.parent / "media")))
 # Ed25519 signing keys for issued records (records/keys.py): private PEM files, 0600 in a 0700
 # directory. In compose this is inside the `secrets` named volume, next to the SECRET_KEY file.
 SIGNING_KEY_DIR = Path(env("DJANGO_SIGNING_KEY_DIR", str(BASE_DIR.parent / "secrets" / "signing")))
+# /verify checks per IP hash, in a sliding window, counted from live audit rows.
+VERIFY_RATE_WINDOW = timedelta(minutes=env_int("VERIFY_RATE_WINDOW_MINUTES", 10))
+VERIFY_RATE_PER_IP = env_int("VERIFY_RATE_PER_IP", 30)
 MEDIA_URL = "/media/"
 MAX_IMAGE_BYTES = env_int("MAX_IMAGE_BYTES", 5 * 1024 * 1024)
 

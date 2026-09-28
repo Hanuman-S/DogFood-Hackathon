@@ -23,6 +23,11 @@ from scoring import services as scoring
 from scoring.models import Criterion
 
 
+def _my_records(user):
+    from records.models import IssuedRecord
+    return IssuedRecord.objects.filter(subject_user=user).select_related("event").order_by("-issued_at")
+
+
 @never_cache
 @portal_required("judge")
 def home(request):
@@ -37,6 +42,7 @@ def home(request):
         "judge/home.html",
         {
             "judging": judging,
+            "my_records": _my_records(request.user),
             "modules": [
                 ("assignments", "the projects you have been asked to review"),
                 ("scoring", "score each project against the weighted rubric"),

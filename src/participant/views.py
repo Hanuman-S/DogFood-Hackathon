@@ -40,7 +40,10 @@ def home(request):
         e for e in Event.objects.published().order_by("submissions_close_at")
         if e.phase in (Phase.UPCOMING, Phase.OPEN) and e.pk not in joined
     ]
-    return render(request, "participant/home.html", {"mine": mine, "open_events": open_events})
+    from records.models import IssuedRecord
+    my_records = IssuedRecord.objects.filter(subject_user=request.user).select_related("event").order_by("-issued_at")
+    return render(request, "participant/home.html", {"mine": mine, "open_events": open_events,
+                                                     "my_records": my_records})
 
 
 @never_cache

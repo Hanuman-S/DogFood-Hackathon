@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}record {{ record.pk }}{% endblock %}
+{% block content %}
+<div class="stack certificate">
+  <section class="frame certificate__card">
+    <header class="frame__bar">
+      <h1 class="frame__title">{% if record.kind == "winner" %}winner{% elif record.kind == "judge_participation" %}judge{% else %}participant{% endif %} · {{ record.payload.event.name }}</h1>
+      <span class="frame__meta">
+        {% if verdict.state == "valid" %}<span class="badge badge--on">verified: signed by this install</span>
+        {% elif verdict.state == "revoked" %}<span class="badge badge--warn">revoked</span>
+        {% elif verdict.state == "foreign_valid" %}<span class="badge">{{ verdict.label }}</span>
+        {% else %}<span class="badge badge--warn">{{ verdict.label }}</span>{% endif %}
+      </span>
+    </header>
+    <div class="frame__body stack">
+      <p class="certificate__name bright">{{ record.payload.subject.name }}</p>
+      {% if record.kind == "winner" %}
+        <p>{% if record.payload.peoples_choice == "yes" %}People's Choice, place {{ record.payload.place }}{% elif record.payload.track %}top of {{ record.payload.track }}{% else %}place {{ record.payload.place }} overall{% endif %} with <strong>{{ record.payload.project }}</strong> (team {{ record.payload.team }})</p>
+      {% elif record.kind == "judge_participation" %}
+        <p>judged {{ record.payload.reviews_submitted }} submission{{ record.payload.reviews_submitted|pluralize }} (judging {{ record.payload.judging.starts_at }} to {{ record.payload.judging.ends_at }})</p>
+      {% else %}
+        <p>took part with <strong>{{ record.payload.project }}</strong> (team {{ record.payload.team }})</p>
+      {% endif %}
+      <p class="dim">{{ record.payload.event.name }} · {{ record.payload.event.starts_at }} to {{ record.payload.event.ends_at }} · issued {{ record.payload.issued_at }}</p>
+      {% if record.revoked_at %}<p class="field__error">revoked {{ record.revoked_at|utc }}: {{ record.revoke_reason }}</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="frame certificate__proof">
+    <header class="frame__bar"><h2 class="frame__title">check it yourself</h2><span class="frame__meta">Ed25519 · kid {{ record.kid }}</span></header>
+    <div class="frame__body stack">
+      <p class="faint">the signature covers exactly the payload bytes below (canonical JSON: sorted keys, no whitespace, UTF-8). the public keys are at <a href="/.well-known/dogfood-signing-keys.json">/.well-known/dogfood-signing-keys.json</a>; revoked records are listed at <a href="/.well-known/dogfood-revoked.json">/.well-known/dogfood-revoked.json</a>. a valid signature proves this install signed these bytes, not that the record still stands: check the revoked list too.</p>
+      <p class="field__label">payload (exact signed bytes)</p>
+      <pre class="certificate__raw">{{ record.payload_text }}</pre>
+      <p class="field__label">signature (base64)</p>
+      <pre class="certificate__raw">{{ record.signature }}</pre>
+      <p class="actions no-print"><a class="btn btn--small btn--ghost" href="{% url 'public:record_json' record.pk %}">download json</a><a class="btn btn--small btn--ghost" href="{% url 'public:verify' %}">verify another</a></p>
+    </div>
+  </section>
+</div>
+{% endblock %}

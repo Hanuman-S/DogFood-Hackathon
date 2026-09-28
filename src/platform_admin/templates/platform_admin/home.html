@@ -2,6 +2,7 @@
 {% block title %}admin portal{% endblock %}
 {% block portal_title %}admin root{% endblock %}
 {% block portal_body %}
+{% include "_signing_banner.html" %}
 <table class="kv">
   {% for label, n in role_counts %}<tr><th scope="row">{{ label }}</th><td>{{ n }}</td></tr>{% endfor %}
 </table>

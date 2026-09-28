@@ -14,6 +14,12 @@ from core.models import AuditLog
 from events.models import EventMembership
 
 
+def _signing():
+    from records import keys
+    state, kid = keys.status()
+    return {"signing_state": state, "signing_kid": kid}
+
+
 @never_cache
 @portal_required("admin")
 def home(request, form=None, status=200):
@@ -34,6 +40,7 @@ def home(request, form=None, status=200):
             .prefetch_related("event_memberships__event")[:50],
             "audit": AuditLog.objects.select_related("actor")[:25],
             "form": form or AccountCreateForm(),
+            **_signing(),
         },
         status=status,
     )
