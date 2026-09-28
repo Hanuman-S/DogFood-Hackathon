@@ -43,7 +43,7 @@
           </table>
         </div>
         <div class="stack">
-          <form method="post" action="{% url 'organizer:event_publish' event.slug %}" class="actions">
+          <form method="post" action="{% url 'organizer:event_publish' event.slug %}" class="actions" data-confirm="{% if event.is_published %}Unpublish {{ event.name }}? Its public page, gallery and projects disappear for everyone but organizers.{% else %}Publish {{ event.name }}? Anyone can then see its page and sign up.{% endif %}">
             {% csrf_token %}
             {% if event.is_published %}
               <input type="hidden" name="publish" value="0"><button class="btn btn--ghost" type="submit">unpublish</button>
@@ -107,7 +107,7 @@
                 <td class="num">
                   <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
                   <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
-                  {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
+                  {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}" data-confirm="Delete the track “{{ t.name }}”? This cannot be undone.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
                 </td>
               </tr>
             {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
@@ -136,7 +136,7 @@
                 <td><span class="bright">#{{ p.rank }}</span> {{ p.title }}<br><span class="faint">{{ p.value|default:"--" }} · {{ p.track.name|default:"overall" }}</span></td>
                 <td class="num">
                   <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'prize' p.pk %}">edit</a>
-                  <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'prize' p.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+                  <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'prize' p.pk %}" data-confirm="Delete the prize “{{ p.title }}”? This cannot be undone.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
                 </td>
               </tr>
             {% empty %}<tr><td class="faint">no prizes yet.</td></tr>{% endfor %}
@@ -175,7 +175,7 @@
             <td class="num">
               <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'question' q.pk %}">edit</a>
               <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'question' q.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if q.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if q.is_hidden %}show{% else %}hide{% endif %}</button></form>
-              {% if q.n %}<span class="faint" title="a question with answers can be hidden, not deleted">answered</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
+              {% if q.n %}<span class="faint" title="a question with answers can be hidden, not deleted">answered</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'question' q.pk %}" data-confirm="Delete the question “{{ q.prompt|truncatechars:60 }}”? This cannot be undone.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
             </td>
           </tr>
         {% endfor %}
@@ -219,7 +219,7 @@
           <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
         </div>
         {% if judging_window.is_open %}
-        <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">
+        <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions" data-confirm="End judging now? Judging closes at this moment and cannot be reopened except by extending it. Reviews still in draft stop counting.">
           {% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end judging now</button>
           <span class="faint">closes judging at this moment (it only moves the end earlier). reviews still in draft stop counting; final results can then be computed.</span>
         </form>
@@ -265,7 +265,7 @@
               <td>{{ j.user.name }}<br><span class="faint">{{ j.user.email }}</span></td>
               <td class="dim">{% for jt in j.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="faint">every track</span>{% endfor %}</td>
               <td class="num">
-                <form class="inline-form" method="post" action="{% url 'organizer:judge_remove' event.slug j.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+                <form class="inline-form" method="post" action="{% url 'organizer:judge_remove' event.slug j.pk %}" data-confirm="Remove {{ j.user.name }} as a judge of this event? Their assignments and draft reviews are removed.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
               </td>
             </tr>
           {% empty %}<tr><td colspan="3" class="faint">no judges yet.</td></tr>{% endfor %}
@@ -303,7 +303,7 @@
               <td class="dim">{% for t in inv.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td>
               <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span> <span class="faint">{{ inv.accepted_at|utc }}</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
               <td class="dim">{{ inv.created_by.name|default:"--" }}</td>
-              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}" data-confirm="Revoke this invite link? Anyone holding it can no longer use it.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
             </tr>
           {% endfor %}
           </tbody>
@@ -360,7 +360,7 @@
           {% for x in extensions %}
             <tr>
               <td>{{ x.team.name }}</td><td>{{ x.until|utc }}{% if x.until <= window.now %} <span class="badge">ended</span>{% endif %}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
-              <td class="num">{% if x.until > window.now %}<form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+              <td class="num">{% if x.until > window.now %}<form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}" data-confirm="Revoke the extension for {{ x.team.name }}? Their deadline goes back to the event's close.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
             </tr>
           {% endfor %}
           </tbody>
@@ -381,7 +381,7 @@
             <tr>
               <td>{{ link.user.name }}<br><span class="faint">{{ link.user.email }}</span></td>
               <td class="num">
-                <form class="inline-form" method="post" action="{% url 'organizer:organizer_remove' event.slug link.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+                <form class="inline-form" method="post" action="{% url 'organizer:organizer_remove' event.slug link.pk %}" data-confirm="Remove {{ link.user.name }} as an organizer? They lose access to this event's controls.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
               </td>
             </tr>
           {% endfor %}
@@ -408,7 +408,7 @@
             <tr>
               <td>{% if inv.email %}{{ inv.email }}{% else %}<span class="dim">open link</span>{% if inv.accepted_by %} <span class="faint">&middot; used by {{ inv.accepted_by.email }}</span>{% endif %}{% endif %}<br><span class="faint">by {{ inv.created_by.name|default:"--" }}</span></td>
               <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
-              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}" data-confirm="Revoke this invite link? Anyone holding it can no longer use it.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
             </tr>
           {% endfor %}
           </tbody>

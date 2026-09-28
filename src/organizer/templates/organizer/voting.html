@@ -44,9 +44,9 @@
           <tr><th scope="row">voters' page</th><td><a href="{% url 'participant:vote' event.slug %}">/participant/events/{{ event.slug }}/vote</a></td></tr>
         </table>
         {% if state == "open" %}
-        <form method="post" action="{% url 'organizer:voting_end' event.slug %}" class="actions">{% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end voting now</button><span class="faint">closes voting at this moment; it only moves the close earlier.</span></form>
+        <form method="post" action="{% url 'organizer:voting_end' event.slug %}" class="actions" data-confirm="End the community vote now? Voting closes at this moment.">{% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end voting now</button><span class="faint">closes voting at this moment; it only moves the close earlier.</span></form>
         {% elif state == "scheduled" %}
-        <form method="post" action="{% url 'organizer:voting_remove' event.slug %}" class="actions">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">remove voting</button><span class="faint">only before it opens.</span></form>
+        <form method="post" action="{% url 'organizer:voting_remove' event.slug %}" class="actions" data-confirm="Remove the community vote from this event? Its settings are deleted.">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">remove voting</button><span class="faint">only before it opens.</span></form>
         {% endif %}
         {% else %}
         <p class="faint">no community vote yet. set one up on the left.</p>
@@ -76,7 +76,7 @@
         <tbody>
         {% for link, url in voter_links %}
           <tr><td>{{ link.email }}</td><td class="dim"><span class="secret">{{ url }}</span></td><td>{% if link.revoked_at %}<span class="badge badge--warn">revoked</span>{% else %}<span class="badge badge--on">active</span>{% endif %}</td>
-          <td>{% if not link.revoked_at %}<form method="post" action="{% url 'organizer:voter_link_revoke' event.slug link.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">revoke</button></form>{% endif %}</td></tr>
+          <td>{% if not link.revoked_at %}<form method="post" action="{% url 'organizer:voter_link_revoke' event.slug link.pk %}" data-confirm="Revoke this voter link? It stops working; a ballot already cast with it stays.">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">revoke</button></form>{% endif %}</td></tr>
         {% empty %}<tr><td colspan="4" class="faint">no emails yet.</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -90,7 +90,7 @@
     <div class="frame__body stack">
       <p class="msg msg--warning">anyone with this link can vote, and each browser counts as a voter: a new browser or cleared cookies is a new ballot. it can be gamed. give any prize decided by it a small weight.</p>
       <p><span class="secret">{{ open_link }}</span></p>
-      <form method="post" action="{% url 'organizer:open_link_rotate' event.slug %}" class="actions">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">make a new link</button><span class="faint">the old link stops working; ballots already cast stay.</span></form>
+      <form method="post" action="{% url 'organizer:open_link_rotate' event.slug %}" class="actions" data-confirm="Make a new open link? The current link stops working for everyone you sent it to.">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">make a new link</button><span class="faint">the old link stops working; ballots already cast stay.</span></form>
     </div>
   </section>
   {% endif %}

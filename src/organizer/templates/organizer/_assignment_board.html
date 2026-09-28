@@ -70,7 +70,7 @@
               <div class="manage__line">
                 <span>{{ a.judge.user.name }} <span class="faint">&middot; {{ a.review }}</span></span>
                 {% if a.review == "not started" %}
-                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
+                  <form class="inline-form" method="post" action="{% url 'organizer:assignment_withdraw' event.slug a.pk %}" data-confirm="Withdraw this assignment? The judge loses the project, and assign will not give it back to them.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">withdraw</button></form>
                 {% else %}
                   <span class="faint">started: stays with this judge</span>
                 {% endif %}

@@ -43,11 +43,6 @@ def home(request):
         {
             "judging": judging,
             "my_records": _my_records(request.user),
-            "modules": [
-                ("assignments", "the projects you have been asked to review"),
-                ("scoring", "score each project against the weighted rubric"),
-                ("my scores", "your own scores, never anyone else's"),
-            ],
         },
     )
 

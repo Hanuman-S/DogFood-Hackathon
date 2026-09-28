@@ -14,8 +14,10 @@ class CriterionRowForm(forms.Form):
 
     id = forms.IntegerField(required=False, widget=forms.HiddenInput)
     label = forms.CharField(max_length=120, widget=forms.TextInput(attrs={"placeholder": "e.g. Functionality"}))
-    key = forms.SlugField(
-        max_length=60, required=False,
+    # Plain text: the service turns what is typed into a key ("Tech.Depth" -> "tech-depth").
+    # A SlugField refused such text with "Enter a valid slug" before the service could.
+    key = forms.CharField(
+        max_length=120, required=False,
         widget=forms.TextInput(attrs={"placeholder": "made from the label"}),
     )
     weight = forms.DecimalField(

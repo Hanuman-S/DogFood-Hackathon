@@ -53,13 +53,13 @@ from decimal import Decimal
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, connection, transaction
 from django.utils import timezone
-from django.utils.text import slugify
 
 from accounts.roles import Role, is_organizer_of
 from core import audit
 from core.deadlines import db_now
 from core.judging import judging_closed
 from core.models import AuditAction
+from core.slugs import to_slug
 from events.models import Event, EventMembership
 from imports.models import FixtureRef
 from projects.models import Project, Status
@@ -234,7 +234,7 @@ def validate_rows(rows):
         row.label = (row.label or "").strip()
         if not row.label:
             raise RubricError("every criterion needs a label.")
-        row.key = slugify(row.key or row.label)[:60]
+        row.key = to_slug(row.key or row.label)
         if not row.key:
             raise RubricError(f"'{row.label}' needs a key made of letters or digits.")
         if row.key in keys:
@@ -1166,11 +1166,18 @@ def judge_queue(membership):
     )
 
 
-def terminal_bar(done, total, width=32):
-    """A text progress bar: "████░░░░  25% | 2/8"."""
+def terminal_bar_parts(done, total, width=32):
+    """The bar's filled cells, its empty cells, and its label, so a page can dim the empty part
+    (drawn at full brightness, an empty "░░░░" bar read as a full one)."""
     pct = 0.0 if total <= 0 else max(0.0, min(100.0, done / total * 100.0))
     filled = int(round(pct / 100.0 * width))
-    return f"{'█' * filled}{'░' * (width - filled)}  {pct:>3.0f}% | {done}/{total}"
+    return "█" * filled, "░" * (width - filled), f"{pct:>3.0f}% | {done}/{total}"
+
+
+def terminal_bar(done, total, width=32):
+    """A text progress bar: "████░░░░  25% | 2/8"."""
+    on, off, label = terminal_bar_parts(done, total, width)
+    return f"{on}{off}  {label}"
 
 
 def weighted_rating(criteria, items):
@@ -1220,6 +1227,7 @@ def judge_progress(membership):
         "submitted": submitted, "drafts": drafts, "progress_pct": round(pct, 1),
         "dash_offset": int(round(CIRCLE_CIRCUMFERENCE * (1.0 - pct / 100.0))),
         "terminal_bar": terminal_bar(submitted, total),
+        "terminal_bar_parts": terminal_bar_parts(submitted, total),
     }
 
 

@@ -17,6 +17,55 @@
     });
   });
 
+  // Are you sure? A form (or its submit button) with data-confirm="<what will happen>" asks first,
+  // in a dialog drawn in the portal's own style (the browser's confirm() box ignores the theme).
+  // "cancel" has the focus, so a stray Enter never confirms. Registered before every other submit
+  // listener and in the capture phase, so a cancelled submit is invisible to them (the page stays
+  // as it was). Without this file the form simply submits; the server still enforces every rule.
+  var confirmDialog = null;
+  var askFirst = function (message, actionLabel, onYes) {
+    if (!confirmDialog) {
+      confirmDialog = document.createElement("dialog");
+      confirmDialog.className = "confirm";
+      confirmDialog.setAttribute("aria-labelledby", "confirm-title");
+      confirmDialog.innerHTML =
+        '<p class="confirm__title" id="confirm-title">are you sure?</p>' +
+        '<p class="confirm__text" data-confirm-text></p>' +
+        '<div class="actions"><button class="btn btn--ghost" type="button" data-confirm-no>cancel</button>' +
+        '<button class="btn btn--danger" type="button" data-confirm-yes></button></div>';
+      document.body.appendChild(confirmDialog);
+      confirmDialog.querySelector("[data-confirm-no]").addEventListener("click", function () { confirmDialog.close(); });
+      // A click on the backdrop (outside the box) is a cancel.
+      confirmDialog.addEventListener("click", function (e) { if (e.target === confirmDialog) confirmDialog.close(); });
+    }
+    confirmDialog.querySelector("[data-confirm-text]").textContent = message;
+    var yes = confirmDialog.querySelector("[data-confirm-yes]");
+    var fresh = yes.cloneNode(false);  // drops the previous question's listener
+    fresh.textContent = actionLabel || "yes";
+    yes.replaceWith(fresh);
+    fresh.addEventListener("click", function () { confirmDialog.close(); onYes(); });
+    confirmDialog.showModal();
+    confirmDialog.querySelector("[data-confirm-no]").focus();
+  };
+  document.addEventListener("submit", function (e) {
+    var form = e.target, submitter = e.submitter || null;
+    var message = (submitter && submitter.getAttribute("data-confirm")) || form.getAttribute("data-confirm");
+    if (!message || form._confirmed) return;
+    if (typeof HTMLDialogElement !== "function") {
+      if (!window.confirm(message)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    var label = submitter ? submitter.textContent.trim() : "yes";
+    askFirst(message, label, function () {
+      form._confirmed = true;
+      if (form.requestSubmit) form.requestSubmit(submitter && submitter.form === form ? submitter : undefined);
+      else form.submit();
+      form._confirmed = false;
+    });
+  }, true);
+
   // Unsaved input: any change to a form field marks the page dirty until that form is submitted.
   // Automatic refreshes and reloads never run over it.
   var dirty = false;
@@ -350,6 +399,11 @@
       try { start = indexOf(document.getElementById(sessionStorage.getItem(key) || "")); } catch (err) { start = -1; }
     }
     show(Math.max(start, 0), false);
+    // A link to a whole tab (#tab-deadlines) would have the browser jump past the tab bar to the
+    // panel; keep the bar in view instead.
+    if (start >= 0 && location.hash.slice(1) === panels[start].id) {
+      requestAnimationFrame(function () { nav.scrollIntoView({ block: "start" }); });
+    }
     links.forEach(function (a, i) {
       a.addEventListener("click", function (e) {
         e.preventDefault();
@@ -375,6 +429,18 @@
     });
     if (next) next.addEventListener("click", function () {
       if (current < links.length - 1) { show(current + 1, true); links[current].focus(); }
+    });
+  });
+
+  // A checklist item that links to a form field ("description", still missing) puts the cursor
+  // in that field, not just the page beside it.
+  document.querySelectorAll(".checklist a[href^='#']").forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      var field = document.getElementById(link.getAttribute("href").slice(1));
+      if (!field || !field.focus) return;
+      e.preventDefault();
+      field.scrollIntoView({ block: "center" });
+      field.focus({ preventScroll: true });
     });
   });
 

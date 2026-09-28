@@ -1,9 +1,7 @@
-import re
-
 from django import forms
 from django.db import models
-from django.utils.text import slugify
 
+from core.slugs import to_slug
 from events.models import CustomQuestion, Event, Prize, QuestionKind, Track
 
 
@@ -129,9 +127,7 @@ class EventForm(forms.ModelForm):
         self.fields["description"].required = True
 
     def clean_slug(self):
-        slug = self.cleaned_data.get("slug") or self.cleaned_data.get("name", "")
-        # Dots, underscores and slashes separate words too: "example.org" -> "example-org".
-        slug = slugify(re.sub(r"[._/\\]+", "-", slug))[:60].strip("-")
+        slug = to_slug(self.cleaned_data.get("slug") or self.cleaned_data.get("name", ""))
         if not slug:
             raise forms.ValidationError("Give the event a url name.")
         clash = Event.objects.filter(slug=slug).exclude(pk=self.instance.pk)

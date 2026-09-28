@@ -28,7 +28,7 @@
         {% endif %}
         <div class="actions">
           {% if project.is_submitted %}
-            <form method="post" action="{% url 'participant:project_unsubmit' project.pk %}">{% csrf_token %}<button class="btn btn--ghost" type="submit">withdraw to draft</button></form>
+            <form method="post" action="{% url 'participant:project_unsubmit' project.pk %}" data-confirm="Withdraw {{ project.name }} to draft? It leaves the gallery and will not be judged unless you submit it again before the deadline.">{% csrf_token %}<button class="btn btn--ghost" type="submit">withdraw to draft</button></form>
           {% else %}
             <button class="btn" type="submit" form="project-form" name="then" value="submit">save &amp; submit</button>
           {% endif %}
@@ -38,14 +38,15 @@
       </div>
       <div>
         <p class="section-title">ready to submit?</p>
+        {% if missing %}<p class="faint">pick one to jump to it.</p>{% endif %}
         <ul class="checklist">
-          <li{% if not missing.name %} class="done"{% endif %}>project name</li>
-          <li{% if not missing.tagline %} class="done"{% endif %}>tagline</li>
-          <li{% if not missing.description %} class="done"{% endif %}>description</li>
-          <li{% if not missing.repo_url %} class="done"{% endif %}>repository url</li>
+          <li{% if not missing.name %} class="done">project name{% else %}><a href="#id_name">project name</a>{% endif %}</li>
+          <li{% if not missing.tagline %} class="done">tagline{% else %}><a href="#id_tagline">tagline</a>{% endif %}</li>
+          <li{% if not missing.description %} class="done">description{% else %}><a href="#id_description">description</a>{% endif %}</li>
+          <li{% if not missing.repo_url %} class="done">repository url{% else %}><a href="#id_repo_url">repository url</a>{% endif %}</li>
           {% if event.min_team_size > 1 %}<li{% if not missing.team %} class="done"{% endif %}>team of at least {{ event.min_team_size }}</li>{% endif %}
-          {% if form.fields.track.queryset.exists %}<li{% if not missing.track %} class="done"{% endif %}>track</li>{% endif %}
-          {% for q in form.questions %}{% if q.required %}<li{% if not missing|missing_q:q.pk %} class="done"{% endif %}>{{ q.prompt|truncatechars:48 }}</li>{% endif %}{% endfor %}
+          {% if form.fields.track.queryset.exists %}<li{% if not missing.track %} class="done">track{% else %}><a href="#id_track">track</a>{% endif %}</li>{% endif %}
+          {% for q in form.questions %}{% if q.required %}{% if missing|missing_q:q.pk %}<li><a href="#id_q_{{ q.pk }}">{{ q.prompt|truncatechars:48 }}</a></li>{% else %}<li class="done">{{ q.prompt|truncatechars:48 }}</li>{% endif %}{% endif %}{% endfor %}
         </ul>
       </div>
     </div>
@@ -97,7 +98,7 @@
     </section>
     {% endif %}
 
-    <div class="sticky-actions actions"><button class="btn" type="submit">save</button><span class="faint">saving never submits; use "submit project" above.</span></div>
+    <div class="sticky-actions actions"><button class="btn" type="submit">save</button><span class="faint">saving never submits; use "save &amp; submit" at the top.</span></div>
   </form>
 
   <section class="frame" id="images">
@@ -109,7 +110,7 @@
           <figure class="shot">
             <img class="thumb" src="/media/{{ img.image.name }}" alt="{{ img.caption|default:'project screenshot' }}">
             <figcaption><span>{{ img.caption|default:"--" }}</span>
-              <form class="inline-form" method="post" action="{% url 'participant:image_remove' project.pk img.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+              <form class="inline-form" method="post" action="{% url 'participant:image_remove' project.pk img.pk %}" data-confirm="Remove this image from the gallery? This cannot be undone.">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
             </figcaption>
           </figure>
         {% endfor %}

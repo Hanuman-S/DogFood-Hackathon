@@ -6,7 +6,7 @@
     {% for b, who, credits in rows %}
       <tr>
         <td class="num">{{ b.pk }}</td><td>{{ who }}</td><td class="dim">{{ credits|default:"--" }}</td><td class="dim">{{ b.created_at|utc }}</td><td class="faint">{{ b.created_ip_hash|slice:":8"|default:"--" }}</td>
-        {% if voidable %}<td>{% if b.voided_at %}<span class="badge">voided</span>{% else %}<form method="post" action="{% url 'organizer:ballot_void' event.slug b.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="reason-{{ b.pk }}">reason for voiding ballot {{ b.pk }}</label><input id="reason-{{ b.pk }}" name="reason" required minlength="3" maxlength="300" placeholder="reason"><button class="btn btn--small btn--danger" type="submit">void</button></form>{% endif %}</td>{% endif %}
+        {% if voidable %}<td>{% if b.voided_at %}<span class="badge">voided</span>{% else %}<form method="post" action="{% url 'organizer:ballot_void' event.slug b.pk %}" class="form--inline" data-confirm="Void this ballot? It stops counting in the tally. This cannot be undone.">{% csrf_token %}<label class="visually-hidden" for="reason-{{ b.pk }}">reason for voiding ballot {{ b.pk }}</label><input id="reason-{{ b.pk }}" name="reason" required minlength="3" maxlength="300" placeholder="reason"><button class="btn btn--small btn--danger" type="submit">void</button></form>{% endif %}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>

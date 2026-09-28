@@ -42,7 +42,7 @@
       <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">{{ tracks|length }}</span></header>
       <div class="frame__body frame__body--flush table-wrap">
         <table class="table"><tbody>
-        {% for t in tracks %}<tr><td class="bright">{{ t.name }}</td><td class="dim">{{ t.description }}</td></tr>
+        {% for t in tracks %}<tr><td class="bright">{% if event.is_published and submitted_count %}<a href="/projects?event={{ event.slug }}&amp;track={{ t.pk }}" title="this track's projects in the gallery">{{ t.name }}</a>{% else %}{{ t.name }}{% endif %}</td><td class="dim">{{ t.description }}</td></tr>
         {% empty %}<tr><td class="faint">one open category: no tracks.</td></tr>{% endfor %}
         </tbody></table>
       </div>

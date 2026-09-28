@@ -17,19 +17,19 @@
           <button class="btn" type="submit" name="kind" value="final"{% if not judging_closed %} disabled aria-describedby="final-why"{% endif %}>compute final results</button>
         </form>
         {% if not judging_closed %}<p class="faint" id="final-why">a final result can be computed once judging closes ({{ event.judging_ends_at|utc }}). a preview can be computed now; it is never published.</p>{% endif %}
-        {% if judging_open %}<form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">{% csrf_token %}<input type="hidden" name="next" value="results"><button class="btn btn--small btn--danger" type="submit">end judging now</button><span class="faint">only moves the end earlier.</span></form>{% endif %}
+        {% if judging_open %}<form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions" data-confirm="End judging now? Judging closes at this moment and cannot be reopened except by extending it. Reviews still in draft stop counting.">{% csrf_token %}<input type="hidden" name="next" value="results"><button class="btn btn--small btn--danger" type="submit">end judging now</button><span class="faint">only moves the end earlier.</span></form>{% endif %}
 
         <p class="section-title">publish</p>
         {% if publication %}
           <table class="kv">
             <tr><th scope="row">published</th><td>final #{{ publication.snapshot_id }}, {{ publication.published_at|utc }} by {{ publication.published_by_email }}</td></tr>
           </table>
-          <form method="post" action="{% url 'organizer:results_unpublish' event.slug %}" class="actions">
+          <form method="post" action="{% url 'organizer:results_unpublish' event.slug %}" class="actions" data-confirm="Unpublish the results? Whoever could see them no longer can.">
             {% csrf_token %}<button class="btn btn--ghost" type="submit">unpublish</button>
             <a href="{% url 'public:event_results' event.slug %}">/events/{{ event.slug }}/results</a>
           </form>
         {% elif latest_final %}
-          <form method="post" action="{% url 'organizer:results_publish' event.slug %}" class="actions">
+          <form method="post" action="{% url 'organizer:results_publish' event.slug %}" class="actions" data-confirm="Publish final results #{{ latest_final.pk }}? They become visible to the audience you chose.">
             {% csrf_token %}<input type="hidden" name="snapshot" value="{{ latest_final.pk }}">
             <button class="btn" type="submit">publish final #{{ latest_final.pk }}</button>
             <a href="{% url 'public:event_results' event.slug %}">preview the page</a>

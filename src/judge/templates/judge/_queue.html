@@ -7,7 +7,7 @@
   <div class="frame__body">
     <!-- Terminal Progress Bar: shades_classic -->
     <div class="progress-bar-wrap">
-      <pre class="progress-bar-text">{{ progress.terminal_bar }}</pre>
+      {% with parts=progress.terminal_bar_parts %}<pre class="progress-bar-text" aria-label="{{ parts.2 }}"><span aria-hidden="true">{{ parts.0 }}<span class="progress-bar-text__empty">{{ parts.1 }}</span></span>  {{ parts.2 }}</pre>{% endwith %}
       <p class="field__help">{{ progress.submitted }} submitted · {{ progress.drafts }} draft(s) · {{ progress.total_projects }} in your queue</p>
     </div>
 

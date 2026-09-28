@@ -123,7 +123,7 @@
             <td class="dim">{% if t.last_used_at %}{{ t.last_used_at|timesince }} ago{% else %}never{% endif %}</td>
             <td class="num">
               {% if t.is_active %}
-              <form class="inline-form" method="post" action="{% url 'accounts:token_revoke' t.pk %}">
+              <form class="inline-form" method="post" action="{% url 'accounts:token_revoke' t.pk %}" data-confirm="Revoke this API token? Scripts using it stop working at once.">
                 {% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button>
               </form>
               {% else %}<span class="faint">revoked</span>{% endif %}

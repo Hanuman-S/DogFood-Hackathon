@@ -59,7 +59,7 @@
             <td class="num">
               {% if is_captain and m.user_id != user.pk %}
                 <form class="inline-form" method="post" action="{% url 'participant:team_captain' team.pk m.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">make captain</button></form>
-                <form class="inline-form" method="post" action="{% url 'participant:team_remove' team.pk m.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+                <form class="inline-form" method="post" action="{% url 'participant:team_remove' team.pk m.pk %}" data-confirm="Remove {{ m.user.name }} from {{ team.name }}?">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
               {% endif %}
             </td>
           </tr>
@@ -84,7 +84,7 @@
         {% else %}
           <p class="faint">the captain can share the invite link and manage the team.</p>
         {% endif %}
-        <form method="post" action="{% url 'participant:team_leave' team.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">{% if members|length == 1 %}leave and delete team{% else %}leave team{% endif %}</button></form>
+        <form method="post" action="{% url 'participant:team_leave' team.pk %}"{% if members|length > 1 %} data-confirm="Leave {{ team.name }}? You need a new invite link to join again."{% endif %}>{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">{% if members|length == 1 %}leave and delete team{% else %}leave team{% endif %}</button></form>
       </div>
     </section>
 

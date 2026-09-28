@@ -29,7 +29,7 @@
             <td class="num">
               {% if r.unstarted %}
               <form class="inline-form" method="post" action="{% url 'organizer:judge_nudge' event.slug r.judge.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit" title="log a reminder and open it in your mail app">nudge</button></form>
-              {% if not window.is_closed %}<form class="inline-form" method="post" action="{% url 'organizer:judge_reassign' event.slug r.judge.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'organizer:progress' event.slug %}"><button class="btn btn--small btn--ghost btn--danger" type="submit" title="give their unstarted reviews to other judges">reassign</button></form>{% endif %}
+              {% if not window.is_closed %}<form class="inline-form" method="post" action="{% url 'organizer:judge_reassign' event.slug r.judge.pk %}" data-confirm="Give {{ r.judge.user.name }}'s unstarted reviews to other judges?">{% csrf_token %}<input type="hidden" name="next" value="{% url 'organizer:progress' event.slug %}"><button class="btn btn--small btn--ghost btn--danger" type="submit" title="give their unstarted reviews to other judges">reassign</button></form>{% endif %}
               {% endif %}
             </td>
           </tr>

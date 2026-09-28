@@ -267,6 +267,17 @@ def test_saving_through_the_page(open_event, client_for):
     assert sorted(open_event.criteria.values_list("weight", flat=True)) == [D("40"), D("60")]
 
 
+def test_a_typed_key_is_normalized_not_refused(open_event, client_for):
+    # A SlugField used to answer "Enter a valid slug" to keys like these before the service ran.
+    client = client_for(open_event.organizer)
+    url = f"/organizer/events/{open_event.slug}/rubric"
+    response = client.post(url, formset_post([
+        line("Technical depth", 60, key="Tech.Depth"), line("Polish", 40, key="ux_polish / UI"),
+    ]))
+    assert response.status_code == 302
+    assert sorted(open_event.criteria.values_list("key", flat=True)) == ["tech-depth", "ux-polish-ui"]
+
+
 def test_a_zero_weight_is_shown_back_and_nothing_saves(open_event, client_for):
     response = client_for(open_event.organizer).post(
         f"/organizer/events/{open_event.slug}/rubric", formset_post([line("A", 60), line("B", 0)])
