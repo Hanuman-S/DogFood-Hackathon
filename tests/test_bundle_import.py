@@ -358,3 +358,30 @@ def test_the_page_the_api_and_the_command(source, install, client_for, tmp_path)
     call_command("import_event", str(target), "--as", importer.email, stdout=out)
     assert f"imported as {ARCHIVE}" in out.getvalue()
     assert Client().post("/api/bundles", {}).status_code == 401
+
+
+def test_the_commands_answer_bad_paths_with_an_error_and_leave_nothing(source, install, tmp_path):
+    import tempfile
+    from django.core.management.base import CommandError
+
+    importer = admin_like_source_organizer(source)
+    with pytest.raises(CommandError, match="No file"):
+        call_command("import_event", str(tmp_path / "absent.zip"), "--as", importer.email)
+    event = import_bytes(source[FIXTURE], install, importer)
+    before = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("dogfood-bundle-")}
+    with pytest.raises(CommandError, match="does not exist"):
+        call_command("export_event", event.slug, str(tmp_path / "no-such-folder" / "x.zip"))
+    folder = tmp_path / "a-folder.zip"
+    folder.mkdir()
+    with pytest.raises(CommandError, match="is a folder"):
+        call_command("export_event", event.slug, str(folder))
+    locked = tmp_path / "read-only"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        with pytest.raises(CommandError, match="Could not write"):
+            call_command("export_event", event.slug, str(locked / "x.zip"))
+    finally:
+        locked.chmod(0o700)
+    after = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("dogfood-bundle-")}
+    assert after == before  # the temporary bundle is removed whatever happens

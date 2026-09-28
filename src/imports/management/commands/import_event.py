@@ -2,6 +2,8 @@
 new, unpublished event, acting as that account (which must be a platform admin or may create events).
 The same checks and refusals as the page and the API; a refusal ends the command with an error."""
 
+import os
+
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import User
@@ -18,6 +20,8 @@ class Command(BaseCommand):
         parser.add_argument("--as", dest="email", required=True, help="the importing account's email")
 
     def handle(self, file, email, **options):
+        if not os.path.isfile(file):
+            raise CommandError(f"No file at {file!r}.")
         actor = User.objects.filter(email__iexact=email).first()
         if actor is None:
             raise CommandError(f"No account {email!r}.")

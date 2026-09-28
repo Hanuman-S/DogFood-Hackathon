@@ -284,9 +284,11 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
   tokens, invite links, voting secrets or IP hashes, and voters are pseudonymised. A platform admin
   or an event creator imports one as a new, unpublished event (`/organizer/events/import`,
   `POST /api/bundles`, `manage.py import_event`). Every file is checked before anything is written,
-  and the import is one transaction. An admin's import matches accounts by email. An event
-  creator's import makes a new placeholder account for every person, and never attaches an
-  existing one. Imported accounts have no password until the operator runs `changepassword`.
+  and the import is one transaction. Only a platform admin's import matches accounts by email.
+  An event creator's import makes a new placeholder account for every person, and never attaches
+  an existing one, their own included: an event creator who imports their own event becomes its
+  organizer, but finds their past actions in it (memberships, reviews, comments, audit history)
+  under a placeholder account. Imported accounts have no password until the operator runs `changepassword`.
   **Check a bundle before importing it: an imported event with reviews or ballots is permanent and
   cannot be deleted.** Format and rules: DATA-MODEL.md, "Event bundle".
 
