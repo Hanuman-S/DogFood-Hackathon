@@ -235,6 +235,7 @@ def integrity(request, slug):
         "voided": evidence.ballot_rows(evidence.voided(event)),
         "positions": evidence.position_bias(event),
         "trail": evidence.trail(event),
+        "imported_ballots": evidence.imported_ballots(event),
     })
 
 

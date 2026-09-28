@@ -9,7 +9,12 @@ What the import decides, not the bundle:
 * publication -- an imported event always arrives unpublished (the source's state is in the audit row);
 * secrets -- a new ballot secret and open-link nonce for the vote, a new invite token for every team;
 * accounts -- a platform admin's import matches accounts by email and creates the missing ones with no
-  usable password (the operator sets one with `changepassword`; there is no outbound mail);
+  usable password (the operator sets one with `changepassword`; there is no outbound mail). Anyone
+  else who may import (an event creator) gets a NEW placeholder account for every person in the bundle
+  (imported-<n>-<8 hex>@import.invalid, the display name, no password), so a non-admin can never
+  attach an existing account -- anyone's, their own included -- to an event;
+* the cross-validation seed -- M2 derives it from the slug; if the slug had to change, the source's
+  seed is pinned in the event's engine overrides (unless they set one), so a recompute matches;
 * the importer becomes an organizer of the new event (refused, 400, if they compete in it);
 * fixture refs are filed under `bundle:<sha256>:<new slug>`, unique per import;
 * imported snapshots and tallies carry `imported_from` = the bundle's sha256.
@@ -38,7 +43,7 @@ from core.models import AuditAction, AuditLog
 from . import bundle_ids
 from .bundle import SECTIONS, BY_MODEL, BundleError, model_of
 from .bundle_schema import expected_fields
-from .bundle_validate import ImportForbidden, validate
+from .bundle_validate import validate
 
 SLUG_LOCK = "dogfood:event-slug"
 
@@ -47,10 +52,6 @@ def import_event(path, *, actor, origin=None):
     """Import the bundle at `path` as a new event; returns it. Refusals: ImportForbidden (403),
     BundleError (400, with a code), each audited once; nothing else is written."""
     checked = validate(path, actor=actor, origin=origin)
-    if not actor.is_platform_admin:
-        # Placeholder accounts for other importers arrive in the next stage; until then, admins only.
-        audit.record(AuditAction.EVENT_IMPORT_REFUSED, origin=origin, actor=actor, reason="forbidden")
-        raise ImportForbidden("Only platform admins can import an event for now.")
     written = []  # media files stored before the commit, removed again if it fails
     try:
         with transaction.atomic():
@@ -117,23 +118,32 @@ class _Writer:
             self._organizer()
             self._fixture_refs()
             self._restore_times()
+            self.cv_seed_pinned = self._pin_cv_seed()
         self._audit_history()
         counts = {s.name: (1 if self.body[s.name] else 0) if s.one else len(self.body[s.name]) for s in SECTIONS}
         audit.record(AuditAction.EVENT_IMPORTED, origin=self.origin, actor=self.actor, subject=slug, event=slug,
                      sha256=self.checked.sha256, source_event=self.source_slug,
                      source_published=bool(source["is_published"]), rows=counts,
-                     users_created=self.created_users)
+                     users_created=self.created_users, placeholder_accounts=self.placeholders,
+                     cv_seed_pinned=self.cv_seed_pinned)
         return self.event
 
     # --- accounts and the importer ---
 
     def _users(self):
         self.created_users = 0
+        self.placeholders = not self.actor.is_platform_admin
         for row in self.body["users"]:
-            user = User.objects.filter(email__iexact=row["email"]).first()
-            if user is None:
-                user = User.objects.create_user(row["email"], None, name=row["name"])  # unusable password
+            if self.placeholders:
+                n = row["id"].split("#")[1]
+                email = f"imported-{n}-{secrets.token_hex(4)}@import.invalid"
+                user = User.objects.create_user(email, None, name=row["name"])  # unusable password
                 self.created_users += 1
+            else:
+                user = User.objects.filter(email__iexact=row["email"]).first()
+                if user is None:
+                    user = User.objects.create_user(row["email"], None, name=row["name"])  # unusable password
+                    self.created_users += 1
             self.users[row["id"]] = user
 
     def _check_importer(self):
@@ -246,6 +256,27 @@ class _Writer:
         """auto_now fields set "now" on insert; put the source's values back (same transaction)."""
         for model, pk, stamps in self.late_times:
             model.objects.filter(pk=pk).update(**stamps)
+
+    def _pin_cv_seed(self):
+        """The seed M2's cross-validation would have used on the source (derived from its slug), pinned
+        when the slug changed -- only then: a kept slug derives the same seed by itself. Not when the
+        overrides already name one. Returns the pinned seed, or None."""
+        if self.slug == self.source_slug:
+            return None
+        from scoring.engine.config import seed_for
+        from scoring.models import EventScoringConfig
+
+        config = EventScoringConfig.objects.filter(event=self.event).first()
+        overrides = dict(config.overrides) if config else {}
+        if overrides.get("cv_seed") is not None:
+            return None
+        seed = seed_for(self.source_slug)
+        overrides["cv_seed"] = seed
+        if config:
+            EventScoringConfig.objects.filter(pk=config.pk).update(overrides=overrides)
+        else:
+            EventScoringConfig.objects.create(event=self.event, overrides=overrides)
+        return seed
 
     def _fixture_refs(self):
         from imports.models import FixtureRef

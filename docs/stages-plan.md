@@ -377,7 +377,7 @@ The fixture importer and the bundle import both set `event`.
   - It shows the server-checked status: valid, invalid, revoked or unknown key.
   - **For an imported record it shows "signed by another install (kid X)", not "valid" (fix 1).**
   - It shows the raw payload, the signature and the kid.
-- `/verify`: a form. A POST with a payload and signature answers valid, invalid, unknown key, revoked, or signed by another install. It has a per-IP rate limit (audited, 429) and does no other write.
+- `/verify`: a form. A POST with a payload and signature answers valid, invalid, unknown key, revoked, or signed by another install. It has a per-IP rate limit (audited, 429) and does no other write. The limit is counted from `RECORD_VERIFY` audit rows through `AuditLog.objects.live()` (CLAUDE.md), so history imported with a bundle never counts toward it.
 - `/.well-known/dogfood-signing-keys.json`: this install's keys only, retired ones included.
 - `/.well-known/dogfood-foreign-signing-keys.json`: imported keys, published separately.
 - `/.well-known/dogfood-revoked.json`.

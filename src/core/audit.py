@@ -29,6 +29,11 @@ def record(action, *, request=None, origin=None, actor=None, subject="", **detai
     that might roll back: a refused action must leave its trace even though the action did not
     happen.
     """
+    if "source_history" in detail:
+        # The mark that keeps a row out of every live decision (AuditLog.objects.live()). Only the
+        # event-bundle import sets it, on the history it copies in (imports/bundle_import.py); a row
+        # written here is an action on this install, and must count.
+        raise ValueError("audit.record() does not take source_history: only imported history carries it")
     if actor is None and request is not None:
         user = getattr(request, "user", None)
         if user is not None and user.is_authenticated:

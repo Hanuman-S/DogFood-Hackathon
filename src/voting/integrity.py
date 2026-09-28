@@ -88,6 +88,16 @@ def _clusters(items, when, window):
     return groups
 
 
+IMPORTED_VOTER = r"^v_[0-9a-f]{16}$"  # an event bundle's voter pseudonym (a real cookie id is 32 hex)
+
+
+def imported_ballots(event):
+    """How many ballots came in with an event bundle. They carry no network hash and no account, so
+    the ip_burst and new_account flags cannot see them: the page says so, rather than let an empty
+    flag list read as a clean vote."""
+    return Ballot.objects.filter(event=event, voter_cookie__regex=IMPORTED_VOTER).count()
+
+
 def _signature(ballot):
     return tuple(sorted((line.project_id, line.credits) for line in ballot.lines.all() if line.credits))
 

@@ -42,6 +42,9 @@ build step. `docker compose up --build` is the product; it must stay one command
   SECRET_KEY directly.
 - **Rate limits** are counted from audit rows (`core/ratelimit.py`, the login throttle's pattern):
   a limited write must leave one audit row per attempt, carrying the ip_hash it is limited by.
+- **Audit rows that decide something** (a rate limit, a throttle, a cap, a flag) are read through
+  `AuditLog.objects.live()`, which leaves out history an event bundle imported
+  (`detail.source_history`). `audit.record()` refuses that key; only the bundle import sets it.
 - **CSV** is written only by `core.csvfile.to_csv` (formula-escaped); downloads are audited.
 - **Deadline first.** Participant writes call `core.deadlines.check_submission_window` before
   permission checks and validation, so a late write is a 409 `submissions_closed`, never a 403 or

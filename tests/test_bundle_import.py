@@ -28,7 +28,6 @@ from accounts.roles import ADMIN, Role
 from core.models import AuditAction, AuditLog
 from events.models import Event, EventMembership
 from imports import bundle, bundle_import
-from imports.bundle_validate import ImportForbidden
 from imports.models import FixtureRef
 from projects.models import Project
 from scoring.models import Publication, ResultSnapshot, Score
@@ -265,11 +264,29 @@ def test_a_participant_of_the_event_cannot_import_it_as_its_organizer(source, in
     assert not Event.objects.exists()
 
 
-def test_until_placeholders_exist_only_an_admin_can_import(source, install, make_user):
-    creator = make_user(role=Role.ORGANIZER)
-    with pytest.raises(ImportForbidden):
-        import_bytes(source[FIXTURE], install, creator)
-    assert not Event.objects.exists()
+def test_a_kept_slug_pins_no_seed(source, install):
+    """The fresh-install round trip keeps the slug, so M2 derives the same seed by itself: no override."""
+    from scoring.models import EventScoringConfig
+
+    event = import_bytes(source[FIXTURE], install, admin_like_source_organizer(source))
+    config = EventScoringConfig.objects.filter(event=event).first()
+    assert config is None or "cv_seed" not in config.overrides
+    assert AuditLog.objects.get(action=AuditAction.EVENT_IMPORTED).detail["cv_seed_pinned"] is None
+
+
+def test_a_recompute_under_a_changed_slug_ranks_as_the_source_did(source, install):
+    """Import twice: the second copy's slug gets a suffix, its seed is pinned, and a new preview ranks
+    every project exactly as the source's published final did."""
+    from scoring import results
+    from scoring import services as scoring
+
+    importer = admin_like_source_organizer(source)
+    import_bytes(source[FIXTURE], install, importer)
+    copy = import_bytes(source[FIXTURE], install, importer)
+    assert copy.slug == f"{FIXTURE}-2"
+    preview = scoring.compute_snapshot(copy, "preview", actor=importer)
+    rows, _ = results.build_rows(copy, preview)
+    assert [(r.project.name, r.display_rank, r.tie_group) for r in rows] == source["ranking"]
 
 
 def row_counts():

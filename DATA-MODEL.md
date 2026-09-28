@@ -476,6 +476,15 @@ What the import decides, not the bundle:
   every team.
 - **Accounts:** a platform admin's import matches them by email, and creates missing ones with no
   usable password. The operator sets one with `manage.py changepassword`; there is no outbound mail.
+  An importer who may create events but is not an admin gets a **new placeholder account for every
+  person in the bundle** (`imported-<n>-<8 hex>@import.invalid`, the display name, no password), so
+  they can never attach an existing account to an event, their own included. The importer's own
+  account is then made the new event's organizer. Issued records and signing keys (C2) will be
+  imported for admins only.
+- **The cross-validation seed:** M2 derives its default seed from the slug. When the slug had to
+  change, the source's seed is pinned in the event's engine overrides (`cv_seed`, unless they already
+  set one), so a recompute ranks as the source did. `event_imported` records the pinned seed, or
+  `null` when the slug was kept.
 - **The importer's role:** they become an organizer of the new event. If they are a participant in
   it, the import is refused with `400 importer_is_competitor`.
 - **Ballots:** each ballot's voter becomes its pseudonym, stored as an open-link voter, with no
@@ -484,7 +493,14 @@ What the import decides, not the bundle:
 - **Snapshots and tallies** are inserted with `imported_from` = the bundle's sha256.
 - **Audit rows:** the bundle's rows are inserted as history (`detail.source_history` = true, the
   source slug replaced by the new one), followed by one `event_imported` row with the sha256, the
-  source slug, the row counts and how many accounts were created.
+  source slug, the row counts, how many accounts were created and whether they are placeholders.
+  History never feeds a decision here: rate limits, the login throttle and the anonymous-comment cap
+  count `AuditLog.objects.live()`, which leaves it out. `audit.record()` refuses a
+  `source_history` key; only the import's bulk insert sets it.
+- **Imported ballots** have no network hash and no account, so the integrity page cannot cluster
+  them. It says "IP-based clustering unavailable: ballots were imported" rather than show an empty
+  flag list. Their voter id (`v_` + 16 hex) is a form no voter cookie can take: the cookie reader
+  accepts only the 32-hex id it issues.
 
 Rows go in section order through the three audited bypasses: deadline, voting and weights. The
 `auto_now` timestamps are then put back to the source's values in the same transaction.

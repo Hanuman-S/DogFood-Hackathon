@@ -279,6 +279,16 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
   turn comments off per event. Rate limits apply per account and per network, and an identical
   comment on the same project within 10 minutes is refused. Every action is on the voting
   integrity page's audit trail. JSON API: `/api/projects/<id>/comments`.
+- **Event bundles**: an organizer downloads a whole event as one zip ("download event bundle" on the
+  event page, `GET /api/events/<slug>/bundle`, `manage.py export_event`). It carries no passwords,
+  tokens, invite links, voting secrets or IP hashes, and voters are pseudonymised. A platform admin
+  or an event creator imports one as a new, unpublished event (`/organizer/events/import`,
+  `POST /api/bundles`, `manage.py import_event`). Every file is checked before anything is written,
+  and the import is one transaction. An admin's import matches accounts by email. An event
+  creator's import makes a new placeholder account for every person, and never attaches an
+  existing one. Imported accounts have no password until the operator runs `changepassword`.
+  **Check a bundle before importing it: an imported event with reviews or ballots is permanent and
+  cannot be deleted.** Format and rules: DATA-MODEL.md, "Event bundle".
 
 ## What it does not do yet
 
