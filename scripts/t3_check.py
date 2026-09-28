@@ -30,10 +30,11 @@ import run as checker  # noqa: E402 -- the organizers' config reader and HTTP he
 ARCHIVE = "dogfood-archive-2026"   # seed_demo: voting open during judging, 80/20
 FIXTURE = "sample-hack-2026"       # import_fixtures + seed_demo --votes: its vote closed in March 2026
 BURST_LIMIT = 60                   # well above VOTE_RATE_PER_VOTER (30)
+COMMENT_WINDOW_MINUTES = 10        # COMMENT_RATE_WINDOW: how long a rate-limited rerun must wait
 
 
 class Check(checker.Check):
-    pass
+    skipped = ""  # a reason: the probe could not run this time (not a failure, not a pass)
 
 
 def main():
@@ -62,6 +63,11 @@ def main():
         if not c.ok:
             for n in notes:
                 c.note(n)
+        checks.append(c)
+
+    def skip(label, reason):
+        c = Check("T3", label)
+        c.skipped = reason
         checks.append(c)
 
     # --- the ballot, as the demo participant (opening it is the only write) -----------------------
@@ -149,23 +155,37 @@ def main():
     body = f"t3 probe comment {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
     status, data, _ = call(comments_url, "participant", "POST", {"body": body})
     comment_id = (data or {}).get("id")
-    check("comment posted by a participant: 201", status == 201 and comment_id, f"got {status} {code(data)}")
-    status, data, _ = call(comments_url, "participant", "POST", {"body": body})
-    check("same comment again: 409 duplicate_comment", status == 409 and code(data) == "duplicate_comment",
-          f"got {status} {code(data)}, wanted 409 duplicate_comment")
+    # The participant's comment limit (5 per 10 minutes) is real for every account, the demo ones
+    # included: a rerun inside the window is rate-limited, which says "come back later", not "broken".
+    limited = status == 429 and code(data) == "rate_limited"
+    wait = f"rate-limited (the participant's comment limit), rerun after {COMMENT_WINDOW_MINUTES} min"
+    dependent = [
+        "same comment again: 409 duplicate_comment", "organizer hides the comment: 200",
+        "hidden comment absent for a visitor", "hidden comment absent for a judge",
+        "hidden comment still listed for the organizer", "organizer restores it: visible again",
+    ]
+    if limited:
+        skip("comment posted by a participant: 201", wait)
+        for label in dependent:
+            skip(label, wait)
+    else:
+        check("comment posted by a participant: 201", status == 201 and comment_id, f"got {status} {code(data)}")
+        status, data, _ = call(comments_url, "participant", "POST", {"body": body})
+        check(dependent[0], status == 409 and code(data) == "duplicate_comment",
+              f"got {status} {code(data)}, wanted 409 duplicate_comment")
 
     def listed(who):
         _, data, _ = call(comments_url, who)
         return comment_id in [c.get("id") for c in (data or {}).get("results", [])]
 
-    status, data, _ = call(f"/api/comments/{comment_id}/hide", "organizer", "POST", {"reason": "t3 probe"})
-    check("organizer hides the comment: 200", status == 200 and (data or {}).get("hidden") is True,
-          f"got {status} {code(data)}")
-    check("hidden comment absent for a visitor", not listed(None), "the visitor's list still shows it")
-    check("hidden comment absent for a judge", not listed("judge_a"), "judge_a's list still shows it")
-    check("hidden comment still listed for the organizer", listed("organizer"), "the organizer's list lacks it")
-    status, data, _ = call(f"/api/comments/{comment_id}/restore", "organizer", "POST", {"reason": "t3 probe done"})
-    check("organizer restores it: visible again", status == 200 and listed(None), f"got {status} {code(data)}")
+    if not limited:
+        status, data, _ = call(f"/api/comments/{comment_id}/hide", "organizer", "POST", {"reason": "t3 probe"})
+        check(dependent[1], status == 200 and (data or {}).get("hidden") is True, f"got {status} {code(data)}")
+        check(dependent[2], not listed(None), "the visitor's list still shows it")
+        check(dependent[3], not listed("judge_a"), "judge_a's list still shows it")
+        check(dependent[4], listed("organizer"), "the organizer's list lacks it")
+        status, data, _ = call(f"/api/comments/{comment_id}/restore", "organizer", "POST", {"reason": "t3 probe done"})
+        check(dependent[5], status == 200 and listed(None), f"got {status} {code(data)}")
 
     draft = None
     highest = max(all_projects or [0])
@@ -175,14 +195,18 @@ def main():
             draft = pid
             break
     status, data, _ = call(f"/api/projects/{draft}/comments", "participant", "POST", {"body": body + " (draft)"})
+    # The gallery check answers before the rate limit, so this probe runs even when rate-limited.
     check("comment on a draft (even the team's own) refused: 404 no_project",
           draft and status == 404 and code(data) == "no_project", f"draft found: {draft}",
           f"got {status} {code(data)}, wanted 404 no_project")
     status, _, _ = call(f"/api/projects/{draft}/comments")
     check("a draft's comments: 404 for a visitor", draft and status == 404, f"got {status}, wanted 404")
-    status, data, _ = call(f"/api/comments/{comment_id}/delete", "participant", "POST", {})
-    check("the author deletes it: 200, gone for visitors", status == 200 and not listed(None),
-          f"got {status} {code(data)}")
+    if limited:
+        skip("the author deletes it: 200, gone for visitors", wait)
+    else:
+        status, data, _ = call(f"/api/comments/{comment_id}/delete", "participant", "POST", {})
+        check("the author deletes it: 200, gone for visitors", status == 200 and not listed(None),
+              f"got {status} {code(data)}")
 
     print("DOGFOOD T3 probes (community voting) -- scripts/t3_check.py")
     print(f"portal: {base}")
@@ -190,12 +214,14 @@ def main():
     print()
     width = max(len(c.label) for c in checks) + 2
     for c in checks:
-        print(f"{c.tier}  {c.label} {'.' * (width - len(c.label))} {'PASS' if c.ok else 'FAIL'}")
-        for line in c.detail:
+        verdict = "SKIP" if c.skipped else ("PASS" if c.ok else "FAIL")
+        print(f"{c.tier}  {c.label} {'.' * (width - len(c.label))} {verdict}")
+        for line in ([c.skipped] if c.skipped else c.detail):
             print(f"       {line}")
-    passed = sum(c.ok for c in checks)
+    passed = sum(c.ok for c in checks if not c.skipped)
+    skipped = sum(bool(c.skipped) for c in checks)
     print()
-    print(f"{passed}/{len(checks)} T3 probes pass")
+    print(f"{passed}/{len(checks) - skipped} T3 probes pass" + (f", {skipped} skipped" if skipped else ""))
     return 0
 
 

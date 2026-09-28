@@ -333,3 +333,34 @@ def test_pages_of_comments_and_bad_page_numbers(setup, make_user):
     for bad in ("abc", "-1", "999"):
         assert Client().get(api(project) + f"?page={bad}").status_code == 200
         assert Client().get(f"/projects/{project.pk}?cpage={bad}").status_code == 200
+
+
+# --- a bad or malformed Bearer header never borrows the session past CSRF --------------------------
+
+@pytest.mark.parametrize("header", [
+    "Bearer not-a-real-token",   # a well-formed Bearer header with a bad token: a hard 401
+    "Bearer ",                   # no token at all: also 401
+    "Bearerabc",                 # malformed: not a Bearer scheme, so the session is used ... with CSRF
+    "Basic dXNlcjpwYXNz",
+    "bearer\tsome-token",
+    "Token abc",
+])
+def test_a_bad_bearer_header_with_a_session_and_no_csrf_token_is_refused(setup, make_user, client_for, header):
+    _, _, project = setup
+    user = make_user()
+    comment = comments.post_comment(project.pk, "theirs", author=user, origin=HERE)
+    client = client_for(user)  # a valid session cookie
+    client.handler.enforce_csrf_checks = True
+    for method, url, data in (
+        ("post", api(project), {"body": "sneaky"}),
+        ("post", f"/api/comments/{comment.pk}/delete", {}),
+        ("post", f"/projects/{project.pk}/comments", None),  # the page form
+    ):
+        if data is None:
+            response = client.post(url, {"body": "sneaky"}, HTTP_AUTHORIZATION=header)
+        else:
+            response = post_json(client, url, data, HTTP_AUTHORIZATION=header)
+        assert response.status_code in (401, 403), (header, url, response.status_code)
+    assert Comment.objects.count() == 1
+    comment.refresh_from_db()
+    assert comment.deleted_at is None

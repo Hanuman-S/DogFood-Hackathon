@@ -81,6 +81,10 @@ If an answer changes a later phase (for example, a hash chain means imported aud
 | `invalid_comment` | 400 |
 | `no_comment` | 404 |
 | `no_event` | 404 (turning comments on or off by someone who is not an organizer of the event) |
+
+Hide and restore through the API (`POST /api/comments/<id>/hide|restore`) have two gates, and each answers differently:
+- **403** from the organizer portal gate (`portal_required("organizer")`, audited `ACCESS_DENIED`) for anyone who can't enter the organizer portal: participants, judges, and visitors (a visitor gets 401).
+- **404 `no_comment`** from the service for an organizer of *another* event: they pass the portal gate, but the comment isn't theirs to moderate. A missing comment gives the same 404.
 | `invalid_moderation` | 400 |
 
 **Services (`projects/comments.py`)**: they never take the request, and read `db_now()` once.

@@ -17,6 +17,9 @@ class BearerTokenMiddleware:
     * A Bearer request is authenticated by the token alone; any session cookie is ignored.
     * A *bad* token is a hard 401, never a silent fall-back to "anonymous". A script with a
       revoked token should fail loudly, not quietly see the public view.
+    * A header that is not the Bearer scheme ("Bearerabc", "Basic ...", a tab instead of the
+      space) is not a token at all: the request stays a session request, with full CSRF checks
+      (tests/test_comments.py pins this with a live session cookie and no CSRF token).
     * CSRF is not enforced for Bearer requests. CSRF exists because browsers attach cookies
       automatically; they never attach an Authorization header on their own, so a Bearer
       request cannot be forged cross-site. Session (cookie) requests keep full CSRF checks.
