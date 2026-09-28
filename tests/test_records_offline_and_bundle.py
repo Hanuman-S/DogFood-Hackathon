@@ -221,3 +221,80 @@ def test_a_bundle_with_a_tampered_record_is_refused(judged, signing, tmp_path, m
     with pytest.raises(bundle.BundleError) as caught:
         import_as(rezip(edit_body(files, tamper)), tmp_path, make_user(role="admin", email="a2@example.org"))
     assert caught.value.code == "invalid_bundle" and "does not verify" in caught.value.detail
+
+
+# --- key identity and signature malleability ----------------------------------------------------------------
+
+@TX
+def test_a_bundle_key_whose_kid_does_not_match_its_bytes_is_refused(judged, signing, tmp_path, make_user):
+    from test_bundle_import_validation import edit_body, rezip
+
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    data = export(judged)
+    files = {i.filename: zipfile.ZipFile(io.BytesIO(data)).read(i.filename)
+             for i in zipfile.ZipFile(io.BytesIO(data)).infolist()}
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import base64
+    other = base64.b64encode(keys.raw_public(Ed25519PrivateKey.generate())).decode()
+
+    def wrong_kid(body):
+        body["signing_keys"][0]["public_key"] = other  # this install's kid, someone else's bytes
+    with pytest.raises(bundle.BundleError) as caught:
+        import_as(rezip(edit_body(files, wrong_kid)), tmp_path, make_user(role="admin", email="k1@example.org"))
+    assert caught.value.code == "invalid_bundle" and "kid" in caught.value.detail
+
+
+@TX
+def test_a_key_under_a_known_kid_with_other_bytes_is_refused_at_import(judged, signing, tmp_path, make_user,
+                                                                        monkeypatch):
+    """Validation already refuses a kid that is not sha256(key)[:16]; the import compares bytes again
+    anyway, so even a key that got past it could not pose as this install's own."""
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    data = export(judged)
+    own = SigningKey.objects.get()
+    from imports import bundle_schema
+    monkeypatch.setattr(bundle_schema.Checker, "_records", lambda self: None)  # get past validation
+    import base64
+    body_key = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("event.json"))["signing_keys"][0]
+    assert body_key["kid"] == own.kid
+    from test_bundle_import_validation import edit_body, rezip
+    files = {i.filename: zipfile.ZipFile(io.BytesIO(data)).read(i.filename)
+             for i in zipfile.ZipFile(io.BytesIO(data)).infolist()}
+
+    def swap(body):
+        body["signing_keys"][0]["public_key"] = base64.b64encode(b"\x01" * 32).decode()
+    with pytest.raises(bundle.BundleError) as caught:
+        import_as(rezip(edit_body(files, swap)), tmp_path, make_user(role="admin", email="k2@example.org"))
+    assert caught.value.code == "key_conflict"
+    assert SigningKey.objects.get().public_key == own.public_key and not ForeignSigningKey.objects.exists()
+
+
+@TX
+def test_adding_l_to_s_is_rejected_by_the_server_and_the_script(judged, signing, tmp_path):
+    """Ed25519 malleability: S and S + L satisfy the same equation, so a verifier must refuse S >= L."""
+    import base64
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    record = IssuedRecord.objects.filter(event=judged).first()
+    raw = base64.b64decode(record.signature)
+    s = int.from_bytes(raw[32:], "little") + verify_record.q
+    malleated = base64.b64encode(raw[:32] + s.to_bytes(32, "little")).decode()
+    assert malleated != record.signature
+    assert services.verify_bytes(record.payload_text.encode(), malleated).state == "invalid"
+    assert not keys.verify(SigningKey.objects.get(kid=record.kid).public_key, record.payload_text.encode(), malleated)
+    downloaded = dict(Client().get(f"/records/{record.pk}.json").json(), signature=malleated)
+    published = Client().get("/.well-known/dogfood-signing-keys.json").json()
+    status, out = run_script(tmp_path, downloaded, published)
+    assert status == 1 and "invalid" in out
+
+
+@TX
+def test_a_foreign_records_page_says_its_revocation_status_is_as_of_import(judged, signing, tmp_path):
+    services.issue_records(judged, RecordKind.JUDGE, actor=judged.organizer)
+    data = export(judged)
+    call_command("flush", interactive=False, verbosity=0)
+    keys.ensure_signing_key()
+    admin = User.objects.create_user("admin@example.org", None, name="Admin", is_platform_admin=True)
+    event = import_as(data, tmp_path, admin)
+    record = IssuedRecord.objects.filter(event=event).first()
+    page = Client().get(f"/records/{record.pk}").content.decode()
+    assert "revocation status is as of the import" in page and "issuing install" in page

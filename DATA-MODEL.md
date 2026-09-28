@@ -459,6 +459,11 @@ them and their keys, counted in `event_imported`.
   and its records show "signed by another install".
 - A record whose id already exists here, because the same bundle was imported again, is skipped and
   counted.
+- "This install's own key" is decided by comparing the key's bytes, never by its kid alone.
+  Validation recomputes every kid from its key. A key that reuses a known kid with different bytes
+  is refused (`400 key_conflict`).
+- An imported (foreign) record's revocation status is as of the import. Check the issuing install's
+  revoked list for its current status. The record's page says so.
 
 **Voter pseudonyms.** Each ballot's voter is `"v_" + HMAC-SHA256(salt, identity)[:16]`.
 - The salt is 32 random bytes made for this one export and then discarded.

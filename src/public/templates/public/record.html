@@ -23,6 +23,7 @@
         <p>took part with <strong>{{ record.payload.project }}</strong> (team {{ record.payload.team }})</p>
       {% endif %}
       <p class="dim">{{ record.payload.event.name }} · submissions {{ record.payload.event.submissions_open_at }} to {{ record.payload.event.submissions_close_at }} · issued {{ record.payload.issued_at }}</p>
+      {% if record.is_foreign %}<p class="faint">this record was signed by another install and imported here with its event. its revocation status is as of the import: check the issuing install's revoked list for its current status.</p>{% endif %}
       {% if record.revoked_at %}<p class="field__error">revoked {{ record.revoked_at|utc }}: {{ record.get_revoke_category_display }}{% if replacement %} (<a href="{% url 'public:record' replacement.pk %}">the newer record</a>){% endif %}</p>{% endif %}
     </div>
   </section>

@@ -27,6 +27,7 @@ kept as source history: their ids are the source's, `detail.source_history` is t
 slug is replaced by the new one where it names the event.
 """
 
+import base64
 import secrets
 from datetime import datetime
 from decimal import Decimal
@@ -189,9 +190,20 @@ class _Writer:
         if self.placeholders:
             self.records["skipped_not_admin"] = len(rows)
             return
-        own = set(SigningKey.objects.values_list("kid", flat=True))
+        # "This install's own key" is decided by the key's bytes, never by its kid alone (validation already
+        # recomputed every kid from its bytes; a different key under a known kid is refused, own or foreign).
+        own = dict(SigningKey.objects.values_list("kid", "public_key"))
+        foreign = dict(ForeignSigningKey.objects.values_list("kid", "public_key"))
+        own_kids = set()
         for key in self.body["signing_keys"]:
-            if key["kid"] in own or ForeignSigningKey.objects.filter(kid=key["kid"]).exists():
+            known = own.get(key["kid"]) or foreign.get(key["kid"])
+            if known is not None and base64.b64decode(known) != base64.b64decode(key["public_key"]):
+                raise BundleError("key_conflict", f"the bundle's key {key['kid']} has different bytes from the key "
+                                  "this install already knows under that kid; nothing was imported")
+            if key["kid"] in own:
+                own_kids.add(key["kid"])
+                continue
+            if key["kid"] in foreign:
                 continue
             ForeignSigningKey.objects.create(
                 kid=key["kid"], alg=key["alg"], public_key=key["public_key"],
@@ -205,7 +217,7 @@ class _Writer:
                 continue
             obj = model(**self._values(section, row))
             obj.id = row["record_id"]
-            obj.is_foreign = row["kid"] not in own
+            obj.is_foreign = row["kid"] not in own_kids
             obj.save(force_insert=True)
             self.records["imported"] += 1
 
