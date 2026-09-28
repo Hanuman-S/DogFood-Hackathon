@@ -439,3 +439,51 @@ A declared id of a ballot, tally or result snapshot that names no row fails it t
 
 A new engine output with ids in it must be declared here before an event that uses it can be
 exported.
+
+### Import validation
+
+Before the import writes anything, `imports/bundle_validate.py` checks the whole bundle. Every
+refusal is audited (`event_import_refused`) and writes nothing else.
+
+**Who.** Only platform admins and accounts that may create events can import. Anyone else gets
+`403 forbidden`.
+
+**Order.** Checks run from the outside in:
+1. The upload is copied to a temporary file and stopped the moment it passes `BUNDLE_MAX_BYTES`.
+2. The zip's own size is checked, and that it is a zip at all.
+3. The number of entries is checked.
+4. Each entry's name is checked.
+5. Each entry's declared size and compression ratio are checked, before any byte is decompressed.
+6. Each entry is read in chunks with a hard cap at its declared size (and the zip library checks
+   each CRC).
+7. The manifest is checked.
+8. event.json's shape is checked (`imports/bundle_schema.py`).
+9. A vote still running is checked.
+10. Every image goes through the upload re-encoder (`projects.images.clean_image`).
+
+| code (all 400) | refused because |
+|---|---|
+| `bundle_too_large` | the upload or zip is over `BUNDLE_MAX_BYTES`, or the uncompressed total is over `BUNDLE_MAX_TOTAL_BYTES` |
+| `not_a_zip`, `corrupt_zip` | not a zip; damaged (a bad CRC, as when a size is misdeclared), encrypted, or an unsupported compression method |
+| `too_many_files` | more than `BUNDLE_MAX_ENTRIES` entries |
+| `bad_path` | a `..` segment, an absolute or drive path, a backslash, a NUL, a name that is not NFC or is over 200 characters, a symlink, a directory, a name twice |
+| `unexpected_file` | anything but `manifest.json`, `event.json` and `media/<64 hex>.(jpg\|png\|webp)` |
+| `entry_too_large` | an entry declares more than its cap (manifest 1 MB, event.json `BUNDLE_MAX_EVENT_JSON_BYTES`, an image `BUNDLE_MAX_MEDIA_BYTES`) |
+| `zip_bomb` | an entry declares a ratio over 100:1, or holds more bytes than it declares |
+| `unknown_format`, `unsupported_version` | the manifest's `format` or `version` |
+| `files_mismatch` | the manifest does not list exactly the other files |
+| `checksum_mismatch` | a file's sha256 differs from the manifest, or a media file is not named after its own sha256 |
+| `invalid_bundle` | the JSON is not valid UTF-8 JSON, or event.json's shape is wrong |
+| `voting_in_progress` | the vote has ballots and has not closed. End voting on the source install, then export again. A vote with no ballots, or one not yet open, imports normally |
+| `bad_image` | an image the re-encoder refuses |
+
+**What counts as a wrong shape.** event.json must match what the export writes, key for key:
+- missing or unexpected keys;
+- a wrong type, a value that is not one of a column's allowed values, or text over the column's
+  length or containing NUL;
+- a naive or unparseable datetime, or a decimal that does not fit its column;
+- a reference to no row, or to a row of the wrong section;
+- rows out of 1..n order;
+- a duplicate or invalid email;
+- a media file that no row refers to;
+- a JSON id in an undeclared place, or naming no row.
