@@ -100,7 +100,7 @@ role per account. The portals, URLs and refusals are unchanged; see [ARCHITECTUR
 
 | Table | Holds | Enforced by the database |
 |---|---|---|
-| `events_event` | slug, name, tagline, Markdown description, `starts_at`, `submissions_open_at`, `submissions_close_at`, `original_submissions_close_at`, `judging_starts_at`, `judging_ends_at`, `original_judging_ends_at`, `results_at` (null = to be announced), min/max team size, `is_published` | a strictly ordered timeline, one CHECK per step: `event_starts_before_submissions_open`, `event_submissions_window_valid` (open < close), `event_judging_starts_after_close`, `event_judging_window_valid`, `event_results_after_judging` (when set); `event_team_size_range` (1 ≤ min ≤ max ≤ 20) |
+| `events_event` | slug, name, tagline, Markdown description, `starts_at`, `submissions_open_at`, `submissions_close_at`, `original_submissions_close_at`, `judging_starts_at`, `judging_ends_at`, `original_judging_ends_at`, `results_at` (null = to be announced), min/max team size, `is_published`, `comments_enabled` (default on) | a strictly ordered timeline, one CHECK per step: `event_starts_before_submissions_open`, `event_submissions_window_valid` (open < close), `event_judging_starts_after_close`, `event_judging_window_valid`, `event_results_after_judging` (when set); `event_team_size_range` (1 ≤ min ≤ max ≤ 20) |
 | `events_eventmembership` | user, event, role, generated `side`, who added it | `membership_unique_user_event_role`, `membership_role_valid`, `membership_no_competitor_and_staff` **(pg)** |
 | `events_judgetrack` | which tracks a judge membership covers (none = every track) | `judge_track_unique` |
 | `events_judgeinvite` | a one-time judge or co-organizer link (`role`): email (empty = open link), tracks (judges), SHA-256 **digest** of the token (never the token), expiry, accepted/revoked timestamps | `judge_invite_one_pending_per_email` (partial unique), `judge_invite_not_accepted_and_revoked` |
@@ -137,6 +137,7 @@ event" be a plain unique constraint instead of a trigger.
 | `projects_projectimage` | up to 8 gallery images (re-encoded by Pillow, metadata stripped), caption, order | |
 | `projects_tag`, `projects_project_tags` | free-form tags, up to 50 per project | tag name unique |
 | `projects_answer` | a project's answer to one custom question | `one_answer_per_question` |
+| `projects_comment` | a comment on a gallery project: author (**PROTECT**), body (Markdown, at most 2000 characters), `created_at`, `hidden_at` / `hidden_by` / `hide_reason` (an organizer's moderation), `deleted_at` (the author's own soft delete). Never edited. Written only by `projects/comments.py`. Hidden and deleted comments are shown only to organizers and admins; the event switch is `events_event.comments_enabled` | `comment_body_length`, `comment_hidden_fields_together`; index on (project, newest first) |
 
 ### scoring: the rubric, the reviews, who reviews what, and the results
 

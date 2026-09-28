@@ -10,7 +10,7 @@ Django 5.2 LTS + Postgres 16, server-rendered templates, plain CSS (`src/static/
 build step. `docker compose up --build` is the product; it must stay one command, seeded, offline.
 
 - Shared domain apps hold **models and rules only**: `accounts`, `events`, `teams`, `projects`,
-  `scoring`, `voting`, `imports`, `core`. Shared templates (used by several portals) go in
+  `scoring`, `voting`, `imports`, `records`, `core`. Shared templates (used by several portals) go in
   `src/templates/` (e.g. `_results.html`, `vote.html`), not in a domain app.
 - One app per audience holds the pages: `public`, `participant`, `judge`, `organizer`,
   `platform_admin`.
@@ -98,6 +98,43 @@ build step. `docker compose up --build` is the product; it must stay one command
   `VoteTallySnapshot` is frozen only inside `compute_snapshot` for a final, with the VotingConfig row
   locked and its counter bumped (a concurrent final gets 409 `final_in_progress`); tallies are
   immutable and append-only. With community_weight 0 the combined ranking is the M2 ranking.
+- **Comments** (`projects/comments.py`): only on projects in the anonymous gallery
+  (`visible_projects()`, no viewer). Order on a post: 401, then no project 404, then comments off
+  409, then rate limit 429, then body 400, then duplicate 409 (same author, project and body within
+  10 minutes, with the author row locked). Anonymous attempts go in their own audit bucket, capped.
+  Hidden and deleted comments are shown only to organizers and admins.
+- **Event bundles** (`imports/bundle*.py`). Every id inside a JSON column is declared in
+  `imports/bundle_ids.TABLE` with a kind:
+  - `plain`: remapped to a bundle id;
+  - `composite`: `<judge>:<project>`, both halves remapped;
+  - `external`: kept byte for byte.
+
+  An undeclared id-like key or digit key fails the export, so a new engine output with ids must be
+  declared first. Engine prose that names ids is listed in `TEXT_TEMPLATES`, and
+  `tests/test_bundle_ids_prose.py` fails on an unlisted one.
+
+  The import is one transaction, always creates a new unpublished event, generates fresh secrets,
+  and gives non-admins placeholder accounts. Imported audit rows carry `detail.source_history`.
+- **Audit readers that decide** (rate limits, throttles, caps, flags) use
+  `AuditLog.objects.live()`, which leaves out imported history. `audit.record()` refuses
+  `source_history`.
+- **Signing keys** (`records/keys.py`): the active key is the one `SigningKey` row with
+  `retired_at` NULL, read on every signature. It is never chosen by which PEM files exist, and a
+  stray PEM is never adopted. The private keys live only in the secrets volume. Rotation retires,
+  then inserts, in one transaction. Only `records/services.py` issues or revokes. Records and keys
+  are immutable by trigger, except for revoking (with a category) and retiring once.
+- **Framing**: `/embed/` is the only route that may be framed (its own CSP has
+  `frame-ancestors *`, and it is `xframe_options_exempt`). It is rendered without the request, and
+  `EmbedMiddleware` (outermost) strips every cookie from it. Every other route keeps
+  `frame-ancestors 'none'` and DENY.
+- **Permanent events**: `Score.project` and `Score.judge` are RESTRICT, `Ballot.event` and
+  `IssuedRecord.event` are PROTECT. So an event with reviews, ballots or issued records cannot be
+  deleted through the ORM. Keep new such tables PROTECT, and never "fix" this by cascading.
+  - `remove_judge` refuses a judge with submitted reviews.
+  - The submission and judging-start dates freeze once judging has started with assignments or
+    scores.
+- **Never touch the user's dev database or running stack** (migrations, `down -v`, restarts)
+  without asking. Use a throwaway compose project (`-p <name>`) for fresh boots.
 
 ## Commands
 

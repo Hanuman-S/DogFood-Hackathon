@@ -490,6 +490,73 @@ unless a result is published with a public visibility.
 - **The combination** of judges and community (`scoring/engine/combine.py`) is pure and exact
   (fractions), so it lives in the engine with the other scoring code. See [JUDGING.md](JUDGING.md).
 
+## Comments on gallery projects
+
+**What.** Comments live on the public project page and in a small JSON API. They exist only for
+projects an anonymous visitor can see, which is exactly `visible_projects()`, so a draft can never
+gather comments, not even from its own team.
+
+**Moderation.** Nothing is edited, only deleted or hidden. The author deletes their own. An
+organizer or admin hides one, with a reason, and can restore it. Both leave the row in place, so
+the audit trail stays whole.
+
+**Anti-abuse.** It reuses the audit-row rate limits: per account and per IP hash. Anonymous
+attempts are counted in a bucket of their own, so they can never use up a shared NAT address's
+limit. On top of that there is a duplicate check per author and project. Every comment action
+appears on the voting integrity page's audit trail.
+
+## Event bundles
+
+**Why a zip, not a database dump.** A whole event moves between installs as one zip. The
+alternative, `dumpdata`, would carry exactly what must not travel: passwords, tokens, invite
+digests, voting secrets and IP hashes. It would also carry primary keys that collide on the other
+side. So the export writes an explicit, documented format (DATA-MODEL.md, "Event bundle"): rows
+numbered 1..n, references as bundle ids, and voters pseudonymised per export.
+
+**The hard part** is that results store database ids inside JSON. Every such location is declared
+in `imports/bundle_ids.py` and remapped. The export fails on any id-like key it doesn't know,
+because an unmapped id would quietly point at the wrong project after import. A round-trip test
+proves the design: export, wipe to a fresh install with every sequence moved, import, export again,
+and compare.
+
+**The import is the dangerous direction.** It validates everything first:
+- zip safety (paths, sizes and ratios checked before extraction);
+- checksums;
+- a schema derived from the same section list the export uses;
+- every signed record against its keys.
+
+Then it writes in one transaction. An event with reviews is permanent, so a half-written import
+could never be cleaned up.
+
+## Signed records
+
+**What.** Judges, participants and winners get certificates signed with Ed25519, over canonical
+JSON (sorted keys, no whitespace; floats, booleans and null are refused, so every verifier derives
+the same bytes).
+
+**Keys.** The private keys are files in the secrets volume, next to SECRET_KEY. The database holds
+only the public halves, and decides which key is active. Rotation keeps old keys published, so old
+certificates keep verifying.
+
+**Revocation** is a separate, public list, hashed so it cannot be used to find certificates. A
+signature proves who signed, not that the record still stands.
+
+**Offline checking.** `scripts/verify_record.py` checks a record with nothing but Python: the
+standard library has no Ed25519, so the RFC 8032 reference code is vendored. That is the offline
+promise, kept for verification too.
+
+## The embeddable gallery
+
+**The one framed route.** `/embed/events/<slug>/gallery` is the only page another site may frame.
+It relaxes exactly one thing, `frame-ancestors`, and keeps the rest of the strict CSP.
+
+**Nothing about the viewer.** It is rendered without the request, so nothing in it can depend on
+who is looking, and a middleware strips every cookie. Embedding it therefore never creates a
+third-party cookie.
+
+**Auto-height** is a `postMessage` of the page height, accepted by the host's `embed.js` only from
+the iframe's own origin and window.
+
 ## Design system: violet CRT
 
 The look is ASCII and terminal, kept calm: one colour family (lavender on near-black), thin

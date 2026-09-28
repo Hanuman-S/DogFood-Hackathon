@@ -5,15 +5,20 @@ entirely on a laptop with the network off: no cloud accounts, hosted database or
 
 Demo video: [VIDEO_URL]
 
-**Status: T1 and T2 claimed and verified; T3 voting and results built, not claimed.**
+**Status: T1 and T2 claimed and verified; T3 built in full, not claimed.**
 - **T1**, all seven modules: authentication and sessions, the role model with roles held **per
   event**, event creation, team formation by invite link, project submission with
   draft-and-edit, deadline enforcement, and the public gallery with search and filters.
 - **T2**: rubric, judge invites, assignment, reviews, the scoring engine (M2), results snapshots,
   publishing, and the published results pages (`/events/<slug>/results`). See
   [JUDGING.md](JUDGING.md).
-- **T3**: community voting with anti-abuse, and the final score combining judges and community.
-  The evidence is `t3-report.txt`; see "What it does not do yet" for why T3 is not claimed.
+- **T3**: community voting with anti-abuse, the final score combining judges and community, and
+  comments on gallery projects. Not claimed: acceptance/run.py, which verifies .dogfood.toml
+  claims, has no T3 checks. Evidence: t3-report.txt.
+- **Beyond the tiers**:
+  - event bundles (export a whole event, import it as a new one on another install);
+  - Ed25519-signed records for judges, participants and winners, verifiable offline;
+  - an embeddable gallery widget.
 
 `.dogfood.toml` claims **T1 and T2**, and `acceptance-report.txt` shows all seven checks passing
 (three T1, four T2: own scores, peer scores refused, participant refused, CSV export).
@@ -148,10 +153,23 @@ docker compose down -v && docker compose up --build -d   # a fresh boot
 ./scripts/t3-check.sh              # writes t3-report.txt
 ```
 
-Standard-library probes in the checker's style: tallies hidden from a visitor, participant and
-judge while voting is open; a late vote (409), over budget (400), own project (403), a judge (403),
-a burst (429); publishing refused while voting is open (409); and each result visibility. The top of
-`scripts/t3_check.py` lists what it changes on the demo data and how it puts it back.
+Standard-library probes in the checker's style.
+- **Voting:** tallies are hidden from a visitor, a participant and a judge while voting is open.
+  Refused, with these codes: a late vote (409), over budget (400), a vote for your own project (403),
+  a vote by a judge (403), a burst of votes (429).
+- **Results:** publishing is refused while voting is open (409), and each result visibility is
+  checked.
+- **Comments:**
+  - a visitor reads them, but cannot post (401);
+  - a participant posts, and the same comment again is refused (409);
+  - the organizer hides a comment, and it disappears for a visitor and a judge; then restores it;
+  - a comment on a draft is refused (404);
+  - the author deletes theirs.
+
+The comment probes use 3 of the participant's 5 comment writes per 10 minutes. A rerun inside that
+window reports those probes as SKIP, never FAIL; the committed report comes from a fresh boot with
+none skipped. The top of `scripts/t3_check.py` lists what the probes change on the demo data and how
+they put it back.
 
 ### Normalization proof
 
@@ -315,10 +333,23 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 
 ## What it does not do yet
 
-- **T3 is not claimed** in `.dogfood.toml`. The organizers' checker has no T3 checks, so a claimed
-  T3 would print "claimed but not verified"; `t3-report.txt` (from `scripts/t3-check.sh`) is the
-  evidence instead. What voting does not stop is listed in JUDGING.md, under "Community voting
-  (T3)", in the paragraph "What this does not stop".
+- **T3 is not claimed.** Not claimed: acceptance/run.py, which verifies .dogfood.toml claims, has
+  no T3 checks. Evidence: t3-report.txt. `.dogfood.toml` claims `["T1", "T2"]`, and `acceptance/` is
+  the organizers' and untouched. What voting does not stop is listed in JUDGING.md, under
+  "Community voting (T3)", in the paragraph "What this does not stop".
+- **No way to leave a judge out of the results.** A judge with submitted reviews cannot be removed
+  (their reviews are part of the results), and excluding one is not implemented. So an organizer has
+  no remedy for an unreliable judge mid-event; M2's lean correction is the only adjustment.
+- **Judges can read public comments while judging is open.** An organizer can turn comments off for
+  the event. That stops new ones, but existing comments stay readable.
+- **No IP clustering for imported ballots.** They carry no network hash and no account, so the
+  network-burst and new-account flags can't see them. The integrity page says so, and only the
+  identical-ballot flag still applies.
+- **A foreign record's revocation status is frozen at import.** A record signed by another install
+  shows its status as it was when imported. The issuing install's revoked list is the current word.
+- **Some events are permanent.** An event with reviews, ballots or issued records can't be deleted,
+  even through the database (RESTRICT and PROTECT foreign keys). Check a bundle before importing it.
+- **C4 is not built.** It lives on a separate branch.
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.
@@ -333,10 +364,12 @@ src/
   events/          events, tracks, prizes, custom questions, per-event memberships (models + rules)
   teams/           teams, members, invite links (models + rules)
   projects/        projects, images, tags, answers (models + rules), gallery query, JSON API, media
-  imports/         fixture import (create-only, idempotent, duplicate-aware)
+  imports/         fixture import (create-only, idempotent, duplicate-aware); event bundles
+                   (export, validation, import)
   scoring/         rubric, reviews, assignment, the pure scoring engine (engine/), result
                    snapshots, publications, the results read side (models + rules)
   voting/          community vote: config, ballots, voter links, tallies, integrity (models + rules)
+  records/         signed records: signing keys, issued records, canonical payloads (models + rules)
   public/          pages for visitors            /
   participant/     participant portal            /participant/
   judge/           judge portal                  /judge/
@@ -346,6 +379,7 @@ src/
   static/          violet CRT stylesheet, vendored fonts, small scripts
 tests/             pytest suite
 scripts/           test.sh                  pytest in the web image against Postgres
+                   verify_record.py         checks a signed record offline (pure Python)
                    acceptance.sh            the organizers' checker -> acceptance-report.txt
                    offline-check.sh         boot on a sealed network, run the checker inside it
                    t3-check.sh, t3_check.py T3 probes (voting, results) -> t3-report.txt

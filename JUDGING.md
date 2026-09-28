@@ -272,6 +272,34 @@ flags make clusters visible; they do not prove intent.
 - **People's Choice** (most influence) is listed separately whenever the event had a vote: the full
   list in `public_full`, the top N in `public_winners`, organizers only when private.
 
+## Judge records (signed certificates)
+
+**When.** After judging closes, an organizer issues each judge who submitted at least one review a
+signed record (`/organizer/events/<slug>/records`).
+
+**What it says:** how many reviews the judge submitted, the judging window, and the event, by its
+submission window. **Never a score**, a rank or a criterion; a test walks every key of the payload
+to check.
+
+**Reissuing.** It is safe to reissue. Records are compared by meaning:
+- An unchanged judge keeps their record.
+- If judging was reopened and closed again, every judge record is reissued, because the window
+  changed, and the old one points to its replacement.
+- A judge left with no submitted review has theirs revoked as "no longer eligible".
+
+**Checking.** Anyone can check a record on its page, at `/verify`, or offline with
+`scripts/verify_record.py`. See the README, "Signed records".
+
+## Comments during judging
+
+**Judges can read comments.** Comments on gallery projects are public, so a judge can read them
+while judging is open. An organizer who wants judging kept apart from the crowd can turn comments
+off for the event. That stops new ones, but existing comments stay readable.
+
+**Where the comment actions show.** Every comment action (posted, refused, throttled, deleted,
+hidden, restored, the event switch) is on the voting integrity page's audit trail, next to the
+voting actions.
+
 ## CSV export
 
 `GET /api/export.zip?event=<slug>` (one CSV per open sheet, read in one REPEATABLE READ snapshot) and

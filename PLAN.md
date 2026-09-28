@@ -364,3 +364,37 @@ verified"; T3's evidence will be `t3-report.txt` (Stage 7).
 ## S4: docs (done in T3 stage 7)
 Written against the complete system: README, ARCHITECTURE.md, DATA-MODEL.md and JUDGING.md
 (which now carries every caveat above and the generated Normalization Proof).
+
+## Stages A-D: comments, event bundles, signed records, embed (phase log)
+
+The approved plan and every amendment are in `docs/stages-plan.md`. Each phase was tested, committed
+only when green, and reviewed before the next. The claim stays `["T1", "T2"]` (decision B). C4 is
+not started; it lives on a separate branch.
+
+| phase | commits | what |
+|---|---|---|
+| 0 plan | `2801b4a`, `a0b2db2` | plan in docs/, answers from the code, FixtureRef and three-state amendments |
+| A README | `ce124af` | status, layout, demo seed, video placeholder |
+| B1 comments core | `6b881b5`, `0ebcf27`, `de64c92` | Comment, services, rate limits (anonymous bucket and cap), per-project duplicates |
+| B2 comments surfaces | `1acead7`, `11ce3cb` | pages, JSON API (session-only CSRF), moderation, integrity trail, t3 probes (SKIP when rate-limited) |
+| C1a export | `5963c68`, `6eec073` | bundle format, id guard (plain/composite/external), prose templates, missing rows, pseudonyms |
+| C1b validation | `9201287`, `f62b49e` | zip safety, manifest, schema, live-vote refusal, placeholders pass |
+| guard | `3abd598` | a judge with submitted reviews cannot be removed; Score.judge RESTRICT |
+| C1c-6a | `3a81b1e`, `e4e7e67` | FixtureRef.event, imported_from, three-state changed flags |
+| guard | `6ea264a` | timeline freeze once judging has work; Score.project RESTRICT; permanent events |
+| C1c-6b | `50d91e9`, `eaafd42`, `665126c`, `589c381` | import write path, round trip, live() audit reads, placeholders, same-install imports, cv_seed pin |
+| C2a | `017ffed` | signing keys, rotation, canonical payloads, IssuedRecord and its trigger |
+| C2b | `80989c9`, `0ca4627` | issue/revoke, certificate page, /verify, .well-known (hashed revoked ids), portal lists, banners |
+| C2c | `15eb1a8`, `8838e86` | offline verifier (RFC 8032 vectors), records in bundles, key identity by bytes, S+L rejected |
+| C3 | `cfe7fa0` | embeddable gallery |
+| D | this commit + the reports | docs pass, fresh-boot reports on a throwaway project, fresh-clone comparison |
+
+### Found and fixed on the way, for the record
+- **`remove_judge`** deleted a judge's reviews at any time, even after a final.
+- **Moving the event's dates** could reopen submissions after judging started, which let a scored
+  project be withdrawn and deleted.
+- **`export_event` to an unwritable path** left its temporary bundle behind.
+- **The bundle export's pseudonyms** did not re-group imported voters' audit rows (the round trip
+  caught it).
+- **The bundle's id guard** caught undeclared ids twice: `final_weights.judge` and the record
+  payload's `project` name.
