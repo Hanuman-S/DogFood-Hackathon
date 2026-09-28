@@ -1,6 +1,6 @@
 from django.urls import path
 
-from public import views, voting
+from public import comments, views, voting
 
 app_name = "public"
 
@@ -16,4 +16,6 @@ urlpatterns = [
     # slash-redirect in front of it would make the acceptance checker measure a 301.
     path("projects", views.gallery, name="gallery"),
     path("projects/<int:project_id>", views.project_detail, name="project"),
+    path("projects/<int:project_id>/comments", comments.comment_post, name="comment_post"),
+    path("comments/<int:comment_id>/delete", comments.comment_delete, name="comment_delete"),
 ]

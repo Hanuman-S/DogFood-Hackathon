@@ -820,3 +820,11 @@ details.frame > summary.frame__bar::-webkit-details-marker, details.manage > sum
 input:disabled, select:disabled, textarea:disabled {
   opacity: 0.55; cursor: not-allowed; border-style: solid; border-color: var(--line-soft);
 }
+
+/* Comments on a project page: a plain list, newest first; hidden or deleted ones (organizers and
+   admins only) are dimmed. */
+.comments { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--gap); }
+.comment { border-left: 1px solid var(--line-soft); padding-left: 12px; }
+.comment__meta { margin: 0 0 4px; }
+.comment__body > :last-child { margin-bottom: 0; }
+.comment--gone { opacity: 0.6; }

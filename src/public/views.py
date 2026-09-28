@@ -10,7 +10,9 @@ from django.views.decorators.cache import never_cache
 from accounts.roles import is_judge_of
 from events.models import Event
 from events.services import can_manage, get_visible_event
+from projects import comments
 from projects import gallery as gallery_query
+from projects.comment_errors import NotCommentable
 from projects.models import Project
 from projects.services import can_view
 from scoring.results import results_page, results_visible
@@ -72,7 +74,13 @@ def project_detail(request, project_id):
     project = get_object_or_404(Project.objects.select_related("team", "event", "track"), pk=project_id)
     if not can_view(request.user, project):
         raise Http404("No such project.")
-    return render(
-        request, "projects/project_detail.html",
-        {"project": project, "members": project.team.members.select_related("user")},
-    )
+    context = {"project": project, "members": project.team.members.select_related("user")}
+    try:
+        _, page, moderator = comments.comments_for(project.pk, request.user, request.GET.get("cpage"))
+    except NotCommentable:
+        pass  # a draft seen by its team: not in the gallery, so no comments
+    else:
+        context.update(comments_page=page, comments_moderator=moderator,
+                       comments_open=project.event.comments_enabled and project.is_submitted
+                       and project.event.is_published)
+    return render(request, "projects/project_detail.html", context)

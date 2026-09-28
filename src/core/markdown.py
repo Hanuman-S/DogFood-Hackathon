@@ -34,3 +34,26 @@ def render(text):
             link_rel="nofollow noopener noreferrer",
         )
     )
+
+
+# Comments are user-generated content on a public page: a smaller allow-list (no headings, tables or
+# rules), links marked ugc, and no images at all -- an image in a comment's Markdown is dropped by
+# the renderer (see _comment_md) and would be stripped by nh3 anyway, so nothing ever asks another
+# host for a picture (the CSP's img-src 'self' data: is a third layer).
+COMMENT_TAGS = {"p", "br", "strong", "em", "del", "code", "pre", "blockquote", "ul", "ol", "li", "a"}
+COMMENT_LINK_REL = "nofollow ugc noopener"
+
+_comment_md = MarkdownIt("commonmark", {"html": False}).enable(["strikethrough"]).disable(["image"])
+
+
+def render_comment(text):
+    html = _comment_md.render(text or "")
+    return mark_safe(
+        nh3.clean(
+            html,
+            tags=COMMENT_TAGS,
+            attributes={"a": {"href", "title"}, "ol": {"start"}},
+            url_schemes={"http", "https", "mailto"},
+            link_rel=COMMENT_LINK_REL,
+        )
+    )

@@ -11,12 +11,17 @@ What it changes on the demo data, on purpose, and how it puts it back:
 * judge_b is rate-limited for the vote-write window (its refused votes are what the burst counts);
 * the fixture event gets a new final result snapshot, and its result is published under each
   visibility in turn -- then unpublished and set back to private, as on a fresh boot.
+* the demo participant posts one comment on an archive project (its body carries the time, so a
+  rerun is not a duplicate); the organizer hides and restores it, and the participant deletes it at
+  the end (a soft delete: it stays in the database, shown to organizers only). The comment probes
+  use 3 of the participant's 5 comment writes per 10 minutes, so leave 10 minutes between runs.
 Nothing else is written: every other probe is a refusal (and leaves an audit row).
 """
 
 import json
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "acceptance"))
@@ -133,6 +138,51 @@ def main():
     call(f"/api/events/{FIXTURE}/results/unpublish", "organizer", "POST")
     status, _, _ = call(f"/events/{FIXTURE}/results")
     check("unpublished again: 404 for visitors", status == 404, f"got {status}, wanted 404")
+
+    # 9. comments on gallery projects
+    comments_url = f"/api/projects/{target}/comments"
+    status, _, _ = call(comments_url)
+    check("comments readable by a visitor: 200", status == 200, f"GET {comments_url}", f"got {status}")
+    status, data, _ = call(comments_url, None, "POST", {"body": "anonymous"})
+    check("comment by a visitor refused: 401 login_required", status == 401 and code(data) == "login_required",
+          f"got {status} {code(data)}, wanted 401 login_required")
+    body = f"t3 probe comment {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
+    status, data, _ = call(comments_url, "participant", "POST", {"body": body})
+    comment_id = (data or {}).get("id")
+    check("comment posted by a participant: 201", status == 201 and comment_id, f"got {status} {code(data)}")
+    status, data, _ = call(comments_url, "participant", "POST", {"body": body})
+    check("same comment again: 409 duplicate_comment", status == 409 and code(data) == "duplicate_comment",
+          f"got {status} {code(data)}, wanted 409 duplicate_comment")
+
+    def listed(who):
+        _, data, _ = call(comments_url, who)
+        return comment_id in [c.get("id") for c in (data or {}).get("results", [])]
+
+    status, data, _ = call(f"/api/comments/{comment_id}/hide", "organizer", "POST", {"reason": "t3 probe"})
+    check("organizer hides the comment: 200", status == 200 and (data or {}).get("hidden") is True,
+          f"got {status} {code(data)}")
+    check("hidden comment absent for a visitor", not listed(None), "the visitor's list still shows it")
+    check("hidden comment absent for a judge", not listed("judge_a"), "judge_a's list still shows it")
+    check("hidden comment still listed for the organizer", listed("organizer"), "the organizer's list lacks it")
+    status, data, _ = call(f"/api/comments/{comment_id}/restore", "organizer", "POST", {"reason": "t3 probe done"})
+    check("organizer restores it: visible again", status == 200 and listed(None), f"got {status} {code(data)}")
+
+    draft = None
+    highest = max(all_projects or [0])
+    for pid in range(1, highest + 50):  # the demo participant's own draft on the live demo event
+        status, data, _ = call(f"/api/projects/{pid}", "participant")
+        if status == 200 and (data or {}).get("status") == "draft":
+            draft = pid
+            break
+    status, data, _ = call(f"/api/projects/{draft}/comments", "participant", "POST", {"body": body + " (draft)"})
+    check("comment on a draft (even the team's own) refused: 404 no_project",
+          draft and status == 404 and code(data) == "no_project", f"draft found: {draft}",
+          f"got {status} {code(data)}, wanted 404 no_project")
+    status, _, _ = call(f"/api/projects/{draft}/comments")
+    check("a draft's comments: 404 for a visitor", draft and status == 404, f"got {status}, wanted 404")
+    status, data, _ = call(f"/api/comments/{comment_id}/delete", "participant", "POST", {})
+    check("the author deletes it: 200, gone for visitors", status == 200 and not listed(None),
+          f"got {status} {code(data)}")
 
     print("DOGFOOD T3 probes (community voting) -- scripts/t3_check.py")
     print(f"portal: {base}")

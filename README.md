@@ -272,10 +272,16 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
   - The demo seed opens a vote on **Dogfood Archive 2026** (quadratic, 80/20), with seeded ballots
     including one deliberately suspicious cluster, so the integrity page has something to show.
     The demo participant can vote there.
+- **Comments on gallery projects**: anyone reads; a logged-in account posts (Markdown, at most
+  2000 characters, no images, links marked `nofollow ugc`). There is no editing: authors delete
+  their own, and an organizer of the event or an admin hides one (a reason is required) and can
+  restore it. Hidden and deleted comments are shown only to organizers and admins. Organizers can
+  turn comments off per event. Rate limits apply per account and per network, and an identical
+  comment on the same project within 10 minutes is refused. Every action is on the voting
+  integrity page's audit trail. JSON API: `/api/projects/<id>/comments`.
 
 ## What it does not do yet
 
-- **Comments on projects** (part of the T3 brief) are not built.
 - **T3 is not claimed** in `.dogfood.toml`. The organizers' checker has no T3 checks, so a claimed
   T3 would print "claimed but not verified"; `t3-report.txt` (from `scripts/t3-check.sh`) is the
   evidence instead. What voting does not stop is listed in JUDGING.md, under "Community voting

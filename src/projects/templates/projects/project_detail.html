@@ -58,6 +58,40 @@
     </div>
   </section>
   {% endif %}{% endwith %}
+  {% if comments_page is not None %}
+  <section class="frame" id="comments">
+    <header class="frame__bar"><h2 class="frame__title">comments</h2><span class="frame__meta">{{ comments_page.paginator.count }}{% if comments_moderator %} · you see hidden and deleted ones too (<a href="{% url 'organizer:comments' project.event.slug %}">moderate</a>){% endif %}</span></header>
+    <div class="frame__body stack">
+      {% if comments_open %}
+        {% if user.is_authenticated %}
+        <form method="post" action="{% url 'public:comment_post' project.pk %}" class="stack">
+          {% csrf_token %}
+          <div class="field"><label class="field__label" for="comment-body"><span class="ps1">$</span> <span class="cmd">comment --markdown</span></label><textarea id="comment-body" name="body" rows="3" maxlength="2000" required></textarea><p class="field__help">up to 2000 characters. markdown: links, emphasis, code, lists. no images. comments cannot be edited, only deleted.</p></div>
+          <div class="actions"><button class="btn btn--small" type="submit">post</button></div>
+        </form>
+        {% else %}
+        <p class="faint"><a href="{% url 'accounts:login' %}?next={{ request.path|urlencode }}">log in</a> to comment.</p>
+        {% endif %}
+      {% elif project.is_submitted and project.event.is_published %}
+        <p class="faint">comments are turned off for this event.</p>
+      {% endif %}
+      <ol class="comments">
+      {% for c in comments_page %}
+        <li class="comment{% if c.is_hidden or c.is_deleted %} comment--gone{% endif %}">
+          <p class="comment__meta"><span class="bright">{{ c.author.name }}</span> <span class="dim">{{ c.created_at|utc }}</span>{% if c.is_hidden %} <span class="badge badge--warn">hidden: {{ c.hide_reason }}</span>{% endif %}{% if c.is_deleted %} <span class="badge">deleted by its author</span>{% endif %}</p>
+          <div class="prose comment__body">{{ c.body|comment_markdown }}</div>
+          {% if user.is_authenticated and c.author_id == user.pk and not c.is_deleted %}<form method="post" action="{% url 'public:comment_delete' c.pk %}" class="form--inline">{% csrf_token %}<button class="btn btn--small btn--ghost" type="submit">delete</button></form>{% endif %}
+        </li>
+      {% empty %}
+        <li class="faint">no comments yet.</li>
+      {% endfor %}
+      </ol>
+      {% if comments_page.has_other_pages %}
+      <p class="actions">{% if comments_page.has_previous %}<a class="btn btn--small btn--ghost" href="?cpage={{ comments_page.previous_page_number }}#comments">&lt;- newer</a>{% endif %}<span class="faint">page {{ comments_page.number }} of {{ comments_page.paginator.num_pages }}</span>{% if comments_page.has_next %}<a class="btn btn--small btn--ghost" href="?cpage={{ comments_page.next_page_number }}#comments">older -&gt;</a>{% endif %}</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
   {% if preview %}<p class="actions"><a class="btn" href="{% url 'participant:project_edit' project.pk %}">&lt;- back to editing</a></p>{% endif %}
 </div>
 {% endblock %}

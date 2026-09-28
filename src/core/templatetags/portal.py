@@ -10,6 +10,11 @@ def markdown_filter(text):
     return markdown.render(text)
 
 
+@register.filter(name="comment_markdown")
+def comment_markdown_filter(text):
+    return markdown.render_comment(text)
+
+
 @register.filter
 def utc(value, empty="--"):
     """Every time the portal shows is UTC, and says so. `{{ when|utc:"to be announced" }}`

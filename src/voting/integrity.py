@@ -28,10 +28,13 @@ from django.conf import settings
 from django.db.models import Avg, Count, Exists, OuterRef
 
 from core.models import AuditAction, AuditLog
+from projects.comments import comment_actions
 from projects.models import Project
 
 from .models import Ballot, BallotLine
 from .services import ballot_label
+
+COMMENT_ACTIONS = comment_actions()
 
 AUDIT_ACTIONS = (
     AuditAction.BALLOT_OPENED, AuditAction.VOTE_CAST, AuditAction.VOTE_CHANGED, AuditAction.VOTE_REFUSED,
@@ -41,6 +44,9 @@ AUDIT_ACTIONS = (
     AuditAction.VOTING_ENDED_EARLY, AuditAction.VOTING_END_REFUSED, AuditAction.VOTING_REMOVED,
     AuditAction.VOTER_LINKS_ADDED, AuditAction.VOTER_LINK_REVOKED, AuditAction.VOTER_LINKS_EXPORTED,
     AuditAction.OPEN_LINK_ROTATED, AuditAction.TALLY_EXPORTED, AuditAction.VOTING_BYPASSED,
+    # Comments on the event's gallery projects (projects/comments.py) share the trail: they are the
+    # other public, write-anyone surface an organizer watches for abuse.
+    *COMMENT_ACTIONS,
 )
 
 
@@ -179,10 +185,23 @@ def trail(event, limit=200):
             summary = f"ballot #{d.get('ballot')} of {d.get('voter')}: {d.get('reason')} (voided for: {was})"
         elif e.action == AuditAction.BALLOT_OPENED:
             summary = f"ballot #{d.get('ballot')}"
+        elif e.action in COMMENT_ACTIONS:
+            summary = _comment_summary(e, d, names)
         else:
             summary = d.get("reason") or ", ".join(f"{k}={v}" for k, v in d.items() if k not in ("before", "after"))[:200]
         rows.append(TrailRow(e.created_at, who, e.get_action_display(), e.action, summary))
     return rows
+
+
+def _comment_summary(entry, d, names):
+    where = f"on {names.get(str(d.get('project')), '#' + str(d.get('project')))}" if d.get("project") else ""
+    what = f"comment #{d['comment']}" if d.get("comment") else "comment"
+    if entry.action == AuditAction.COMMENTS_TOGGLED:
+        return "comments turned " + ("on" if d.get("enabled") else "off")
+    if entry.action in (AuditAction.COMMENT_THROTTLED, AuditAction.COMMENT_ANONYMOUS_THROTTLED):
+        return f"{what} {where}: rate limit" + (f" ({d['limit']})" if d.get("limit") else "")
+    reason = d.get("reason")
+    return " ".join(part for part in (what, where) if part) + (f": {reason}" if reason else "")
 
 
 def ballot_rows(ballots):

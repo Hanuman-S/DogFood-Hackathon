@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% load portal %}
+{% block title %}{{ event.name }} · comments{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar"><h1 class="frame__title">comments</h1><span class="frame__meta">{{ event.name }} · organizers and admins only</span></header>
+    <div class="frame__body stack">
+      <table class="kv">
+        <tr><th scope="row">comments</th><td>{% if event.comments_enabled %}<span class="badge badge--on">on</span>{% else %}<span class="badge">off</span>{% endif %} <span class="faint">anyone reads; logged-in accounts post on the event's gallery projects.</span></td></tr>
+        <tr><th scope="row">total</th><td>{{ page.paginator.count }} <span class="faint">(hidden and deleted included)</span></td></tr>
+      </table>
+      <form method="post" action="{% url 'organizer:comments_toggle' event.slug %}" class="actions">{% csrf_token %}
+        {% if event.comments_enabled %}<input type="hidden" name="enabled" value="0"><button class="btn btn--small btn--ghost" type="submit">turn comments off</button><span class="faint">no new comments; existing ones stay readable. judges can read public comments while judging is open, so turn them off to keep judging apart.</span>
+        {% else %}<input type="hidden" name="enabled" value="1"><button class="btn btn--small" type="submit">turn comments on</button>{% endif %}
+      </form>
+      <p class="faint">hiding needs a reason and is audited; a hidden comment is shown to nobody but organizers and admins, and restoring it (also with a reason) brings it back. authors can delete their own; nothing is ever removed from the database.</p>
+    </div>
+  </section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">all comments</h2><span class="frame__meta">newest first</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col" class="num">#</th><th scope="col">project</th><th scope="col">author</th><th scope="col">comment</th><th scope="col">state</th><th scope="col">moderate</th></tr></thead>
+        <tbody>
+        {% for c in page %}
+          <tr>
+            <td class="num">{{ c.pk }}</td>
+            <td><a href="{% url 'public:project' c.project_id %}#comments">{{ c.project.name }}</a></td>
+            <td>{{ c.author.name }}<br><span class="faint">{{ c.created_at|utc }}</span></td>
+            <td class="dim">{{ c.body|truncatechars:200 }}</td>
+            <td>{% if c.is_hidden %}<span class="badge badge--warn">hidden</span><br><span class="faint">{{ c.hide_reason }} ({{ c.hidden_by.name }})</span>{% elif c.is_deleted %}<span class="badge">deleted</span>{% else %}<span class="faint">shown</span>{% endif %}{% if c.is_hidden and c.is_deleted %}<br><span class="badge">deleted</span>{% endif %}</td>
+            <td>{% if c.is_hidden %}<form method="post" action="{% url 'organizer:comment_restore' event.slug c.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="restore-{{ c.pk }}">reason for restoring comment {{ c.pk }}</label><input id="restore-{{ c.pk }}" name="reason" required maxlength="300" placeholder="reason"><button class="btn btn--small" type="submit">restore</button></form>
+            {% else %}<form method="post" action="{% url 'organizer:comment_hide' event.slug c.pk %}" class="form--inline">{% csrf_token %}<label class="visually-hidden" for="hide-{{ c.pk }}">reason for hiding comment {{ c.pk }}</label><input id="hide-{{ c.pk }}" name="reason" required maxlength="300" placeholder="reason"><button class="btn btn--small btn--danger" type="submit">hide</button></form>{% endif %}</td>
+          </tr>
+        {% empty %}<tr><td colspan="6" class="faint">no comments yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% if page.has_other_pages %}
+  <p class="actions">{% if page.has_previous %}<a class="btn btn--small btn--ghost" href="?page={{ page.previous_page_number }}">&lt;- newer</a>{% endif %}<span class="faint">page {{ page.number }} of {{ page.paginator.num_pages }}</span>{% if page.has_next %}<a class="btn btn--small btn--ghost" href="?page={{ page.next_page_number }}">older -&gt;</a>{% endif %}</p>
+  {% endif %}
+  <p class="actions"><a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to the event</a></p>
+</div>
+{% endblock %}
