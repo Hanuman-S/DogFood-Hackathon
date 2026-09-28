@@ -105,6 +105,11 @@ values (400). `GET /api/judge/scores` returns only the caller's own reviews; `?j
 email, an account id or a fixture judge id, and answers only for the caller or for an organizer of an
 event that judge judges (everything else 403, audited).
 
+**Public comments are visible to judges.** Comments on gallery projects are public, so a judge can read
+them while judging is open, and they may colour a review. An organizer who wants judging kept apart
+from the crowd can turn comments off for the event: no new comments are accepted, and existing ones
+stay readable. Hidden and deleted comments are shown only to organizers and admins.
+
 ## The progress dashboard
 
 `/organizer/events/<slug>/progress`: judges (not started first), projects (fewest reviews first),

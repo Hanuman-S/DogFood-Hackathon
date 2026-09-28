@@ -88,6 +88,11 @@ key derived from it (`core/keys.py`: HMAC of the key and a purpose, such as `vot
 cookie, and resets IP-based rate limits and integrity clustering. `docker compose down -v`
 deletes the generated key along with the database.
 
+**Comment rate limits.** Logged-in comments are limited per account (`COMMENT_RATE_PER_USER`, 5
+per 10 minutes, the main control) and per IP hash (`COMMENT_RATE_PER_IP`, 200 per 10 minutes).
+Anonymous attempts are refused and audited, and they don't count towards either limit. At a venue
+where everyone shares one NAT address, raise `COMMENT_RATE_PER_IP`.
+
 **After changing code, rebuild:** `docker compose up --build`. The image copies `src/` and
 collects static files at build time (no source mount, `DEBUG` off), so without `--build` the
 portal keeps serving the old templates, CSS and JavaScript. Pages themselves are never cached:

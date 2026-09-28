@@ -80,6 +80,7 @@ If an answer changes a later phase (for example, a hash chain means imported aud
 | `duplicate_comment` | 409 |
 | `invalid_comment` | 400 |
 | `no_comment` | 404 |
+| `no_event` | 404 (turning comments on or off by someone who is not an organizer of the event) |
 | `invalid_moderation` | 400 |
 
 **Services (`projects/comments.py`)**: they never take the request, and read `db_now()` once.
@@ -87,11 +88,11 @@ If an answer changes a later phase (for example, a hash chain means imported aud
   1. The project is in `visible_projects()`, otherwise 404.
   2. Comments are enabled, otherwise 409.
   3. Rate limits (`core.ratelimit.exceeded`):
-     - per actor `COMMENT_RATE_PER_USER` (5 per 10 minutes), per IP `COMMENT_RATE_PER_IP` (30 per 10 minutes);
-     - counted over `(COMMENT_POSTED, COMMENT_REFUSED)`;
+     - per actor `COMMENT_RATE_PER_USER` (5 per 10 minutes), per IP `COMMENT_RATE_PER_IP` (200 per 10 minutes; raised at the B1 review, per account is the primary control);
+     - counted over `(COMMENT_POSTED, COMMENT_REFUSED)`. Anonymous attempts are audited as `COMMENT_ANONYMOUS_REFUSED` (core 0018), a separate bucket that no limit counts;
      - a hit is a 429 with a `COMMENT_THROTTLED` row carrying the origin's ip_hash.
   4. Validation: strip the body; empty or over 2000 characters is a 400.
-  5. Inside `atomic()`: lock the author with `select_for_update`, check for a duplicate (the same stripped body from this author, hidden or deleted included, within the last 10 minutes) → 409, then insert.
+  5. Inside `atomic()`: lock the author with `select_for_update`, check for a duplicate (the same stripped body from this author **on this project**, hidden or deleted included, within the last 10 minutes; the same text on another project is accepted) → 409, then insert.
 
   Refusals are audited outside the transaction, before the error is raised.
 - `delete_own_comment` (soft delete): anyone but the author gets 404; the row is locked.
@@ -129,6 +130,7 @@ If an answer changes a later phase (for example, a hash chain means imported aud
   - XSS (`<script>`, `javascript:`, `onerror`) is sanitised;
   - hidden and deleted comments are invisible to a visitor, a participant and a judge, and visible to the organizer and an admin;
   - a draft never appears in the comments API;
+  - the comments of a non-public project (a draft, or a project of an unpublished event) are 404 in the API for a visitor, a participant and a judge, and readable for the event's organizer and an admin;
   - `django_assert_num_queries` gives the same count for 3 and for 20 comments;
   - comment actions appear in `trail()`.
 

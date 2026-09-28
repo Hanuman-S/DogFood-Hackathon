@@ -1,6 +1,17 @@
 """Refusals from the comment services, each with the HTTP status and error code every caller answers
 with (core.api.error(status, code, detail)), so the pages and the JSON API refuse the same thing the
-same way."""
+same way.
+
+    LoginRequired      401 login_required
+    NotCommentable     404 no_project          not in the anonymous gallery
+    NoComment          404 no_comment          missing, or not this caller's to act on
+    NoEvent            404 no_event            turning comments on/off by a non-organizer
+    CommentsDisabled   409 comments_disabled
+    DuplicateComment   409 duplicate_comment   same author, project and body within 10 minutes
+    RateLimited        429 rate_limited
+    InvalidComment     400 invalid_comment
+    InvalidModeration  400 invalid_moderation
+"""
 
 
 class CommentError(Exception):

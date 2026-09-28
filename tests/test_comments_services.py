@@ -65,7 +65,25 @@ def test_anonymous_cannot_post(gallery_project):
         comments.post_comment(gallery_project.pk, "hi", author=AnonymousUser(), origin=HERE)
     assert codes(caught.value) == (401, "login_required")
     assert not Comment.objects.exists()
-    assert AuditLog.objects.get(action=AuditAction.COMMENT_REFUSED).detail["reason"] == "not logged in"
+    assert AuditLog.objects.get(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).detail["reason"] == "not logged in"
+    assert not AuditLog.objects.filter(action__in=comments.COMMENT_WRITE_ACTIONS).exists()
+
+
+def test_the_per_ip_default_is_generous_and_per_account_is_the_primary_control():
+    from django.conf import settings
+    assert settings.COMMENT_RATE_PER_IP == 200 and settings.COMMENT_RATE_PER_USER == 5
+
+
+@override_settings(COMMENT_RATE_PER_IP=10)
+def test_anonymous_attempts_do_not_use_up_the_per_ip_limit(gallery_project, commenter):
+    """50 anonymous attempts from one address (five times the per-IP limit), then someone logged in
+    behind the same address posts: anonymous refusals are audited in a bucket of their own."""
+    for _ in range(50):
+        with pytest.raises(LoginRequired):
+            comments.post_comment(gallery_project.pk, "hi", author=AnonymousUser(), origin=HERE)
+    assert AuditLog.objects.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED, ip_hash=HERE.ip_hash).count() == 50
+    assert post(gallery_project, commenter).pk
+    assert not AuditLog.objects.filter(action=AuditAction.COMMENT_THROTTLED).exists()
 
 
 def test_a_draft_cannot_be_commented_on_not_even_by_its_own_team(make_event, make_team):
@@ -169,18 +187,22 @@ def test_refused_posts_count_and_the_limit_answers_before_the_body(gallery_proje
     assert AuditLog.objects.filter(action__in=comments.COMMENT_WRITE_ACTIONS).count() == 1
 
 
-def test_an_identical_body_within_ten_minutes_is_409(gallery_project, commenter, make_team):
+def test_an_identical_body_on_the_same_project_within_ten_minutes_is_409(gallery_project, commenter):
     post(gallery_project, commenter, "Great demo!")
     with pytest.raises(DuplicateComment) as caught:
         post(gallery_project, commenter, "  Great demo!  ")  # compared after stripping
     assert codes(caught.value) == (409, "duplicate_comment")
-    # Per account, not per project: the same text pasted onto another project is refused too.
+    assert Comment.objects.count() == 1
+    assert AuditLog.objects.filter(action=AuditAction.COMMENT_REFUSED, detail__reason="duplicate").count() == 1
+
+
+def test_the_same_body_on_another_project_is_accepted(gallery_project, commenter, make_team):
+    """The duplicate check is per (author, project): "Great demo!" on two projects is two comments."""
     other = Project.objects.create(team=make_team(gallery_project.event), name="Other", status=Status.SUBMITTED,
                                    submitted_at=timezone.now())
-    with pytest.raises(DuplicateComment):
-        post(other, commenter, "Great demo!")
-    assert Comment.objects.count() == 1
-    assert AuditLog.objects.filter(action=AuditAction.COMMENT_REFUSED, detail__reason="duplicate").count() == 2
+    post(gallery_project, commenter, "Great demo!")
+    post(other, commenter, "Great demo!")
+    assert Comment.objects.filter(author=commenter, body="Great demo!").count() == 2
 
 
 def test_another_account_may_post_the_same_text(gallery_project, commenter, make_user):
@@ -355,6 +377,9 @@ def test_newest_first_and_twenty_per_page_with_bad_pages_falling_back(gallery_pr
 
 # Pinned: the project, the gallery check, the page count, the page (authors joined in).
 READ_QUERIES = 4
+# Pinned for moderators: the project, the organizer-role lookup (none for an admin, whose power is a
+# column already loaded), the page count, the page (authors and whoever hid it joined in).
+MODERATOR_READ_QUERIES = {"organizer": 4, "admin": 3}
 
 
 @pytest.mark.parametrize("n", [3, 20])
@@ -364,3 +389,20 @@ def test_the_read_is_a_fixed_number_of_queries(gallery_project, make_user, djang
     with django_assert_num_queries(READ_QUERIES):
         _, page, _ = comments.comments_for(gallery_project.pk, None)
         assert len([(c.author.name, c.body) for c in page]) == n
+
+
+@pytest.mark.parametrize("n", [3, 20])
+@pytest.mark.parametrize("who", ["organizer", "admin"])
+def test_the_moderator_read_is_a_fixed_number_of_queries(gallery_project, make_user, django_assert_num_queries,
+                                                          n, who):
+    viewer = gallery_project.event.organizer if who == "organizer" else make_user(role=ADMIN)
+    viewer = type(viewer).objects.get(pk=viewer.pk)  # a fresh instance: no cached role lookups
+    Comment.objects.bulk_create(
+        Comment(project=gallery_project, author=make_user(email=f"m{i}@example.org"), body=f"b{i}",
+                **({"hidden_at": timezone.now(), "hidden_by": viewer, "hide_reason": "x"} if i % 2 else {}))
+        for i in range(n)
+    )
+    with django_assert_num_queries(MODERATOR_READ_QUERIES[who]):
+        _, page, moderator = comments.comments_for(gallery_project.pk, viewer)
+        rows = [(c.author.name, c.body, c.hidden_by.email if c.hidden_by else "") for c in page]
+    assert moderator and len(rows) == n

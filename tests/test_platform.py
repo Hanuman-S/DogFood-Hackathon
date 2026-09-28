@@ -134,3 +134,15 @@ def test_no_template_has_a_multi_line_hash_comment():
     bad = [str(p.relative_to(src)) for p in src.rglob("*.html")
            if any("\n" in m.group(1) for m in re.finditer(r"\{#(.*?)#\}", p.read_text(), re.S))]
     assert bad == []
+
+
+@pytest.mark.django_db
+def test_no_model_change_is_missing_a_migration():
+    """A model change without its migration (for example a new AuditAction choice) fails here, not on
+    someone else's fresh boot."""
+    out = StringIO()
+    try:
+        call_command("makemigrations", "--check", "--dry-run", stdout=out, stderr=out)
+    except SystemExit as exit_:
+        pytest.fail(f"makemigrations --check found changes without a migration:\n{out.getvalue()}"
+                    if exit_.code else "unexpected exit")

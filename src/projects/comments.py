@@ -9,8 +9,10 @@ Who: anyone reads; a logged-in account posts; the author deletes their own (soft
 the event or a platform admin hides one (a reason is required) and restores it. Hidden and deleted
 comments are shown to nobody but organizers and admins. There is no editing.
 
-Order of checks on a post, like a vote write: no project 404, comments off 409, rate limit 429,
-then the body 400, then (under a lock on the author) the duplicate 409. Every refusal is audited,
+Order of checks on a post, like a vote write: not logged in 401, no project 404, comments off 409,
+rate limit 429, then the body 400, then (under a lock on the author) the duplicate 409 -- the same
+body from the same author on the same project within COMMENT_DUPLICATE_WINDOW. Anonymous attempts are
+audited as their own action, which the per-IP limit does not count. Every refusal is audited,
 outside any transaction, before it is raised. Every row carries subject=event.slug, so an event's
 comment actions sit on its audit trail.
 
@@ -63,7 +65,9 @@ def _slug_of(project_id):
 
 def post_comment(project_id, body, *, author, origin=None) -> Comment:
     if author is None or not author.is_authenticated:
-        audit.record(AuditAction.COMMENT_REFUSED, origin=origin, subject=_slug_of(project_id),
+        # Audited in a bucket of its own: anonymous attempts must never use up the per-IP limit of
+        # the logged-in people who share that address.
+        audit.record(AuditAction.COMMENT_ANONYMOUS_REFUSED, origin=origin, subject=_slug_of(project_id),
                      project=str(project_id), reason="not logged in")
         raise LoginRequired("Log in to comment.")
 
@@ -100,10 +104,11 @@ def post_comment(project_id, body, *, author, origin=None) -> Comment:
     duplicate = False
     with transaction.atomic():
         # One account's posts are serialised, so two identical posts at once cannot both pass the
-        # duplicate check.
+        # duplicate check. The check is per (author, project): the same short text ("Great demo!")
+        # on two different projects is fine.
         User.objects.select_for_update().filter(pk=author.pk).first()
         duplicate = Comment.objects.filter(
-            author=author, body=text, created_at__gte=now - settings.COMMENT_DUPLICATE_WINDOW,
+            author=author, project=project, body=text, created_at__gte=now - settings.COMMENT_DUPLICATE_WINDOW,
         ).exists()
         if not duplicate:
             comment = Comment.objects.create(project=project, author=author, body=text, created_at=now)
@@ -256,7 +261,8 @@ def moderation_list(event):
 
 def comment_actions():
     """The audit actions that describe comments (for the integrity trail)."""
-    return (AuditAction.COMMENT_POSTED, AuditAction.COMMENT_REFUSED, AuditAction.COMMENT_THROTTLED,
+    return (AuditAction.COMMENT_POSTED, AuditAction.COMMENT_REFUSED, AuditAction.COMMENT_ANONYMOUS_REFUSED,
+            AuditAction.COMMENT_THROTTLED,
             AuditAction.COMMENT_DELETED, AuditAction.COMMENT_HIDDEN, AuditAction.COMMENT_RESTORED,
             AuditAction.COMMENT_MODERATION_REFUSED, AuditAction.COMMENTS_TOGGLED)
 
