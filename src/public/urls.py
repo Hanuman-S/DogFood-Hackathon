@@ -1,6 +1,6 @@
 from django.urls import path
 
-from public import comments, records, views, voting
+from public import comments, embed, records, views, voting
 
 app_name = "public"
 
@@ -21,6 +21,7 @@ urlpatterns = [
     path("records/<uuid:record_id>", records.record_page, name="record"),
     path("records/<uuid:record_id>.json", records.record_json, name="record_json"),
     path("verify", records.verify, name="verify"),
+    path("embed/events/<slug:slug>/gallery", embed.gallery, name="embed_gallery"),
     path(".well-known/dogfood-signing-keys.json", records.signing_keys, name="signing_keys"),
     path(".well-known/dogfood-foreign-signing-keys.json", records.foreign_signing_keys, name="foreign_signing_keys"),
     path(".well-known/dogfood-revoked.json", records.revoked, name="revoked_records"),

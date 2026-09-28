@@ -69,6 +69,22 @@ def event_create(request):
     )
 
 
+def embed_snippet(event):
+    """The copy-paste HTML for another site to show this event's gallery (public/embed.py), with the
+    portal's own base URL filled in. Built here, as text shown in a <pre>: no template holds a link
+    to another host."""
+    from django.conf import settings
+    from django.utils.html import escape
+
+    base = settings.PORTAL_BASE_URL.rstrip("/")
+    lines = [
+        f'<iframe data-dogfood-embed src="{base}/embed/events/{event.slug}/gallery?limit=12&theme=dark"',
+        f'        width="100%" height="600" title="{escape(event.name)} projects" loading="lazy"></iframe>',
+        f'<script src="{base}/static/js/embed.js" defer></script>',
+    ]
+    return "\n".join(lines)
+
+
 def _control(request, event, status=200, **forms):
     context = {
         "event": event,
@@ -90,6 +106,7 @@ def _control(request, event, status=200, **forms):
         "extensions": TeamExtension.objects.filter(team__event=event).select_related("team", "granted_by"),
         "window": deadlines.window(event),
         "export_sheets": sheet_states(event, deadlines.db_now()),
+        "embed_snippet": embed_snippet(event),
         "duplicates": possible_duplicates(event),
         "import_duplicates": FixtureRef.objects.filter(
             kind=FixtureRef.Kind.PROJECT, object_id__in=event.projects.values("pk")

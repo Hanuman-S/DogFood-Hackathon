@@ -1,0 +1,32 @@
+{% load static portal %}<!doctype html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>{{ event.name }} · projects</title>
+  <link rel="stylesheet" href="{% static 'css/crt.css' %}">
+  <script src="{% static 'js/embed-frame.js' %}" defer></script>
+</head>
+<body class="embed">
+  <header class="embed__bar">
+    <a class="embed__title" href="{{ base }}/events/{{ event.slug }}" target="_blank" rel="noopener">{{ event.name }}</a>
+    <span class="embed__meta">{{ projects|length }} project{{ projects|length|pluralize }}{% if filters.track %} · {{ filters.track.name }}{% endif %}{% if filters.tag %} · #{{ filters.tag }}{% endif %}</span>
+  </header>
+  <ul class="embed__grid">
+  {% for project in projects %}
+    <li class="embed__card">
+      <a class="embed__link" href="{{ base }}/projects/{{ project.pk }}" target="_blank" rel="noopener">
+        {% if project.thumbnail %}<img class="embed__thumb" src="/media/{{ project.thumbnail.name }}" alt="" loading="lazy">{% else %}<span class="embed__thumb embed__thumb--empty">{{ project.name|initials }}</span>{% endif %}
+        <span class="embed__name">{{ project.name }}</span>
+      </a>
+      <span class="embed__tagline">{{ project.tagline|default:"" }}</span>
+      <span class="embed__team">{{ project.team.name }}{% if project.track %} · {{ project.track.name }}{% endif %}</span>
+    </li>
+  {% empty %}
+    <li class="embed__empty">no projects yet.</li>
+  {% endfor %}
+  </ul>
+  <footer class="embed__foot"><a href="{{ base }}/projects?event={{ event.slug }}" target="_blank" rel="noopener">all projects on the portal</a></footer>
+</body>
+</html>

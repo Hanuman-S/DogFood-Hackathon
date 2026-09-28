@@ -59,6 +59,8 @@ class SessionActivityMiddleware:
 
     def __call__(self, request):
         response = self.get_response(request)
+        if request.path.startswith("/embed/"):
+            return response  # an embed never reads or touches the session
         user = getattr(request, "user", None)
         if (
             getattr(request, "auth_method", "") == "session"

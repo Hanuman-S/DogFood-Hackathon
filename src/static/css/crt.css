@@ -848,3 +848,40 @@ input:disabled, select:disabled, textarea:disabled {
   .certificate__name { font-size: 2rem; }
   .certificate__raw { font-size: 0.7rem; }
 }
+
+/* The embeddable gallery (/embed/events/<slug>/gallery): a compact grid that fits another site's
+   column. Dark by default; theme=light swaps the tokens (only the embed page sets data-theme). */
+html[data-theme="light"] {
+  --bg: #fbfaff;
+  --bg-raise: #f1eefc;
+  --bg-input: #ffffff;
+  --fg: #2c2754;
+  --fg-bright: #120f2a;
+  --fg-dim: #5a5390;
+  --fg-faint: #9a94c4;
+  --fg-hint: #7a73ad;
+  --line: #8b83c9;
+  --line-soft: #d9d4f2;
+  --accent: #4b3fb8;
+  --glow: none;
+  --frame-glow: none;
+  color-scheme: light;
+}
+.embed { margin: 0; padding: 12px; background: var(--bg); color: var(--fg); font-family: var(--font-mono); }
+.embed a { color: var(--accent); }
+.embed__bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between;
+  border-bottom: 1px solid var(--line-soft); padding-bottom: 8px; margin-bottom: 12px; }
+.embed__title { font-family: var(--font-pixel); font-size: 1.5rem; color: var(--fg-bright); text-decoration: none; }
+.embed__meta, .embed__team, .embed__foot { color: var(--fg-dim); font-size: 0.8rem; }
+.embed__grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.embed__card { border: 1px solid var(--line-soft); background: var(--bg-raise); padding: 8px;
+  display: grid; gap: 4px; align-content: start; }
+.embed__link { display: grid; gap: 6px; text-decoration: none; }
+.embed__thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }
+.embed__thumb--empty { display: grid; place-items: center; background: var(--bg-input); color: var(--fg-faint);
+  font-family: var(--font-pixel); font-size: 2rem; }
+.embed__name { color: var(--fg-bright); font-weight: 700; }
+.embed__tagline { color: var(--fg); font-size: 0.85rem; }
+.embed__empty { color: var(--fg-faint); }
+.embed__foot { margin-top: 12px; }

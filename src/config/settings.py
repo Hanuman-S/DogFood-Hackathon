@@ -73,6 +73,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Outermost: clears every cookie on /embed/ responses, after all the others have run.
+    "core.middleware.EmbedMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "core.middleware.SecurityHeadersMiddleware",

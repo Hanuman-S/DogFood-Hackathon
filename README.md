@@ -294,6 +294,12 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
     means this install can't sign again under the old key. Records already issued keep verifying,
     because their public keys stay published. Run `manage.py rotate_signing_key` to sign new ones
     with a new key.
+- **Embeddable gallery**: `/embed/events/<slug>/gallery` shows a published event's projects (what an
+  anonymous visitor sees on `/projects`; no votes, results, ranks or comments) for another site to
+  put in an iframe. It takes `track`, `tag`, `sort`, `limit` (up to 24) and `theme=dark|light`, and a
+  bad value falls back. It is the only route that may be framed (`frame-ancestors *`, no
+  X-Frame-Options), and it sets no cookie at all. The organizer's event page has the copy-paste
+  snippet, and `static/js/embed.js` sizes the frame to its content.
 - **Event bundles**: an organizer downloads a whole event as one zip ("download event bundle" on the
   event page, `GET /api/events/<slug>/bundle`, `manage.py export_event`). It carries no passwords,
   tokens, invite links, voting secrets or IP hashes, and voters are pseudonymised. A platform admin

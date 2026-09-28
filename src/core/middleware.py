@@ -30,6 +30,23 @@ class SecurityHeadersMiddleware:
         return response
 
 
+class EmbedMiddleware:
+    """/embed/ responses set no cookie at all: no session, no CSRF token, no messages. Placed first in
+    MIDDLEWARE (outermost), so it runs after every other middleware has had its say. An embedded page
+    is framed by other sites; a cookie set there would be a third-party cookie."""
+
+    PREFIX = "/embed/"
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if request.path.startswith(self.PREFIX):
+            response.cookies.clear()
+        return response
+
+
 class DeadlineMiddleware:
     """Turns a refused late (or early) write into HTTP 409, wherever it was raised.
 
