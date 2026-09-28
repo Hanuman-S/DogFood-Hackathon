@@ -7,9 +7,19 @@
     {% include "_form_errors.html" %}
     <form class="form" method="post" novalidate>
       {% csrf_token %}
-      {% include "organizer/_event_fields.html" %}
+      {# Tabs (app.js): a tab whose fields were refused is marked, and the page opens on the first one. #}
+      <nav class="tabs" data-tabs aria-label="new event steps">
+        <a class="tabs__tab" href="#event-basics">1 · basics</a>
+        <a class="tabs__tab" href="#event-timeline">2 · timeline</a>
+        <a class="tabs__tab" href="#event-teams">3 · teams</a>
+      </nav>
+      {% include "organizer/_event_fields.html" with tabbed=1 %}
       <p class="faint">the event starts unpublished: only you can see it until you publish it. tracks, prizes and questions come next.</p>
-      <div class="actions"><button class="btn" type="submit">create event</button><a class="btn btn--ghost" href="{% url 'organizer:home' %}">cancel</a></div>
+      <div class="actions">
+        <button class="btn btn--ghost" type="button" data-tab-next hidden>next</button>
+        <button class="btn" type="submit">create event</button>
+        <a class="btn btn--ghost" href="{% url 'organizer:home' %}">cancel</a>
+      </div>
     </form>
   </div>
 </section>

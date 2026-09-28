@@ -129,6 +129,26 @@ def test_slug_must_be_unique(make_event, make_user, client_for):
     assert client.post("/organizer/events/new", event_form(slug="taken")).status_code == 400
 
 
+@pytest.mark.parametrize("typed, slug", [
+    ("example.org", "example-org"),
+    ("Spring Hack 2027", "spring-hack-2027"),
+    ("my_event/2027", "my-event-2027"),
+    ("--Edge--", "edge"),
+])
+def test_url_name_is_normalized_not_refused(make_user, client_for, typed, slug):
+    # "example.org" used to be refused with Django's "Enter a valid slug" before it was cleaned.
+    client = client_for(make_user(role=Role.ORGANIZER))
+    response = client.post("/organizer/events/new", event_form(slug=typed))
+    assert response.status_code == 302 and response["Location"] == f"/organizer/events/{slug}/"
+
+
+def test_url_name_of_only_punctuation_is_refused_in_words(make_user, client_for):
+    client = client_for(make_user(role=Role.ORGANIZER))
+    response = client.post("/organizer/events/new", event_form(slug="...", name="!!!"))
+    assert response.status_code == 400
+    assert "Give the event a url name." in response.content.decode()
+
+
 @pytest.mark.parametrize("role", [Role.PARTICIPANT, Role.JUDGE])
 def test_only_organizers_and_admins_create_events(make_user, client_for, role):
     client = client_for(make_user(role=role))

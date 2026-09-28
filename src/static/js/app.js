@@ -299,4 +299,252 @@
     });
   }
   initCopy(document);
+
+  // Tabs: <nav data-tabs> of links to #panel ids, each panel [data-tab-panel]. Without this file
+  // the links jump down a page that shows every panel. With it, one panel shows at a time. The
+  // page opens on: the first tab holding a refused field; else the tab holding the #hash (a
+  // redirect to #judges lands on judging); else the tab last used on this page (a post that
+  // redirects without a hash comes back where it was); else the first. Tabs holding a refused
+  // field are marked.
+  document.querySelectorAll("[data-tabs]").forEach(function (nav, navIndex) {
+    var links = Array.prototype.slice.call(nav.querySelectorAll("a[href^='#']"));
+    var panels = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
+    if (panels.some(function (p) { return !p; })) return;
+    var key = "dogfood:tab:" + location.pathname + ":" + navIndex;
+    nav.setAttribute("role", "tablist");
+    links.forEach(function (a, i) {
+      a.setAttribute("role", "tab");
+      a.id = a.id || panels[i].id + "-tab";
+      a.setAttribute("aria-controls", panels[i].id);
+      panels[i].setAttribute("role", "tabpanel");
+      panels[i].setAttribute("aria-labelledby", a.id);
+      if (panels[i].querySelector(".field--invalid, .msg--error")) a.classList.add("tabs__tab--err");
+    });
+    var next = document.querySelector("[data-tab-next]");
+    var current = -1;
+    var show = function (index, remember) {
+      current = index;
+      links.forEach(function (a, i) {
+        var on = i === index;
+        a.setAttribute("aria-selected", on ? "true" : "false");
+        a.tabIndex = on ? 0 : -1;
+        a.classList.toggle("tabs__tab--on", on);
+        panels[i].hidden = !on;
+      });
+      if (next) next.hidden = index >= links.length - 1;
+      if (remember) {
+        try { sessionStorage.setItem(key, panels[index].id); } catch (err) { /* storage off */ }
+      }
+    };
+    var indexOf = function (el) {
+      for (var i = 0; i < panels.length; i++) if (el && panels[i].contains(el)) return i;
+      return -1;
+    };
+    var fromHash = function () {
+      var id = location.hash.slice(1);
+      return id ? indexOf(document.getElementById(decodeURIComponent(id))) : -1;
+    };
+    var start = links.findIndex(function (a) { return a.classList.contains("tabs__tab--err"); });
+    if (start < 0) start = fromHash();
+    if (start < 0) {
+      try { start = indexOf(document.getElementById(sessionStorage.getItem(key) || "")); } catch (err) { start = -1; }
+    }
+    show(Math.max(start, 0), false);
+    links.forEach(function (a, i) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        show(i, true);
+        history.replaceState(null, "", a.getAttribute("href"));
+      });
+      a.addEventListener("keydown", function (e) {
+        var step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+        var to = step ? (i + step + links.length) % links.length : e.key === "Home" ? 0 : e.key === "End" ? links.length - 1 : -1;
+        if (to < 0) return;
+        e.preventDefault();
+        show(to, true);
+        links[to].focus();
+      });
+    });
+    // An in-page link to a section on another tab (say, "extend judging") opens that tab.
+    window.addEventListener("hashchange", function () {
+      var i = fromHash();
+      if (i < 0 || i === current) return;
+      show(i, true);
+      var target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (target && target !== panels[i]) target.scrollIntoView({ block: "start" });
+    });
+    if (next) next.addEventListener("click", function () {
+      if (current < links.length - 1) { show(current + 1, true); links[current].focus(); }
+    });
+  });
+
+  // Date boxes: the browser's own calendar ignores the theme (a grey or white popup), so date
+  // inputs get this one instead. The box becomes a plain text box that still takes yyyy-mm-dd
+  // typed by hand (the format the server parses), with a calendar button beside it. "Today" is
+  // the UTC date: every time in the portal is UTC. Without this file the native picker is used.
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December"];
+  var iso = function (d) {
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  };
+  var parseIso = function (s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
+    if (!m) return null;
+    var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return iso(d) === m[0] ? d : null;
+  };
+  var openCal = null;
+  var closeCal = function (refocus) {
+    if (!openCal) return;
+    var c = openCal;
+    openCal = null;
+    c.pop.remove();
+    c.button.setAttribute("aria-expanded", "false");
+    if (refocus) c.input.focus();
+  };
+  var buildCal = function (input, button, wrap) {
+    var chosen = parseIso(input.value);
+    var today = parseIso(iso(new Date()));
+    var shown = chosen || today;
+    var focusDay = new Date(shown.getTime());
+    var pop = document.createElement("div");
+    pop.className = "cal";
+    pop.setAttribute("role", "dialog");
+    pop.setAttribute("aria-label", "choose a date (UTC)");
+    var render = function (focus) {
+      var year = focusDay.getUTCFullYear(), month = focusDay.getUTCMonth();
+      pop.textContent = "";
+      var head = document.createElement("div");
+      head.className = "cal__head";
+      var prev = document.createElement("button");
+      prev.type = "button"; prev.className = "cal__nav"; prev.textContent = "<"; prev.setAttribute("aria-label", "previous month");
+      var title = document.createElement("span");
+      title.className = "cal__title"; title.textContent = MONTHS[month] + " " + year;
+      title.setAttribute("aria-live", "polite");
+      var nextM = document.createElement("button");
+      nextM.type = "button"; nextM.className = "cal__nav"; nextM.textContent = ">"; nextM.setAttribute("aria-label", "next month");
+      prev.addEventListener("click", function () { moveMonth(-1, false); });
+      nextM.addEventListener("click", function () { moveMonth(1, false); });
+      head.appendChild(prev); head.appendChild(title); head.appendChild(nextM);
+      pop.appendChild(head);
+      var grid = document.createElement("div");
+      grid.className = "cal__grid";
+      grid.setAttribute("role", "grid");
+      ["mo", "tu", "we", "th", "fr", "sa", "su"].forEach(function (d) {
+        var h = document.createElement("span");
+        h.className = "cal__dow"; h.textContent = d;
+        grid.appendChild(h);
+      });
+      var first = new Date(Date.UTC(year, month, 1));
+      var lead = (first.getUTCDay() + 6) % 7;  // weeks start on Monday
+      for (var i = 0; i < lead; i++) grid.appendChild(document.createElement("span"));
+      var days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+      var focusEl = null;
+      for (var day = 1; day <= days; day++) {
+        var date = new Date(Date.UTC(year, month, day));
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "cal__day";
+        b.textContent = day;
+        b.setAttribute("data-date", iso(date));
+        b.setAttribute("aria-label", day + " " + MONTHS[month] + " " + year);
+        if (chosen && iso(date) === iso(chosen)) { b.classList.add("cal__day--chosen"); b.setAttribute("aria-pressed", "true"); }
+        if (iso(date) === iso(today)) b.classList.add("cal__day--today");
+        var isFocus = iso(date) === iso(focusDay);
+        b.tabIndex = isFocus ? 0 : -1;
+        if (isFocus) focusEl = b;
+        grid.appendChild(b);
+      }
+      pop.appendChild(grid);
+      var foot = document.createElement("div");
+      foot.className = "cal__foot";
+      var todayBtn = document.createElement("button");
+      todayBtn.type = "button"; todayBtn.className = "btn btn--small btn--ghost"; todayBtn.textContent = "today";
+      todayBtn.addEventListener("click", function () { pick(today); });
+      var zone = document.createElement("span");
+      zone.className = "faint"; zone.textContent = "UTC";
+      foot.appendChild(todayBtn); foot.appendChild(zone);
+      pop.appendChild(foot);
+      if (focus && focusEl) focusEl.focus();
+    };
+    var moveMonth = function (step, focus) {
+      var y = focusDay.getUTCFullYear(), m = focusDay.getUTCMonth() + step, d = focusDay.getUTCDate();
+      var last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+      focusDay = new Date(Date.UTC(y, m, Math.min(d, last)));
+      render(focus);
+    };
+    var pick = function (date) {
+      input.value = iso(date);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      closeCal(false);
+      // The time is the usual thing left to fill in: go to it.
+      var time = wrap.parentNode.querySelector("input[type=time]");
+      (time && !time.value ? time : input).focus();
+    };
+    pop.addEventListener("click", function (e) {
+      var day = e.target.closest("[data-date]");
+      if (day) pick(parseIso(day.getAttribute("data-date")));
+    });
+    pop.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { e.preventDefault(); closeCal(true); return; }
+      if (!e.target.hasAttribute("data-date")) return;
+      var step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+      if (step) {
+        e.preventDefault();
+        var month = focusDay.getUTCMonth();
+        focusDay = new Date(focusDay.getTime() + step * 86400000);
+        if (focusDay.getUTCMonth() !== month) render(true);
+        else {
+          pop.querySelectorAll("[data-date]").forEach(function (b) { b.tabIndex = -1; });
+          var el = pop.querySelector("[data-date='" + iso(focusDay) + "']");
+          el.tabIndex = 0; el.focus();
+        }
+      } else if (e.key === "PageUp" || e.key === "PageDown") {
+        e.preventDefault();
+        moveMonth(e.key === "PageUp" ? -1 : 1, true);
+      }
+    });
+    render(false);
+    return pop;
+  };
+  document.querySelectorAll(".datetime input[type=date]").forEach(function (input) {
+    if (input.disabled) return;  // a locked date keeps the plain (disabled) box
+    input.type = "text";
+    input.setAttribute("inputmode", "numeric");
+    input.setAttribute("placeholder", "yyyy-mm-dd");
+    input.setAttribute("maxlength", "10");
+    var wrap = document.createElement("span");
+    wrap.className = "datepick";
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "datepick__btn";
+    button.setAttribute("aria-label", "open calendar");
+    button.setAttribute("aria-haspopup", "dialog");
+    button.setAttribute("aria-expanded", "false");
+    button.textContent = "▦";
+    wrap.appendChild(button);
+    button.addEventListener("click", function () {
+      var wasThis = openCal && openCal.input === input;
+      closeCal(false);
+      if (wasThis) return;
+      var pop = buildCal(input, button, wrap);
+      wrap.appendChild(pop);
+      openCal = { input: input, button: button, pop: pop };
+      button.setAttribute("aria-expanded", "true");
+      var focus = pop.querySelector(".cal__day[tabindex='0']");
+      if (focus) focus.focus();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown" && e.altKey) { e.preventDefault(); button.click(); }
+    });
+  });
+  document.addEventListener("mousedown", function (e) {
+    if (openCal && !openCal.pop.contains(e.target) && e.target !== openCal.button) closeCal(false);
+  });
+  document.addEventListener("focusin", function (e) {
+    if (openCal && !openCal.pop.contains(e.target) && e.target !== openCal.button) closeCal(false);
+  });
 })();

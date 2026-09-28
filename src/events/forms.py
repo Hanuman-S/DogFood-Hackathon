@@ -1,3 +1,5 @@
+import re
+
 from django import forms
 from django.db import models
 from django.utils.text import slugify
@@ -78,6 +80,15 @@ class EventForm(forms.ModelForm):
     results_at = utc_datetime_field(
         "results (UTC)", required=False, help_text="optional: leave empty for 'to be announced'",
     )
+    # A plain text box, not the model's SlugField: that one refused "example.org" or "Spring Hack"
+    # before clean_slug could turn it into a url name. clean_slug normalizes whatever is typed.
+    # (A declared field skips Meta's labels, help texts and widgets, so they are given here.)
+    slug = forms.CharField(
+        label="url name", max_length=200, required=False,
+        help_text="used in links: /events/<url name>. what you type becomes lower-case letters, digits "
+                  "and hyphens (Spring Hack 2027 -> spring-hack-2027)",
+        widget=forms.TextInput(attrs={"placeholder": "leave empty to make one from the name"}),
+    )
 
     class Meta:
         model = Event
@@ -88,19 +99,16 @@ class EventForm(forms.ModelForm):
             "min_team_size", "max_team_size",
         ]
         labels = {
-            "slug": "url name",
             "min_team_size": "min team size",
             "max_team_size": "max team size",
         }
         help_texts = {
-            "slug": "lower-case letters, digits and hyphens; used in links: /events/<url name>",
             "description": "markdown",
             "min_team_size": "smaller teams can form, but cannot submit",
             "max_team_size": "1 to 20",
         }
         widgets = {
             "name": forms.TextInput(attrs={"placeholder": "e.g. Spring Hack 2027"}),
-            "slug": forms.TextInput(attrs={"placeholder": "leave empty to make one from the name"}),
             "tagline": forms.TextInput(attrs={"placeholder": "one sentence, e.g. 48 hours to build developer tools"}),
             "description": forms.Textarea(attrs={"rows": 6, "placeholder": "Markdown. What the event is about, rules, judging, anything participants should read first."}),
             "min_team_size": forms.NumberInput(attrs={"min": 1, "max": 20, "placeholder": "e.g. 1"}),
@@ -121,8 +129,9 @@ class EventForm(forms.ModelForm):
         self.fields["description"].required = True
 
     def clean_slug(self):
-        slug = self.cleaned_data.get("slug") or slugify(self.cleaned_data.get("name", ""))
-        slug = slugify(slug)[:60]
+        slug = self.cleaned_data.get("slug") or self.cleaned_data.get("name", "")
+        # Dots, underscores and slashes separate words too: "example.org" -> "example-org".
+        slug = slugify(re.sub(r"[._/\\]+", "-", slug))[:60].strip("-")
         if not slug:
             raise forms.ValidationError("Give the event a url name.")
         clash = Event.objects.filter(slug=slug).exclude(pk=self.instance.pk)

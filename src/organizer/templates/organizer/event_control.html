@@ -4,7 +4,7 @@
 {% block content %}
 <div class="stack">
 
-  {# --- header ------------------------------------------------------------ #}
+  {# --- header: always shown, above the tabs -------------------------------- #}
   <section class="frame">
     <header class="frame__bar">
       <h1 class="frame__title">{{ event.name }}</h1>
@@ -13,219 +13,152 @@
         {% if event.is_published %}<span class="badge badge--on">published</span>{% else %}<span class="badge">unpublished</span>{% endif %}
       </span>
     </header>
-    <div class="frame__body grid-2">
-      <div>
-        <p class="dim">{{ event.tagline|default:"no tagline yet." }}</p>
-        <ul class="timeline">
-          {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc:"to be announced" }}</span></li>{% endfor %}
-        </ul>
-      </div>
-      <div class="stack">
-        <form method="post" action="{% url 'organizer:event_publish' event.slug %}" class="actions">
-          {% csrf_token %}
-          {% if event.is_published %}
-            <input type="hidden" name="publish" value="0"><button class="btn btn--ghost" type="submit">unpublish</button>
-            <span class="faint">public at <a href="{% url 'public:event_detail' event.slug %}">/events/{{ event.slug }}</a></span>
-          {% else %}
-            <input type="hidden" name="publish" value="1"><button class="btn" type="submit"{% if publish_blockers %} disabled aria-describedby="publish-blockers"{% endif %}>publish</button>
-            <span class="faint">only organizers can see it until then. <a href="{% url 'public:event_detail' event.slug %}">preview</a></span>
+    <div class="frame__body"><p class="dim flush">{{ event.tagline|default:"no tagline yet." }}</p></div>
+  </section>
+
+  {# Tabs (app.js). Without JavaScript they are plain links and every panel is shown, one after another. #}
+  <nav class="tabs" data-tabs aria-label="event sections">
+    <a class="tabs__tab" href="#tab-overview">overview</a>
+    <a class="tabs__tab" href="#tab-settings">details &amp; dates</a>
+    <a class="tabs__tab" href="#tab-submissions">tracks &amp; prizes</a>
+    <a class="tabs__tab" href="#tab-judging">judging</a>
+    <a class="tabs__tab" href="#tab-deadlines">deadlines</a>
+    <a class="tabs__tab" href="#tab-people">organizers &amp; teams</a>
+    <a class="tabs__tab" href="#tab-export">export &amp; share</a>
+  </nav>
+
+  {# --- overview ---------------------------------------------------------- #}
+  <div class="tabs__panel stack" id="tab-overview" data-tab-panel>
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">overview</h2><span class="frame__meta">all times UTC</span></header>
+      <div class="frame__body grid-2">
+        <div class="stack">
+          <ul class="timeline">
+            {% for label, when, passed in event.timeline %}<li{% if passed %} class="passed"{% endif %}><span class="dim">{{ label }}</span><span>{{ when|utc:"to be announced" }}</span></li>{% endfor %}
+          </ul>
+          <table class="kv">
+            <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
+            <tr><th scope="row">projects</th><td>{{ projects|length }}</td></tr>
+            <tr><th scope="row">team size</th><td>{{ event.team_size_display }}</td></tr>
+          </table>
+        </div>
+        <div class="stack">
+          <form method="post" action="{% url 'organizer:event_publish' event.slug %}" class="actions">
+            {% csrf_token %}
+            {% if event.is_published %}
+              <input type="hidden" name="publish" value="0"><button class="btn btn--ghost" type="submit">unpublish</button>
+              <span class="faint">public at <a href="{% url 'public:event_detail' event.slug %}">/events/{{ event.slug }}</a></span>
+            {% else %}
+              <input type="hidden" name="publish" value="1"><button class="btn" type="submit"{% if publish_blockers %} disabled aria-describedby="publish-blockers"{% endif %}>publish</button>
+              <span class="faint">only organizers can see it until then. <a href="{% url 'public:event_detail' event.slug %}">preview</a></span>
+            {% endif %}
+          </form>
+          {% if not event.is_published and publish_blockers %}
+          <div id="publish-blockers">
+            <p class="section-title">before publishing</p>
+            <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
+          </div>
           {% endif %}
-        </form>
-        {% if not event.is_published and publish_blockers %}
-        <div id="publish-blockers">
-          <p class="section-title">before publishing</p>
-          <ul class="checklist">{% for b in publish_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
         </div>
-        {% endif %}
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:results' event.slug %}">results</a><span class="faint">compute, publish, choose who sees them, winners.csv</span></p>
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:voting' event.slug %}">community vote</a><span class="faint">set up voting, end it, the live tally (organizers only)</span></p>
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:comments' event.slug %}">comments</a><span class="faint">comments on the gallery projects: hide, restore, turn off</span></p>
-        <details class="stack"><summary class="btn btn--small btn--ghost">embed the gallery on another site</summary>
-          <p class="faint">paste this into any web page to show this event's projects (published events only; what an anonymous visitor sees on /projects, no votes, results or comments). options: track=&lt;id&gt;, tag=&lt;name&gt;, sort=newest|oldest|name, limit=1-24, theme=dark|light. the script sizes the frame to its content; without it the frame stays 600px tall.</p>
-          <pre class="certificate__raw">{{ embed_snippet }}</pre>
-        </details>
-        <p class="actions"><a class="btn btn--small" href="{% url 'organizer:records' event.slug %}">signed records</a><span class="faint">certificates for judges, participants and winners, verifiable by anyone</span></p>
-        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:event_bundle' event.slug %}">download event bundle</a><span class="faint">the whole event as one zip, to move it to another install. no passwords, tokens, invite links, voting secrets or ip hashes; voters are pseudonymised.</span></p>
-        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'api_export_zip' %}?event={{ event.slug }}">export all (.zip)</a><a class="faint" href="#export">or one sheet</a></p>
-        <table class="kv">
-          <tr><th scope="row">teams</th><td>{{ teams|length }}</td></tr>
-          <tr><th scope="row">projects</th><td>{{ projects|length }}</td></tr>
-          <tr><th scope="row">team size</th><td>{{ event.team_size_display }}</td></tr>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  {# --- deadline ---------------------------------------------------------- #}
-  <section class="frame" id="deadline">
-    <header class="frame__bar">
-      <h2 class="frame__title">deadline</h2>
-      <span class="frame__meta">{% include "_countdown.html" with closes=window.closes_at now=window.now %}</span>
-    </header>
-    <div class="frame__body stack">
-      <table class="kv">
-        <tr><th scope="row">submissions close</th><td>{{ event.submissions_close_at|utc }}</td></tr>
-        {% if event.original_submissions_close_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_submissions_close_at|utc }}</td></tr>{% endif %}
-        <tr><th scope="row">enforced by</th><td class="dim">the server and the database, on the database clock</td></tr>
-      </table>
-      {% if not judging_window.not_started %}
-      {% if extend_form.errors or extension_form.errors %}<ul class="msgs" role="alert">{% for e in extend_form.new_close.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}{% for e in extension_form.until.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}</ul>{% endif %}
-      <p class="faint">judging has started, so the submission deadline is final and no team can get more time. to give judges more time, <a href="#judging">extend judging</a>.</p>
-      {% else %}
-      <div class="grid-2">
-        <form class="form" method="post" action="{% url 'organizer:deadline_extend' event.slug %}" novalidate>
-          {% csrf_token %}
-          <p class="section-title">extend for everyone</p>
-          {% include "_form_errors.html" with form=extend_form %}
-          {% include "_field.html" with field=extend_form.new_close cmd="deadline --extend-to" %}
-          {% include "_field.html" with field=extend_form.reason cmd="--reason" %}
-          <div class="actions"><button class="btn btn--small" type="submit">extend deadline</button></div>
-        </form>
-        <form class="form" method="post" action="{% url 'organizer:extension_grant' event.slug %}" novalidate>
-          {% csrf_token %}
-          <p class="section-title">extend for one team</p>
-          {% include "_form_errors.html" with form=extension_form %}
-          {% include "_field.html" with field=extension_form.team cmd="--team" %}
-          {% include "_field.html" with field=extension_form.until cmd="--until" %}
-          {% include "_field.html" with field=extension_form.reason cmd="--reason" %}
-          <div class="actions"><button class="btn btn--small" type="submit">grant extension</button></div>
-        </form>
-      </div>
-      <p class="faint">an extension for one team must end after the close and before judging starts ({{ event.judging_starts_at|utc }}). extending for everyone past that moves judging and the results date later by the same amount.</p>
-      {% endif %}
-    </div>
-    {% if extensions %}
-    <div class="frame__body frame__body--flush table-wrap">
-      <table class="table">
-        <thead><tr><th>team</th><th>until</th><th>reason</th><th>granted by</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
-        <tbody>
-        {% for x in extensions %}
-          <tr>
-            <td>{{ x.team.name }}</td><td>{{ x.until|utc }}{% if x.until <= window.now %} <span class="badge">ended</span>{% endif %}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
-            <td class="num">{% if x.until > window.now %}<form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-  </section>
-
-  {# --- judging ----------------------------------------------------------- #}
-  <section class="frame" id="judging">
-    <header class="frame__bar">
-      <h2 class="frame__title">judging</h2>
-      <span class="frame__meta">{% if judging_window.is_open %}<span class="badge badge--on">open</span>{% elif judging_window.not_started %}<span class="badge">not started</span>{% else %}<span class="badge">closed</span>{% endif %}</span>
-    </header>
-    <div class="frame__body stack">
-      <table class="kv">
-        <tr><th scope="row">judging starts</th><td>{{ event.judging_starts_at|utc }}</td></tr>
-        <tr><th scope="row">judging ends</th><td>{{ event.judging_ends_at|utc }}</td></tr>
-        {% if event.original_judging_ends_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_judging_ends_at|utc }}</td></tr>{% endif %}
-        <tr><th scope="row">results</th><td>{{ event.results_at|utc:"to be announced" }}</td></tr>
-      </table>
-      <div class="actions">
-        <a class="btn btn--small" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
-        <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
-      </div>
-      {% if judging_window.is_open %}
-      <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">
-        {% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end judging now</button>
-        <span class="faint">closes judging at this moment (it only moves the end earlier). reviews still in draft stop counting; final results can then be computed.</span>
-      </form>
-      {% endif %}
-      <form class="form" method="post" action="{% url 'organizer:judging_extend' event.slug %}" novalidate>
-        {% csrf_token %}
-        <p class="section-title">extend judging</p>
-        {% include "_form_errors.html" with form=judging_form %}
-        <div class="grid-2">
-          {% include "_field.html" with field=judging_form.new_end cmd="judging --extend-to" %}
-          {% include "_field.html" with field=judging_form.reason cmd="--reason" %}
-        </div>
-        <div class="actions"><button class="btn btn--small" type="submit">extend judging</button><span class="faint">reopens judging if it has ended. a results date that would fall inside judging moves with it.</span></div>
-      </form>
-    </div>
-  </section>
-
-  {# --- settings ---------------------------------------------------------- #}
-  <section class="frame" id="settings">
-    <header class="frame__bar"><h2 class="frame__title">settings</h2><span class="frame__meta">all times UTC</span></header>
-    <div class="frame__body">
-      {% include "_form_errors.html" with form=settings_form %}
-      <form class="form" method="post" action="{% url 'organizer:event' event.slug %}" novalidate>
-        {% csrf_token %}
-        {% include "organizer/_event_fields.html" with form=settings_form %}
-        <div class="actions"><button class="btn" type="submit">save settings</button></div>
-      </form>
-    </div>
-  </section>
-
-  <div class="grid-2">
-    {# --- tracks ---------------------------------------------------------- #}
-    <section class="frame" id="tracks">
-      <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">{{ tracks|length }}</span></header>
-      <div class="frame__body frame__body--flush table-wrap">
-        <table class="table">
-          <tbody>
-          {% for t in tracks %}
-            <tr>
-              <td>{% if t.is_hidden %}<span class="faint">{{ t.name }} (hidden)</span>{% else %}{{ t.name }}{% endif %}<br><span class="faint">{{ t.n }} project{{ t.n|pluralize }}</span></td>
-              <td class="num">
-                <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
-                <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
-                {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
-              </td>
-            </tr>
-          {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <div class="frame__body">
-        {% include "_form_errors.html" with form=track_form %}
-        <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'track' %}" novalidate>
-          {% csrf_token %}
-          {% include "_field.html" with field=track_form.name cmd="track add --name" %}
-          {% include "_field.html" with field=track_form.description cmd="--description" %}
-          <div class="actions"><button class="btn btn--small" type="submit">add track</button></div>
-        </form>
       </div>
     </section>
-
-    {# --- prizes ---------------------------------------------------------- #}
-    <section class="frame" id="prizes">
-      <header class="frame__bar"><h2 class="frame__title">prizes</h2><span class="frame__meta">{{ prizes|length }}</span></header>
-      <div class="frame__body frame__body--flush table-wrap">
-        <table class="table">
-          <tbody>
-          {% for p in prizes %}
-            <tr>
-              <td><span class="bright">#{{ p.rank }}</span> {{ p.title }}<br><span class="faint">{{ p.value|default:"--" }} · {{ p.track.name|default:"overall" }}</span></td>
-              <td class="num">
-                <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'prize' p.pk %}">edit</a>
-                <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'prize' p.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
-              </td>
-            </tr>
-          {% empty %}<tr><td class="faint">no prizes yet.</td></tr>{% endfor %}
-          </tbody>
-        </table>
-      </div>
+    <section class="frame">
+      <header class="frame__bar"><h2 class="frame__title">run the event</h2></header>
       <div class="frame__body">
-        {% include "_form_errors.html" with form=prize_form %}
-        <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'prize' %}" novalidate>
+        <ul class="tools">
+          <li><a class="tools__link" href="{% url 'organizer:assignments' event.slug %}">assign judges</a><span class="faint">who reviews which project</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:progress' event.slug %}">judging progress</a><span class="faint">reviews done, pending and late</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:results' event.slug %}">results</a><span class="faint">compute, publish, choose who sees them, winners.csv</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:voting' event.slug %}">community vote</a><span class="faint">set up voting, end it, the live tally</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:comments' event.slug %}">comments</a><span class="faint">comments on gallery projects: hide, restore, turn off</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:records' event.slug %}">signed records</a><span class="faint">certificates for judges, participants and winners</span></li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  {# --- details & dates #}
+  <div class="tabs__panel stack" id="tab-settings" data-tab-panel>
+    <section class="frame" id="settings">
+      <header class="frame__bar"><h2 class="frame__title">event details</h2><span class="frame__meta">all times UTC</span></header>
+      <div class="frame__body">
+        {% include "_form_errors.html" with form=settings_form %}
+        <form class="form" method="post" action="{% url 'organizer:event' event.slug %}" novalidate>
           {% csrf_token %}
-          <div class="grid-2">
-            {% include "_field.html" with field=prize_form.title cmd="prize add --title" %}
-            {% include "_field.html" with field=prize_form.value cmd="--value" %}
-            {% include "_field.html" with field=prize_form.rank cmd="--rank" %}
-            {% include "_field.html" with field=prize_form.track cmd="--track" %}
-          </div>
-          <div class="actions"><button class="btn btn--small" type="submit">add prize</button></div>
+          {% include "organizer/_event_fields.html" with form=settings_form %}
+          <div class="actions"><button class="btn" type="submit">save settings</button></div>
         </form>
       </div>
     </section>
   </div>
 
-  {# --- custom questions ------------------------------------------------ #}
+  {# --- tracks, prizes, submission questions #}
+  <div class="tabs__panel stack" id="tab-submissions" data-tab-panel>
+    <div class="grid-2">
+      {# --- tracks ---------------------------------------------------------- #}
+      <section class="frame" id="tracks">
+        <header class="frame__bar"><h2 class="frame__title">tracks</h2><span class="frame__meta">{{ tracks|length }}</span></header>
+        <div class="frame__body frame__body--flush table-wrap">
+          <table class="table">
+            <tbody>
+            {% for t in tracks %}
+              <tr>
+                <td>{% if t.is_hidden %}<span class="faint">{{ t.name }} (hidden)</span>{% else %}{{ t.name }}{% endif %}<br><span class="faint">{{ t.n }} project{{ t.n|pluralize }}</span></td>
+                <td class="num">
+                  <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'track' t.pk %}">edit</a>
+                  <form class="inline-form" method="post" action="{% url 'organizer:part_visibility' event.slug 'track' t.pk %}">{% csrf_token %}<input type="hidden" name="hidden" value="{% if t.is_hidden %}0{% else %}1{% endif %}"><button class="btn btn--small btn--ghost" type="submit">{% if t.is_hidden %}show{% else %}hide{% endif %}</button></form>
+                  {% if t.n %}<span class="faint" title="a track with projects can be hidden, not deleted">in use</span>{% else %}<form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'track' t.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>{% endif %}
+                </td>
+              </tr>
+            {% empty %}<tr><td class="faint">no tracks. an event without tracks is one open category.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="frame__body">
+          {% include "_form_errors.html" with form=track_form %}
+          <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'track' %}" novalidate>
+            {% csrf_token %}
+            {% include "_field.html" with field=track_form.name cmd="track add --name" %}
+            {% include "_field.html" with field=track_form.description cmd="--description" %}
+            <div class="actions"><button class="btn btn--small" type="submit">add track</button></div>
+          </form>
+        </div>
+      </section>
+
+      {# --- prizes ---------------------------------------------------------- #}
+      <section class="frame" id="prizes">
+        <header class="frame__bar"><h2 class="frame__title">prizes</h2><span class="frame__meta">{{ prizes|length }}</span></header>
+        <div class="frame__body frame__body--flush table-wrap">
+          <table class="table">
+            <tbody>
+            {% for p in prizes %}
+              <tr>
+                <td><span class="bright">#{{ p.rank }}</span> {{ p.title }}<br><span class="faint">{{ p.value|default:"--" }} · {{ p.track.name|default:"overall" }}</span></td>
+                <td class="num">
+                  <a class="btn btn--small btn--ghost" href="{% url 'organizer:part_edit' event.slug 'prize' p.pk %}">edit</a>
+                  <form class="inline-form" method="post" action="{% url 'organizer:part_delete' event.slug 'prize' p.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">delete</button></form>
+                </td>
+              </tr>
+            {% empty %}<tr><td class="faint">no prizes yet.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="frame__body">
+          {% include "_form_errors.html" with form=prize_form %}
+          <form class="form" method="post" action="{% url 'organizer:part_add' event.slug 'prize' %}" novalidate>
+            {% csrf_token %}
+            <div class="grid-2">
+              {% include "_field.html" with field=prize_form.title cmd="prize add --title" %}
+              {% include "_field.html" with field=prize_form.value cmd="--value" %}
+              {% include "_field.html" with field=prize_form.rank cmd="--rank" %}
+              {% include "_field.html" with field=prize_form.track cmd="--track" %}
+            </div>
+            <div class="actions"><button class="btn btn--small" type="submit">add prize</button></div>
+          </form>
+        </div>
+      </section>
+  </div>
+
   <section class="frame" id="questions">
     <header class="frame__bar"><h2 class="frame__title">submission questions</h2><span class="frame__meta">optional extra fields teams fill in when they submit</span></header>
     {% if questions %}
@@ -265,9 +198,180 @@
       </form>
     </div>
   </section>
+  </div>
 
-  <div class="grid-2">
-    {# --- organizers ------------------------------------------------------ #}
+  {# --- judging window, rubric, judges #}
+  <div class="tabs__panel stack" id="tab-judging" data-tab-panel>
+    <section class="frame" id="judging">
+      <header class="frame__bar">
+        <h2 class="frame__title">judging</h2>
+        <span class="frame__meta">{% if judging_window.is_open %}<span class="badge badge--on">open</span>{% elif judging_window.not_started %}<span class="badge">not started</span>{% else %}<span class="badge">closed</span>{% endif %}</span>
+      </header>
+      <div class="frame__body stack">
+        <table class="kv">
+          <tr><th scope="row">judging starts</th><td>{{ event.judging_starts_at|utc }}</td></tr>
+          <tr><th scope="row">judging ends</th><td>{{ event.judging_ends_at|utc }}</td></tr>
+          {% if event.original_judging_ends_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_judging_ends_at|utc }}</td></tr>{% endif %}
+          <tr><th scope="row">results</th><td>{{ event.results_at|utc:"to be announced" }}</td></tr>
+        </table>
+        <div class="actions">
+          <a class="btn btn--small" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
+          <a class="btn btn--small" href="{% url 'organizer:progress' event.slug %}">judging progress</a>
+        </div>
+        {% if judging_window.is_open %}
+        <form method="post" action="{% url 'organizer:judging_end' event.slug %}" class="actions">
+          {% csrf_token %}<button class="btn btn--small btn--danger" type="submit">end judging now</button>
+          <span class="faint">closes judging at this moment (it only moves the end earlier). reviews still in draft stop counting; final results can then be computed.</span>
+        </form>
+        {% endif %}
+        <form class="form" method="post" action="{% url 'organizer:judging_extend' event.slug %}" novalidate>
+          {% csrf_token %}
+          <p class="section-title">extend judging</p>
+          {% include "_form_errors.html" with form=judging_form %}
+          <div class="grid-2">
+            {% include "_field.html" with field=judging_form.new_end cmd="judging --extend-to" %}
+            {% include "_field.html" with field=judging_form.reason cmd="--reason" %}
+          </div>
+          <div class="actions"><button class="btn btn--small" type="submit">extend judging</button><span class="faint">reopens judging if it has ended. a results date that would fall inside judging moves with it.</span></div>
+        </form>
+      </div>
+    </section>
+
+    <section class="frame" id="rubric">
+      <header class="frame__bar">
+        <h2 class="frame__title">rubric</h2>
+        <span class="frame__meta">{% if rubric_locked %}<span class="badge badge--warn">locked</span>{% else %}editable until submissions close{% endif %}</span>
+      </header>
+      <div class="frame__body stack">
+        {% if criteria %}
+        <table class="kv">
+          {% for c in criteria %}<tr><th scope="row">{{ c.label }}</th><td><span class="bright">{{ c.share }}%</span> <span class="faint">(weight {{ c.weight|floatformat:"-3" }})</span> <span class="faint">&middot; scored {{ c.min_value }}&ndash;{{ c.max_value }}</span></td></tr>{% endfor %}
+        </table>
+        {% else %}
+        <p class="faint">no rubric yet. judges need one before they can score.</p>
+        {% endif %}
+        <div class="actions"><a class="btn btn--small" href="{% url 'organizer:rubric' event.slug %}">{% if rubric_locked %}view rubric{% elif criteria %}edit rubric{% else %}set up the rubric{% endif %}</a></div>
+      </div>
+    </section>
+
+    <section class="frame" id="judges">
+      <header class="frame__bar"><h2 class="frame__title">judges</h2><span class="frame__meta">{{ judges|length }} &middot; a judge here cannot compete here</span></header>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>judge</th><th>tracks</th><th class="num"></th></tr></thead>
+          <tbody>
+          {% for j in judges %}
+            <tr>
+              <td>{{ j.user.name }}<br><span class="faint">{{ j.user.email }}</span></td>
+              <td class="dim">{% for jt in j.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="faint">every track</span>{% endfor %}</td>
+              <td class="num">
+                <form class="inline-form" method="post" action="{% url 'organizer:judge_remove' event.slug j.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
+              </td>
+            </tr>
+          {% empty %}<tr><td colspan="3" class="faint">no judges yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="frame__body">
+        <form class="form" method="post" action="{% url 'organizer:judge_add' event.slug %}" novalidate>
+          {% csrf_token %}
+          {% include "_form_errors.html" with form=judge_form %}
+          {% include "_field.html" with field=judge_form.email cmd="judge add --email" %}
+          {% if judge_form.tracks.field.queryset %}
+          <div class="field{% if judge_form.tracks.errors %} field--invalid{% endif %}" role="group" aria-labelledby="judge-tracks-label">
+            <p class="field__label" id="judge-tracks-label"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">--tracks</span></p>
+            {% for option in judge_form.tracks %}<label class="check" for="{{ option.id_for_label }}">{{ option.tag }} {{ option.choice_label }}</label>{% endfor %}
+            <p class="field__help">{{ judge_form.tracks.help_text }}</p>
+            {% for error in judge_form.tracks.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
+          </div>
+          {% endif %}
+          <div class="actions">
+            <button class="btn" type="submit">add judge</button>
+            <button class="btn btn--ghost" type="submit" formaction="{% url 'organizer:judge_invite_create' event.slug %}">invite by link</button>
+            <span class="faint">add judge: the email of an existing account. invite by link: a one-time link, valid 7 days, that also lets them create an account; leave the email empty for an open link that anyone you send it to can use once.</span>
+          </div>
+        </form>
+      </div>
+      {% if judge_invites %}
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>invite link for</th><th>tracks</th><th>status</th><th>by</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
+          <tbody>
+          {% for inv, state in judge_invites %}
+            <tr>
+              <td>{% if inv.email %}{{ inv.email }}{% else %}<span class="dim">open link</span>{% if inv.accepted_by %} <span class="faint">&middot; used by {{ inv.accepted_by.email }}</span>{% endif %}{% endif %}</td>
+              <td class="dim">{% for t in inv.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td>
+              <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span> <span class="faint">{{ inv.accepted_at|utc }}</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
+              <td class="dim">{{ inv.created_by.name|default:"--" }}</td>
+              <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  {# --- submission deadline and extensions #}
+  <div class="tabs__panel stack" id="tab-deadlines" data-tab-panel>
+    <section class="frame" id="deadline">
+      <header class="frame__bar">
+        <h2 class="frame__title">deadline</h2>
+        <span class="frame__meta">{% include "_countdown.html" with closes=window.closes_at now=window.now %}</span>
+      </header>
+      <div class="frame__body stack">
+        <table class="kv">
+          <tr><th scope="row">submissions close</th><td>{{ event.submissions_close_at|utc }}</td></tr>
+          {% if event.original_submissions_close_at %}<tr><th scope="row">originally</th><td class="dim">{{ event.original_submissions_close_at|utc }}</td></tr>{% endif %}
+          <tr><th scope="row">enforced by</th><td class="dim">the server and the database, on the database clock</td></tr>
+        </table>
+        {% if not judging_window.not_started %}
+        {% if extend_form.errors or extension_form.errors %}<ul class="msgs" role="alert">{% for e in extend_form.new_close.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}{% for e in extension_form.until.errors %}<li class="msg msg--error">{{ e }}</li>{% endfor %}</ul>{% endif %}
+        <p class="faint">judging has started, so the submission deadline is final and no team can get more time. to give judges more time, <a href="#judging">extend judging</a>.</p>
+        {% else %}
+        <div class="grid-2">
+          <form class="form" method="post" action="{% url 'organizer:deadline_extend' event.slug %}" novalidate>
+            {% csrf_token %}
+            <p class="section-title">extend for everyone</p>
+            {% include "_form_errors.html" with form=extend_form %}
+            {% include "_field.html" with field=extend_form.new_close cmd="deadline --extend-to" %}
+            {% include "_field.html" with field=extend_form.reason cmd="--reason" %}
+            <div class="actions"><button class="btn btn--small" type="submit">extend deadline</button></div>
+          </form>
+          <form class="form" method="post" action="{% url 'organizer:extension_grant' event.slug %}" novalidate>
+            {% csrf_token %}
+            <p class="section-title">extend for one team</p>
+            {% include "_form_errors.html" with form=extension_form %}
+            {% include "_field.html" with field=extension_form.team cmd="--team" %}
+            {% include "_field.html" with field=extension_form.until cmd="--until" %}
+            {% include "_field.html" with field=extension_form.reason cmd="--reason" %}
+            <div class="actions"><button class="btn btn--small" type="submit">grant extension</button></div>
+          </form>
+        </div>
+        <p class="faint">an extension for one team must end after the close and before judging starts ({{ event.judging_starts_at|utc }}). extending for everyone past that moves judging and the results date later by the same amount.</p>
+        {% endif %}
+      </div>
+      {% if extensions %}
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>team</th><th>until</th><th>reason</th><th>granted by</th><th class="num"><span class="visually-hidden">action</span></th></tr></thead>
+          <tbody>
+          {% for x in extensions %}
+            <tr>
+              <td>{{ x.team.name }}</td><td>{{ x.until|utc }}{% if x.until <= window.now %} <span class="badge">ended</span>{% endif %}</td><td class="dim">{{ x.reason }}</td><td class="dim">{{ x.granted_by.name|default:"--" }}</td>
+              <td class="num">{% if x.until > window.now %}<form class="inline-form" method="post" action="{% url 'organizer:extension_revoke' event.slug x.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  {# --- organizers, teams, possible duplicates #}
+  <div class="tabs__panel stack" id="tab-people" data-tab-panel>
     <section class="frame" id="organizers">
       <header class="frame__bar"><h2 class="frame__title">organizers</h2><span class="frame__meta">can edit this event</span></header>
       <div class="frame__body frame__body--flush table-wrap">
@@ -313,7 +417,6 @@
       {% endif %}
     </section>
 
-    {# --- teams & projects ------------------------------------------------ #}
     <section class="frame" id="teams">
       <header class="frame__bar"><h2 class="frame__title">teams</h2><span class="frame__meta">{{ teams|length }}</span></header>
       <div class="frame__body frame__body--flush table-wrap">
@@ -331,128 +434,62 @@
         </table>
       </div>
     </section>
+
+    {% if duplicates or import_duplicates %}
+    <section class="frame" id="duplicates">
+      <header class="frame__bar"><h2 class="frame__title">possible duplicates</h2><span class="frame__meta">review by hand</span></header>
+      <div class="frame__body stack">
+        {% for g in duplicates %}
+          <div>
+            <p class="section-title">same {{ g.field }}: <span class="bright">{{ g.value }}</span></p>
+            <ul class="checklist">{% for p in g.projects %}<li class="done">{{ p.name }} <span class="faint">· team {{ p.team.name }} · {{ p.status }}{% if p.submitted_at %} · {{ p.submitted_at|date:"Y-m-d H:i" }} UTC{% endif %}</span></li>{% endfor %}</ul>
+          </div>
+        {% endfor %}
+        {% for ref in import_duplicates %}
+          <p class="dim">[ import ] {{ ref.note }}</p>
+        {% endfor %}
+        <p class="faint">nothing here is removed automatically: two teams can fork the same starter repo. hide or disqualify by hand once judging exists.</p>
+      </div>
+    </section>
+    {% endif %}
   </div>
 
-
-  {# --- rubric ------------------------------------------------------------ #}
-  <section class="frame" id="rubric">
-    <header class="frame__bar">
-      <h2 class="frame__title">rubric</h2>
-      <span class="frame__meta">{% if rubric_locked %}<span class="badge badge--warn">locked</span>{% else %}editable until submissions close{% endif %}</span>
-    </header>
-    <div class="frame__body stack">
-      {% if criteria %}
-      <table class="kv">
-        {% for c in criteria %}<tr><th scope="row">{{ c.label }}</th><td><span class="bright">{{ c.share }}%</span> <span class="faint">(weight {{ c.weight|floatformat:"-3" }})</span> <span class="faint">&middot; scored {{ c.min_value }}&ndash;{{ c.max_value }}</span></td></tr>{% endfor %}
-      </table>
-      {% else %}
-      <p class="faint">no rubric yet. judges need one before they can score.</p>
-      {% endif %}
-      <div class="actions"><a class="btn btn--small" href="{% url 'organizer:rubric' event.slug %}">{% if rubric_locked %}view rubric{% elif criteria %}edit rubric{% else %}set up the rubric{% endif %}</a></div>
-    </div>
-  </section>
-
-  {# --- judges ------------------------------------------------------------ #}
-  <section class="frame" id="judges">
-    <header class="frame__bar"><h2 class="frame__title">judges</h2><span class="frame__meta">{{ judges|length }} &middot; a judge here cannot compete here</span></header>
-    <div class="frame__body frame__body--flush table-wrap">
-      <table class="table">
-        <thead><tr><th>judge</th><th>tracks</th><th class="num"></th></tr></thead>
-        <tbody>
-        {% for j in judges %}
-          <tr>
-            <td>{{ j.user.name }}<br><span class="faint">{{ j.user.email }}</span></td>
-            <td class="dim">{% for jt in j.judge_tracks.all %}{{ jt.track.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="faint">every track</span>{% endfor %}</td>
-            <td class="num">
-              <form class="inline-form" method="post" action="{% url 'organizer:judge_remove' event.slug j.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">remove</button></form>
-            </td>
-          </tr>
-        {% empty %}<tr><td colspan="3" class="faint">no judges yet.</td></tr>{% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div class="frame__body">
-      <form class="form" method="post" action="{% url 'organizer:judge_add' event.slug %}" novalidate>
-        {% csrf_token %}
-        {% include "_form_errors.html" with form=judge_form %}
-        {% include "_field.html" with field=judge_form.email cmd="judge add --email" %}
-        {% if judge_form.tracks.field.queryset %}
-        <div class="field{% if judge_form.tracks.errors %} field--invalid{% endif %}" role="group" aria-labelledby="judge-tracks-label">
-          <p class="field__label" id="judge-tracks-label"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">--tracks</span></p>
-          {% for option in judge_form.tracks %}<label class="check" for="{{ option.id_for_label }}">{{ option.tag }} {{ option.choice_label }}</label>{% endfor %}
-          <p class="field__help">{{ judge_form.tracks.help_text }}</p>
-          {% for error in judge_form.tracks.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
-        </div>
-        {% endif %}
+  {# --- export and share #}
+  <div class="tabs__panel stack" id="tab-export" data-tab-panel>
+    <section class="frame" id="export">
+      <header class="frame__bar"><h2 class="frame__title">export</h2><span class="frame__meta">csv, unlocked stage by stage</span></header>
+      <div class="frame__body stack">
         <div class="actions">
-          <button class="btn" type="submit">add judge</button>
-          <button class="btn btn--ghost" type="submit" formaction="{% url 'organizer:judge_invite_create' event.slug %}">invite by link</button>
-          <span class="faint">add judge: the email of an existing account. invite by link: a one-time link, valid 7 days, that also lets them create an account; leave the email empty for an open link that anyone you send it to can use once.</span>
+          <a class="btn" href="{% url 'api_export_zip' %}?event={{ event.slug }}">download all open sheets (.zip)</a>
+          <span class="faint">one csv per sheet whose stage has started, all read at the same instant, plus a readme. each stage's sheets unlock when it starts. only submitted reviews are included, never drafts.</span>
         </div>
-      </form>
-    </div>
-    {% if judge_invites %}
-    <div class="frame__body frame__body--flush table-wrap">
-      <table class="table">
-        <thead><tr><th>invite link for</th><th>tracks</th><th>status</th><th>by</th><th class="num"><span class="visually-hidden">actions</span></th></tr></thead>
-        <tbody>
-        {% for inv, state in judge_invites %}
-          <tr>
-            <td>{% if inv.email %}{{ inv.email }}{% else %}<span class="dim">open link</span>{% if inv.accepted_by %} <span class="faint">&middot; used by {{ inv.accepted_by.email }}</span>{% endif %}{% endif %}</td>
-            <td class="dim">{% for t in inv.tracks.all %}{{ t.name }}{% if not forloop.last %}, {% endif %}{% empty %}every track{% endfor %}</td>
-            <td>{% if state == "open" %}<span class="badge badge--on">pending</span> <span class="faint">until {{ inv.expires_at|utc }}</span>{% elif state == "accepted" %}<span class="badge">accepted</span> <span class="faint">{{ inv.accepted_at|utc }}</span>{% else %}<span class="badge">{{ state }}</span>{% endif %}</td>
-            <td class="dim">{{ inv.created_by.name|default:"--" }}</td>
-            <td class="num">{% if state == "open" %}<form class="inline-form" method="post" action="{% url 'organizer:judge_invite_revoke' event.slug inv.pk %}">{% csrf_token %}<button class="btn btn--small btn--ghost btn--danger" type="submit">revoke</button></form>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-  </section>
-
-  {% if duplicates or import_duplicates %}
-  <section class="frame" id="duplicates">
-    <header class="frame__bar"><h2 class="frame__title">possible duplicates</h2><span class="frame__meta">review by hand</span></header>
-    <div class="frame__body stack">
-      {% for g in duplicates %}
-        <div>
-          <p class="section-title">same {{ g.field }}: <span class="bright">{{ g.value }}</span></p>
-          <ul class="checklist">{% for p in g.projects %}<li class="done">{{ p.name }} <span class="faint">· team {{ p.team.name }} · {{ p.status }}{% if p.submitted_at %} · {{ p.submitted_at|date:"Y-m-d H:i" }} UTC{% endif %}</span></li>{% endfor %}</ul>
-        </div>
-      {% endfor %}
-      {% for ref in import_duplicates %}
-        <p class="dim">[ import ] {{ ref.note }}</p>
-      {% endfor %}
-      <p class="faint">nothing here is removed automatically: two teams can fork the same starter repo. hide or disqualify by hand once judging exists.</p>
-    </div>
-  </section>
-  {% endif %}
-
-  {# --- export ------------------------------------------------------------ #}
-  <section class="frame" id="export">
-    <header class="frame__bar"><h2 class="frame__title">export</h2><span class="frame__meta">csv, unlocked stage by stage</span></header>
-    <div class="frame__body stack">
-      <div class="actions">
-        <a class="btn" href="{% url 'api_export_zip' %}?event={{ event.slug }}">download all open sheets (.zip)</a>
-        <span class="faint">one csv per sheet whose stage has started, all read at the same instant, plus a readme. each stage's sheets unlock when it starts. only submitted reviews are included, never drafts.</span>
       </div>
-    </div>
-    <div class="frame__body frame__body--flush table-wrap">
-      <table class="table">
-        <thead><tr><th>stage</th><th>sheet</th><th>what it holds</th><th class="num"><span class="visually-hidden">download</span></th></tr></thead>
-        <tbody>
-        {% for s, is_open, opens in export_sheets %}
-          <tr>
-            <td class="dim">{{ s.stage }}</td>
-            <td{% if not is_open %} class="faint"{% endif %}>{{ s.name }}</td>
-            <td class="dim">{{ s.about }}</td>
-            <td class="num">{% if is_open %}<a class="btn btn--small btn--ghost" href="{% url 'api_export_csv' %}?event={{ event.slug }}&amp;sheet={{ s.name }}">csv</a>{% else %}<span class="faint">opens {{ opens|utc }}</span>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+      <div class="frame__body frame__body--flush table-wrap">
+        <table class="table">
+          <thead><tr><th>stage</th><th>sheet</th><th>what it holds</th><th class="num"><span class="visually-hidden">download</span></th></tr></thead>
+          <tbody>
+          {% for s, is_open, opens in export_sheets %}
+            <tr>
+              <td class="dim">{{ s.stage }}</td>
+              <td{% if not is_open %} class="faint"{% endif %}>{{ s.name }}</td>
+              <td class="dim">{{ s.about }}</td>
+              <td class="num">{% if is_open %}<a class="btn btn--small btn--ghost" href="{% url 'api_export_csv' %}?event={{ event.slug }}&amp;sheet={{ s.name }}">csv</a>{% else %}<span class="faint">opens {{ opens|utc }}</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="frame" id="share">
+      <header class="frame__bar"><h2 class="frame__title">share &amp; move</h2></header>
+      <div class="frame__body stack">
+        <p class="section-title">embed the gallery on another site</p>
+        <p class="faint">paste this into any web page to show this event's projects (published events only; what an anonymous visitor sees on /projects, no votes, results or comments). options: track=&lt;id&gt;, tag=&lt;name&gt;, sort=newest|oldest|name, limit=1-24, theme=dark|light. the script sizes the frame to its content; without it the frame stays 600px tall.</p>
+        <div class="secret"><pre class="certificate__raw" id="embed-snippet">{{ embed_snippet }}</pre><button class="btn btn--small" type="button" data-copy="#embed-snippet" hidden>copy</button></div>
+        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:event_bundle' event.slug %}">download event bundle</a><span class="faint">the whole event as one zip, to move it to another install. no passwords, tokens, invite links, voting secrets or ip hashes; voters are pseudonymised.</span></p>
+      </div>
+    </section>
+  </div>
 </div>
 {% endblock %}

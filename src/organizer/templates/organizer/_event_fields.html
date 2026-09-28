@@ -1,19 +1,32 @@
-<div class="grid-2">
-  {% include "_field.html" with field=form.name cmd="event --name" %}
-  {% include "_field.html" with field=form.slug cmd="event --url-name" %}
-</div>
-{% include "_field.html" with field=form.tagline cmd="event --tagline" %}
-{% include "_field.html" with field=form.description cmd="event --description" %}
-<p class="field__help">dates, all UTC, each strictly after the one before: event starts &lt; submissions open &lt; submissions close &lt; judging starts &lt; judging ends &lt; results</p>
-<div class="grid-3">
-  {% include "_field.html" with field=form.starts_at cmd="--event-starts" short=1 %}
-  {% include "_field.html" with field=form.submissions_open_at cmd="--submissions-open" short=1 %}
-  {% include "_field.html" with field=form.submissions_close_at cmd="--submissions-close" short=1 %}
-  {% include "_field.html" with field=form.judging_starts_at cmd="--judging-starts" short=1 %}
-  {% include "_field.html" with field=form.judging_ends_at cmd="--judging-ends" short=1 %}
-  {% include "_field.html" with field=form.results_at cmd="--results" short=1 %}
-</div>
-<div class="grid-4">
-  {% include "_field.html" with field=form.min_team_size cmd="--min-team" short=1 %}
-  {% include "_field.html" with field=form.max_team_size cmd="--max-team" short=1 %}
-</div>
+{% comment %}
+  The event's own fields, in three groups. With tabbed=1 (the new-event page) each group is a tab
+  panel (app.js; without JavaScript they are shown one after another, as here).
+{% endcomment %}
+<fieldset class="fieldset" id="event-basics"{% if tabbed %} data-tab-panel{% endif %}>
+  <legend class="section-title">basics</legend>
+  <div class="grid-2">
+    {% include "_field.html" with field=form.name cmd="event --name" %}
+    {% include "_field.html" with field=form.slug cmd="event --url-name" %}
+  </div>
+  {% include "_field.html" with field=form.tagline cmd="event --tagline" %}
+  {% include "_field.html" with field=form.description cmd="event --description" %}
+</fieldset>
+<fieldset class="fieldset" id="event-timeline"{% if tabbed %} data-tab-panel{% endif %}>
+  <legend class="section-title">timeline <span class="faint">(UTC)</span></legend>
+  <p class="field__help">each date strictly after the one before: event starts &lt; submissions open &lt; submissions close &lt; judging starts &lt; judging ends &lt; results</p>
+  <div class="grid-3">
+    {% include "_field.html" with field=form.starts_at cmd="--event-starts" short=1 %}
+    {% include "_field.html" with field=form.submissions_open_at cmd="--submissions-open" short=1 %}
+    {% include "_field.html" with field=form.submissions_close_at cmd="--submissions-close" short=1 %}
+    {% include "_field.html" with field=form.judging_starts_at cmd="--judging-starts" short=1 %}
+    {% include "_field.html" with field=form.judging_ends_at cmd="--judging-ends" short=1 %}
+    {% include "_field.html" with field=form.results_at cmd="--results" short=1 %}
+  </div>
+</fieldset>
+<fieldset class="fieldset" id="event-teams"{% if tabbed %} data-tab-panel{% endif %}>
+  <legend class="section-title">teams</legend>
+  <div class="grid-4">
+    {% include "_field.html" with field=form.min_team_size cmd="--min-team" short=1 %}
+    {% include "_field.html" with field=form.max_team_size cmd="--max-team" short=1 %}
+  </div>
+</fieldset>
