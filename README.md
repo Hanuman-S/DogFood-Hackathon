@@ -271,8 +271,8 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 - **Comments on projects** (part of the T3 brief) are not built.
 - **T3 is not claimed** in `.dogfood.toml`. The organizers' checker has no T3 checks, so a claimed
   T3 would print "claimed but not verified"; `t3-report.txt` (from `scripts/t3-check.sh`) is the
-  evidence instead. What voting does not stop is listed in JUDGING.md, under "Community voting (T3)", in the
-  paragraph "What this does not stop".
+  evidence instead. What voting does not stop is listed in JUDGING.md, under "Community voting
+  (T3)", in the paragraph "What this does not stop".
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.
