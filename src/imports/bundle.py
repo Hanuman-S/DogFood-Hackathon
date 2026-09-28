@@ -134,6 +134,7 @@ SECTIONS = [
     Section("tally_snapshots", "voting.VoteTallySnapshot", "event", exclude=("imported_from",)),
     Section("result_snapshots", "scoring.ResultSnapshot", "event", exclude=("imported_from",)),
     Section("publications", "scoring.Publication", "event"),
+    Section("issued_records", "records.IssuedRecord", "event"),
 ]
 BY_MODEL = {s.model: s for s in SECTIONS}
 
@@ -250,6 +251,8 @@ def _serialise(export, section, obj):
     for m2m in model._meta.many_to_many:
         if m2m.name == "tags":
             row["tags"] = sorted(obj.tags.values_list("name", flat=True))
+    if section.name == "issued_records":
+        row["record_id"] = str(obj.pk)  # signed into the payload: a record keeps its id wherever it goes
     return row
 
 
@@ -338,12 +341,28 @@ def build(event):
 
     # Users referenced so far (never by a ballot: its voter is a pseudonym). Audit rows may add more.
     body["fixture_refs"] = _fixture_refs(export, event)
+    body["signing_keys"] = _signing_keys(event)
     body["audit"] = _audit_rows(export, event)
     from accounts.models import User
     people = {u.pk: u for u in User.objects.filter(pk__in=list(export.users))}
     body["users"] = [{"id": bundle_id, "email": people[pk].email, "name": people[pk].name}
                      for pk, bundle_id in sorted(export.users.items(), key=lambda kv: int(kv[1].split("#")[1]))]
     return body, export
+
+
+def _signing_keys(event):
+    """The PUBLIC halves of the keys the event's records were signed with (this install's own, and any
+    other install's the records came with), so the records can be verified wherever the bundle goes.
+    Never a private key: those are files in the secrets volume, never read here."""
+    from records.models import ForeignSigningKey, IssuedRecord, SigningKey
+
+    kids = set(IssuedRecord.objects.filter(event=event).values_list("kid", flat=True))
+    rows = list(SigningKey.objects.filter(kid__in=kids)) + list(
+        ForeignSigningKey.objects.filter(kid__in=kids).exclude(kid__in=[k.kid for k in SigningKey.objects.all()]))
+    return sorted(({"kid": k.kid, "alg": k.alg, "public_key": k.public_key,
+                    "created_at": k.created_at.isoformat() if k.created_at else "",
+                    "retired_at": k.retired_at.isoformat() if k.retired_at else ""} for k in rows),
+                  key=lambda k: k["kid"])
 
 
 def _fixture_refs(export, event):

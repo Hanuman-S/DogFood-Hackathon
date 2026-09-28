@@ -120,6 +120,11 @@ TABLE = {
     },
     ("scoring.Criterion", "level_descriptions"): {"{key}": ("external_key", None, str)},  # levels "1".."5"
     ("scoring.EventScoringConfig", "overrides"): {},
+    # a signed payload: its record_id is the record's own uuid, kept as it is (it is signed)
+    ("records.IssuedRecord", "payload"): {
+        "record_id": ("external", None, str),
+        "project": ("external", None, str),  # the project's name, signed text: never an id
+    },
 }
 
 # Paths under "results.{method}" match any method name; everything else matches literally.

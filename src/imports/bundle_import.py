@@ -125,6 +125,7 @@ class _Writer:
                      sha256=self.checked.sha256, source_event=self.source_slug,
                      source_published=bool(source["is_published"]), rows=counts,
                      users_created=self.created_users, placeholder_accounts=self.placeholders,
+                     records=self.records,
                      cv_seed_pinned=self.cv_seed_pinned)
         return self.event
 
@@ -174,7 +175,43 @@ class _Writer:
 
     # --- rows ---
 
+    def _records(self, section):
+        """Signed records and the public keys they need: for a platform admin's import only (anyone else's
+        import skips both, counted). A key that is this install's own stays only in the own list; any other
+        becomes a ForeignSigningKey (published apart, never used to sign). A record whose id already
+        exists here (the same bundle imported again) is skipped: a record is one statement, wherever it
+        is shown."""
+        from records.models import ForeignSigningKey, IssuedRecord, SigningKey
+
+        rows = self.body[section.name]
+        self.pk[section.name] = {}
+        self.records = {"imported": 0, "skipped_existing": 0, "skipped_not_admin": 0, "keys_imported": 0}
+        if self.placeholders:
+            self.records["skipped_not_admin"] = len(rows)
+            return
+        own = set(SigningKey.objects.values_list("kid", flat=True))
+        for key in self.body["signing_keys"]:
+            if key["kid"] in own or ForeignSigningKey.objects.filter(kid=key["kid"]).exists():
+                continue
+            ForeignSigningKey.objects.create(
+                kid=key["kid"], alg=key["alg"], public_key=key["public_key"],
+                created_at=_datetime(key["created_at"]), retired_at=_datetime(key["retired_at"]),
+                imported_from=self.checked.sha256)
+            self.records["keys_imported"] += 1
+        model = model_of(section)
+        for row in rows:
+            if IssuedRecord.objects.filter(pk=row["record_id"]).exists():
+                self.records["skipped_existing"] += 1
+                continue
+            obj = model(**self._values(section, row))
+            obj.id = row["record_id"]
+            obj.is_foreign = row["kid"] not in own
+            obj.save(force_insert=True)
+            self.records["imported"] += 1
+
     def _section(self, section):
+        if section.name == "issued_records":
+            return self._records(section)
         rows = self.body[section.name]
         rows = ([rows] if rows is not None else []) if section.one else rows
         model = model_of(section)

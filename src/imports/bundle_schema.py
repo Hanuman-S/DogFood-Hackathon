@@ -25,8 +25,10 @@ from .bundle import FORMAT, SECTIONS, VERSION, model_of
 MEDIA_PATH = re.compile(r"media/[0-9a-f]{64}\.(jpg|png|webp)")
 BUNDLE_ID = re.compile(r"([a-z_]+)#([1-9][0-9]*)")
 PSEUDONYM = re.compile(r"v_[0-9a-f]{16}")
-EXTRA_KEYS = {"projects": {"tags"}, "ballots": {"voter"}}
-TOP_LEVEL = {"format", "version", "users", "fixture_refs", "audit", *(s.name for s in SECTIONS)}
+EXTRA_KEYS = {"projects": {"tags"}, "ballots": {"voter"}, "issued_records": {"record_id"}}
+TOP_LEVEL = {"format", "version", "users", "fixture_refs", "audit", "signing_keys", *(s.name for s in SECTIONS)}
+KID = re.compile(r"[0-9a-f]{16}")
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 class SchemaError(Exception):
@@ -85,6 +87,7 @@ class Checker:
                     self._row(section, row)
         self._fixture_refs()
         self._audit()
+        self._records()
         unreferenced = self.media_paths - self.referenced_media
         if unreferenced:
             _fail("media", f"{len(unreferenced)} file(s) no row refers to, e.g. {sorted(unreferenced)[0]}")
@@ -209,7 +212,7 @@ class Checker:
                 _fail(where, "must not be empty")
         else:
             _fail(where, f"has a column type the import does not know ({type(f).__name__})")
-        if f.choices and value not in {c[0] for c in f.flatchoices}:
+        if f.choices and value not in {c[0] for c in f.flatchoices} and not (value == "" and f.blank):
             _fail(where, f"{value!r} is not one of the allowed values")
 
     def _json(self, where, section, f, value):
@@ -267,6 +270,58 @@ class Checker:
             if not isinstance(row["detail"], dict):
                 _fail(f"{where}.detail", "must be an object")
             self._datetime(f"{where}.created_at", row["created_at"])
+
+    def _records(self):
+        """The public keys, and every record verified against them: a bundle whose record does not
+        verify (tampered, or signed by a key it does not carry) is refused, not imported as "invalid"."""
+        import base64
+        import hashlib
+
+        from records import keys as signing
+        from records.canonical import CanonicalError, canonical
+
+        keys = self.body["signing_keys"]
+        if not isinstance(keys, list):
+            _fail("signing_keys", "is not a list")
+        public = {}
+        for n, key in enumerate(keys, start=1):
+            where = f"signing_keys[{n}]"
+            if not isinstance(key, dict) or set(key) != {"kid", "alg", "public_key", "created_at", "retired_at"}:
+                _fail(where, "keys should be kid, alg, public_key, created_at, retired_at")
+            if key["alg"] != "Ed25519" or not isinstance(key["kid"], str) or not KID.fullmatch(key["kid"]):
+                _fail(where, "not an Ed25519 key with a 16-hex kid")
+            try:
+                raw = base64.b64decode(key["public_key"], validate=True)
+            except (ValueError, TypeError):
+                raw = b""
+            if len(raw) != 32 or hashlib.sha256(raw).hexdigest()[:16] != key["kid"]:
+                _fail(where, "the public key is not 32 bytes, or its kid is not sha256(key)[:16]")
+            for stamp in ("created_at", "retired_at"):
+                if key[stamp]:
+                    self._datetime(f"{where}.{stamp}", key[stamp])
+            if key["kid"] in public:
+                _fail(where, f"kid {key['kid']} appears twice")
+            public[key["kid"]] = key["public_key"]
+        seen = set()
+        for row in self.body["issued_records"]:
+            where = row["id"]
+            record_id = row["record_id"]
+            if not isinstance(record_id, str) or not UUID.fullmatch(record_id) or record_id in seen:
+                _fail(f"{where}.record_id", "is not a (unique, lower-case) uuid")
+            seen.add(record_id)
+            payload = row["payload"]
+            try:
+                text = canonical(payload)
+            except CanonicalError as error:
+                _fail(f"{where}.payload", str(error))
+            if row["payload_text"].encode("utf-8") != text:
+                _fail(f"{where}.payload_text", "is not the canonical form of the payload")
+            if not isinstance(payload, dict) or payload.get("record_id") != record_id or payload.get("kid") != row["kid"]:
+                _fail(where, "the payload's record_id or kid differs from the record's")
+            if row["kid"] not in public:
+                _fail(where, f"signed by {row['kid']}, which the bundle does not carry")
+            if not signing.verify(public[row["kid"]], text, row["signature"]):
+                _fail(where, "the signature does not verify")
 
     def _datetime(self, where, value):
         try:

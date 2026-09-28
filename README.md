@@ -279,6 +279,21 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
   turn comments off per event. Rate limits apply per account and per network, and an identical
   comment on the same project within 10 minutes is refused. Every action is on the voting
   integrity page's audit trail. JSON API: `/api/projects/<id>/comments`.
+- **Signed records**: organizers issue Ed25519-signed certificates to judges (after judging closes,
+  with their review count, never a score), participants and winners (from the published final
+  only). Each has a printable page at `/records/<id>` that shows whether it verifies. Anyone can
+  check one at `/verify`, or offline with nothing but Python:
+  `python3 scripts/verify_record.py record.json keys.json --revoked revoked.json`. The keys are
+  published at `/.well-known/dogfood-signing-keys.json`, and revoked records at
+  `/.well-known/dogfood-revoked.json` (by the sha256 of their id). Judges and participants find
+  their own records in their portal.
+  - **What a signature proves, and what it doesn't:** a valid signature proves this install's key
+    signed exactly those bytes. It doesn't prove the record still stands: a record can be revoked
+    afterwards, so check the revoked list too.
+  - **Back up the `secrets` volume.** It holds the signing keys, next to SECRET_KEY. Losing it
+    means this install can't sign again under the old key. Records already issued keep verifying,
+    because their public keys stay published. Run `manage.py rotate_signing_key` to sign new ones
+    with a new key.
 - **Event bundles**: an organizer downloads a whole event as one zip ("download event bundle" on the
   event page, `GET /api/events/<slug>/bundle`, `manage.py export_event`). It carries no passwords,
   tokens, invite links, voting secrets or IP hashes, and voters are pseudonymised. A platform admin

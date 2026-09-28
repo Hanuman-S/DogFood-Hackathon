@@ -431,6 +431,7 @@ accounts are `"users#<n>"`.
 | `publications` | Publication | |
 | `fixture_refs` | imports.FixtureRef | only `project` and `score` refs of this event's rows, selected by (kind, object_id); `object` is the row's bundle id |
 | `audit` | core.AuditLog | rows with `subject` = the slug or `detail.event` = the slug; see below |
+| `issued_records` | records.IssuedRecord | signed records, with `record_id` (the uuid, which is signed into the payload and kept wherever the record goes), the payload, its exact text and the signature. Every one is verified against `signing_keys` before an import writes anything |
 | `users` | accounts.User | `{id, email, name}` of every account the rows above reference, **except accounts that appear only as voters** |
 
 **Never in a bundle:**
@@ -443,9 +444,21 @@ accounts are `"users#<n>"`.
 - the vote's ballot secret and open-link nonce;
 - any IP hash;
 - audit user agents;
-- SECRET_KEY and every key derived from it.
+- SECRET_KEY and every key derived from it;
+- any signing **private** key. `signing_keys` (top level) carries only the public halves of the keys
+  the event's records were signed with: `{kid, alg, public_key, created_at, retired_at}`.
 
 `tests/test_bundle_export.py` greps the bundle's bytes for each of them.
+`tests/test_records_offline_and_bundle.py` greps for every form of the private keys (the PEM, the raw
+bytes as bytes, hex and base64).
+
+**Records on import** come in for a platform admin's import only. An event creator's import skips
+them and their keys, counted in `event_imported`.
+- A key that is this install's own stays in its own list.
+- Any other key becomes a `ForeignSigningKey`. It is published separately and never used to sign,
+  and its records show "signed by another install".
+- A record whose id already exists here, because the same bundle was imported again, is skipped and
+  counted.
 
 **Voter pseudonyms.** Each ballot's voter is `"v_" + HMAC-SHA256(salt, identity)[:16]`.
 - The salt is 32 random bytes made for this one export and then discarded.
