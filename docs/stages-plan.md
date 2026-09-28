@@ -177,6 +177,35 @@ Rows carry bundle ids `"<kind>:<n>"`, in a deterministic order (`created_at`, th
 - Permissions: a judge, a participant and another event's organizer each get 404.
 - The size cap refusal.
 
+### Phase 4 amendments (from the Phase 0 findings, agreed at the Phase 1 go)
+**Finding 1: `FixtureRef` in the bundle.** `build_input` (`scoring/services.py:670-690`) reads `FixtureRef` to rebuild folded duplicates (the `dup:<fixture id>` engine ids and the moved reviews).
+- `FixtureRef` has **no FK** to the kept project. It has `source`, `kind`, `external_id`, `object_id` (a BigInteger), `duplicate_of` and `note`, with `fixture_ref_unique = (source, kind, external_id)` and `source` max_length 60. How an event records its refs is the **proposal in Phase 6**, pending approval.
+- The export carries **only the refs whose objects belong to the event**: project refs whose `object_id` is one of the event's projects, and score refs whose `object_id` is one of its scores. `object_id` becomes the bundle id of that row.
+- Re-exporting an imported event carries its refs again. The round-trip test asserts this.
+
+**`bundle_ids` path kinds.** Every path in the table declares one kind:
+- `plain`: the value is one DB id, remapped.
+- `composite`: `"<judge>:<project>"` review ids. Both halves are remapped.
+- `external`: `dup:<fixture id>`. Kept verbatim, because it is a fixture id and not a DB id.
+
+Tests: one for each kind (a plain id remaps; a composite remaps both halves; an external id survives byte for byte), plus the unknown-key and digit-key failures above.
+
+**Finding 2: three-state "changed" flags.** Applies to both flags:
+- `ResultSnapshot.diagnostics.scores_changed_since_last_final` (`scoring/services.py:846`).
+- `VoteTallySnapshot.changed_since_previous` (`voting/services.py:619`). It becomes `BooleanField(null=True)`, altered in a voting migration of its own.
+
+Each flag is `true | false | unknown`:
+- `unknown` (null) when the previous final or tally is an imported row, because its `input_hash` was computed from the source install's ids.
+- The organizer results page and the diagnostics show "comparison unavailable: previous final was imported" (or "previous tally was imported").
+- A skipped comparison never reads as "no changes". Templates test `is None` explicitly.
+
+Imported snapshots and tallies are marked by a new `imported_from` field (the bundle sha, blank for local rows) on both models. Because both tables are immutable, it is set only at INSERT.
+
+Tests:
+- The flags compute true/false as today for local rows.
+- A new final or tally after an imported one gives `null`, never `False`, and the page shows the "comparison unavailable" text.
+- `test_final_score` and `test_scoring_services` keep passing, adjusted only where they assert on an imported previous.
+
 ## Phase 5 (C1b): import validation only (no write path)
 `imports/bundle_validate.py::validate_bundle(path, *, importer) -> ValidatedBundle`. Every failure is a `BundleError(400, code, reason)`, audited as `EVENT_IMPORT_REFUSED`, with nothing written.
 - The upload is at most `BUNDLE_MAX_BYTES` (100 MB), streamed to a temp file. The file must be a zip.
@@ -240,6 +269,21 @@ Then the imported results page must show the same projects, order, ranks and tie
 **Other tests:**
 - A same-install import gets a suffixed slug.
 - A non-admin import creates placeholders and attaches no existing account.
+
+### Phase 6 amendments (Finding 1, `FixtureRef`)
+**The per-import source is unique per import:** `bundle:<sha>:<new-slug>`, so importing the same bundle twice on one install cannot clash on `fixture_ref_unique`. `source` is max_length 60 and this string can reach 132 characters, so the Phase 6 migration widens `FixtureRef.source` to 160 characters. That is an ALTER only, with no row updates.
+
+**How an event records its refs. PROPOSAL, pending your approval before Phase 6 builds it. The Phase 4 export does not depend on it: it selects the refs by `object_id`.** `FixtureRef` has no FK, so:
+- **Proposed:** add a nullable `FixtureRef.event` FK (CASCADE) in two migrations. Updating rows and then ALTERing the same table in one migration is refused by Postgres, so they are split:
+  1. `AddField` (plus the `source` widening).
+  2. A `RunPython` backfill of the existing refs from their objects: project → `project.event`, score → `score.project.event`, team → `team.event`, track → `track.event`, event → the event itself, user and judge → left null.
+- The fixture importer and the bundle import both set `event`.
+- `build_input` and `display_labels` filter refs by `event=event` and ignore `source`. This fixes today's hidden assumption that only one fixture event exists.
+- Tests:
+  - the backfill, run against a database that has rows (per CLAUDE.md);
+  - `build_input` on an imported copy of the fixture event gives the same engine input as the source, up to the id remap (the same `dup:` ids and the same moved reviews);
+  - an import of the same bundle twice on one install succeeds with two distinct sources.
+
 
 ## Phase 7 (C2a): keys, SigningKey, rotation, canonical, IssuedRecord
 - Add `cryptography==<current release>` to requirements, pinned.

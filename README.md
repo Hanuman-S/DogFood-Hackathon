@@ -3,18 +3,20 @@
 A self-hosted hackathon submission and judging portal, built for DOGFOOD 2026. It runs
 entirely on a laptop with the network off: no cloud accounts, hosted database or auth provider.
 
-**Status: T1 complete.** All seven T1 modules are built:
-- authentication and sessions
-- the role model, with roles held **per event**
-- event creation
-- team formation by invite link
-- project submission with draft-and-edit
-- deadline enforcement
-- the public gallery with search and filters
+Demo video: [VIDEO_URL]
+
+**Status: T1 and T2 claimed and verified; T3 voting and results built, not claimed.**
+- **T1**, all seven modules: authentication and sessions, the role model with roles held **per
+  event**, event creation, team formation by invite link, project submission with
+  draft-and-edit, deadline enforcement, and the public gallery with search and filters.
+- **T2**: rubric, judge invites, assignment, reviews, the scoring engine (M2), results snapshots,
+  publishing, and the published results pages (`/events/<slug>/results`). See
+  [JUDGING.md](JUDGING.md).
+- **T3**: community voting with anti-abuse, and the final score combining judges and community.
+  The evidence is `t3-report.txt`; see "What it does not do yet" for why T3 is not claimed.
 
 `.dogfood.toml` claims **T1 and T2**, and `acceptance-report.txt` shows all seven checks passing
-(three T1, four T2: own scores, peer scores refused, participant refused, CSV export). Published
-results pages are not built yet. See [JUDGING.md](JUDGING.md).
+(three T1, four T2: own scores, peer scores refused, participant refused, CSV export).
 
 The portal follows the portal-v2 design (one app per audience, Violet CRT look, deadline trigger)
 with one deliberate change: **roles are held per event**, so the same person can judge one
@@ -65,8 +67,13 @@ The demo seed also creates two events:
   three tracks, prizes, two custom questions, and a team ("Demo Team", captained by the demo
   participant) with a draft project.
 - **Dogfood Archive 2026** (`/events/dogfood-archive-2026`) closed three days before first boot.
-  It has one submitted project from the demo participant's team, so you can see the read-only,
-  closed state. The acceptance checker's submit route points here.
+  It has five submitted projects (one from the demo participant's team), so you can see the
+  read-only, closed state. The acceptance checker's submit route points here. Its community vote
+  is **open** for the whole judging phase (quadratic, 16 credits, judges 80 / community 20), with
+  ten seeded ballots from seed-only accounts, including one deliberately suspicious cluster of
+  four that the voting integrity page flags. The demo participant can vote there.
+- **Sample Hack 2026** (the fixture event, above) gets a **closed** community vote in demo mode:
+  its window ran in March 2026, and it has no ballots.
 
 Reset everything with `docker compose down -v`.
 
@@ -264,7 +271,8 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
 - **Comments on projects** (part of the T3 brief) are not built.
 - **T3 is not claimed** in `.dogfood.toml`. The organizers' checker has no T3 checks, so a claimed
   T3 would print "claimed but not verified"; `t3-report.txt` (from `scripts/t3-check.sh`) is the
-  evidence instead. What voting does not stop is listed in JUDGING.md ("What this does not stop").
+  evidence instead. What voting does not stop is listed in JUDGING.md, under "Community voting (T3)", in the
+  paragraph "What this does not stop".
 - Password reset by email. The portal has no outbound mail yet. In the meantime, an operator
   can run `docker compose exec web python src/manage.py changepassword user@example.org`.
 - Two-factor authentication.
@@ -280,7 +288,9 @@ src/
   teams/           teams, members, invite links (models + rules)
   projects/        projects, images, tags, answers (models + rules), gallery query, JSON API, media
   imports/         fixture import (create-only, idempotent, duplicate-aware)
-  scoring/         rubric criteria, scores, score items (filled by the import; T2 reads them)
+  scoring/         rubric, reviews, assignment, the pure scoring engine (engine/), result
+                   snapshots, publications, the results read side (models + rules)
+  voting/          community vote: config, ballots, voter links, tallies, integrity (models + rules)
   public/          pages for visitors            /
   participant/     participant portal            /participant/
   judge/           judge portal                  /judge/
@@ -289,7 +299,11 @@ src/
   templates/       shared layout and components
   static/          violet CRT stylesheet, vendored fonts, small scripts
 tests/             pytest suite
-scripts/           test.sh, acceptance.sh, offline-check.sh
+scripts/           test.sh                  pytest in the web image against Postgres
+                   acceptance.sh            the organizers' checker -> acceptance-report.txt
+                   offline-check.sh         boot on a sealed network, run the checker inside it
+                   t3-check.sh, t3_check.py T3 probes (voting, results) -> t3-report.txt
+                   normalization_proof.py   regenerates JUDGING.md's Normalization Proof
 acceptance/        the organizers' checker and fixtures (read-only)
 ```
 
