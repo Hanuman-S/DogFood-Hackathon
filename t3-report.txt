@@ -21,5 +21,17 @@ T3  results page as a judge, public_winners: 200 ........................... PAS
 T3  results page as visitor, private: 404 .................................. PASS
 T3  results page as a judge, private: 404 .................................. PASS
 T3  unpublished again: 404 for visitors .................................... PASS
+T3  comments readable by a visitor: 200 .................................... PASS
+T3  comment by a visitor refused: 401 login_required ....................... PASS
+T3  comment posted by a participant: 201 ................................... PASS
+T3  same comment again: 409 duplicate_comment .............................. PASS
+T3  organizer hides the comment: 200 ....................................... PASS
+T3  hidden comment absent for a visitor .................................... PASS
+T3  hidden comment absent for a judge ...................................... PASS
+T3  hidden comment still listed for the organizer .......................... PASS
+T3  organizer restores it: visible again ................................... PASS
+T3  comment on a draft (even the team's own) refused: 404 no_project ....... PASS
+T3  a draft's comments: 404 for a visitor .................................. PASS
+T3  the author deletes it: 200, gone for visitors .......................... PASS
 
-19/19 T3 probes pass
+31/31 T3 probes pass
