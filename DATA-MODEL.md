@@ -159,6 +159,27 @@ triggers refuse. So an account named in a result cannot be deleted, and its emai
 removed from those rows. This is a deliberate audit trade-off: a result that could be rewritten,
 or lose the record of who produced it, would prove nothing. Deactivate such an account instead.
 
+**What can be deleted, and what is permanent.** Earlier docs said a project was "deletable only
+before submission". Nothing ever enforced that. These are the actual rules:
+- **The time trigger** (below) refuses any delete of a project, team or team member once the event
+  (or the team's extension) has closed. Before the close, the last member leaving deletes the team
+  and its draft project (`teams/services.py::leave_team`, which refuses if the project is submitted).
+- **The timeline freeze.** Once judging has started *and* the event has an assignment or a score,
+  `events/services.py::update_event` refuses to move `submissions_open_at`, `submissions_close_at`
+  or `judging_starts_at` (409, audited `event_change_refused`), and the settings form shows them
+  locked. So submissions cannot be reopened under the judges, which was the one way a scored project
+  could go back to draft and be deleted. An event with no assignments and no scores stays fixable.
+  `judging_ends_at` stays editable.
+- **The RESTRICT backstop.** `Score.project` and `Score.judge` are RESTRICT, and nothing cascades to
+  a Score. A project, a judge's membership or a user with any review (submitted or draft) cannot be
+  deleted through the ORM (`RestrictedError`). `leave_team` answers that as a team rule ("the project
+  has reviews"). `remove_judge` refuses a judge with a submitted review and deletes drafts
+  explicitly.
+- **Permanent events.** An event with reviews (Score RESTRICT), ballots (`Ballot.event` PROTECT) or,
+  from C2, issued records (`IssuedRecord.event` PROTECT) cannot be deleted through the ORM at all.
+  The delete raises and nothing is deleted. No page or command deletes events. An event without any
+  of these still cascades to its tracks, teams, projects, snapshots and the rest.
+
 Assignments are never deleted: withdrawing or declining one changes its status, so "who was asked
 to review what, and what became of it" stays answerable. A declined assignment still blocks the
 same pair, because declining means a conflict of interest. The assignment round keeps its random

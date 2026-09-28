@@ -63,7 +63,7 @@ If an answer changes a later phase (for example, a hash chain means imported aud
 ## Phase 2 (B1): comment model, errors, services, service tests
 **Model and migrations**
 - `projects.Comment`:
-  - `project` FK CASCADE, `author` FK PROTECT;
+  - `project` FK CASCADE, `author` FK PROTECT (correction, after 6a: the first draft said a project "can be deleted before submission only". Nothing enforced that. The actual rules are the time trigger, the timeline freeze once judging has started with judging work, and `Score.project`/`Score.judge` RESTRICT; see DATA-MODEL.md, "What can be deleted, and what is permanent");
   - `body` (CHECK `length ≤ 2000`), `created_at`;
   - `hidden_at`, `hidden_by` (PROTECT), `hide_reason` (CHECK: all three set or none), `deleted_at`;
   - index `(project, -created_at, -id)`.
@@ -348,6 +348,7 @@ The fixture importer and the bundle import both set `event`.
 - **`IssuedRecord`**:
   - Fields: `id` uuid, `kind`, `slot` (a string), `event` PROTECT, `subject_user` PROTECT, `payload` JSON, `payload_text` (the exact signed bytes), `signature` b64, `kid`, `foreign` bool, `issued_by`, `issued_at`, `revoked_at`, `revoked_by`, `revoke_reason`.
   - **The uniqueness discriminator is `slot`** (fix 7): `""` for judge and participant records; `"track:<track id or 'overall'>:place:<n>"` or `"peoples_choice"` for winners. A partial unique `(event, subject_user, kind, slot) WHERE revoked_at IS NULL`.
+- **`IssuedRecord.event` is PROTECT**, part of the same permanence rule as reviews and ballots: an event with issued records cannot be deleted (DATA-MODEL.md, "What can be deleted, and what is permanent").
 - **Trigger** (RunPython, Postgres only):
   - An UPDATE may change only the three revoke fields, and only from unset to set.
   - **Every DELETE is refused (fix 11).**
@@ -392,6 +393,7 @@ The fixture importer and the bundle import both set `event`.
 - Issue and revoke permissions: a judge, a participant and another event's organizer each get 404.
 - Timing refusals.
 - Reissue: the same fields are skipped and changed fields revoke and reissue. A dropped winner is revoked.
+- **Judging can reopen after judge records are issued:** `judging_ends_at` stays editable ("extend judging" after "end judging now"). The idempotent-reissue tests include **reopen → close → reissue**: a judge who submits another review in the reopened window gets a new record (the old one is revoked as "reissued"), and an unchanged judge is skipped.
 - An imported-key record is labelled "another install".
 
 ## Phase 9 (C2c): offline verifier and bundle additions

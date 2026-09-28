@@ -115,14 +115,17 @@ class Score(models.Model):
 
     # RESTRICT: a judge's reviews never disappear with their membership. events.services.remove_judge
     # refuses a judge with a submitted review and deletes drafts explicitly; this is the backstop for
-    # any other path (deleting the user, a raw ORM delete of the membership). RESTRICT rather than
-    # PROTECT so that deleting a whole event, which deletes the reviews through their projects in the
-    # same delete, still works (tests/test_scoring_services.py pins that cascade).
+    # any other path (deleting the user, a raw ORM delete of the membership). With `project` RESTRICT
+    # too, nothing cascades to a Score, so an event with reviews cannot be deleted at all
+    # (DATA-MODEL.md, "What can be deleted, and what is permanent").
     judge = models.ForeignKey(
         "events.EventMembership", on_delete=models.RESTRICT, related_name="scores"
     )
+    # RESTRICT, like `judge`: a reviewed project cannot be deleted (the last member leaving deletes a
+    # team and its project; teams/services.leave_team refuses when the project has reviews), and
+    # neither can its event.
     project = models.ForeignKey(
-        "projects.Project", on_delete=models.CASCADE, related_name="scores"
+        "projects.Project", on_delete=models.RESTRICT, related_name="scores"
     )
     # Empty for 51 of the fixture's 126 reviews, so blank must be allowed.
     comment = models.TextField(blank=True)

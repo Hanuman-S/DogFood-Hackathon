@@ -1,5 +1,5 @@
 """Removing a judge never deletes submitted reviews: remove_judge refuses a judge with one (409,
-audited, in any phase), and Score.judge is RESTRICT behind it (refused unless the whole event goes). Drafts and assignments go, counted."""
+audited, in any phase), and Score.judge is RESTRICT behind it (and an event with reviews cannot be deleted at all). Drafts and assignments go, counted."""
 
 from decimal import Decimal
 
@@ -89,11 +89,11 @@ def test_the_event_page_shows_the_refusal(judged, client_for):
     assert EventMembership.objects.filter(pk=membership.pk).exists()
 
 
-def test_deleting_the_whole_event_still_takes_its_reviews(judged):
-    """The one delete RESTRICT allows: the reviews go through their projects in the same delete."""
+def test_an_event_with_a_submitted_review_cannot_be_deleted(judged):
+    """Reviews are permanent (Score.judge and Score.project are RESTRICT): the event delete is refused."""
     from core.deadlines import deadline_bypass
     event, membership, projects, criterion = judged
     score(membership, projects[0], criterion, submitted=True)
-    with deadline_bypass(None, "test: delete event"):
+    with pytest.raises(RestrictedError), deadline_bypass(None, "test: try to delete the event"):
         event.delete()
-    assert not Score.objects.exists() and not EventMembership.objects.filter(pk=membership.pk).exists()
+    assert Score.objects.count() == 1 and EventMembership.objects.filter(pk=membership.pk).exists()

@@ -107,8 +107,14 @@ class EventForm(forms.ModelForm):
             "max_team_size": forms.NumberInput(attrs={"min": 1, "max": 20, "placeholder": "e.g. 4"}),
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, timeline_locked=False, **kwargs):
         super().__init__(*args, **kwargs)
+        if timeline_locked:
+            # Disabled fields keep their stored value whatever is posted; the service refuses too.
+            for name in ("submissions_open_at", "submissions_close_at", "judging_starts_at"):
+                self.fields[name].disabled = True
+                self.fields[name].help_text = ("locked: judging has started and the event has assignments "
+                                               "or reviews")
         self.fields["slug"].required = False
         # A published event page needs to say what the event is.
         self.fields["tagline"].required = True

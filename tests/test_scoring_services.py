@@ -253,10 +253,13 @@ def test_database_refuses_any_update_of_a_snapshot(scored_event):
 
 
 @pytest.mark.django_db
-def test_deleting_the_event_cascades_to_its_snapshots(scored_event):
-    make_snapshot(scored_event, scored_event.organizer)
+def test_deleting_an_event_without_reviews_cascades_to_its_snapshots(make_event):
+    # An event with reviews cannot be deleted at all (Score.project and Score.judge are RESTRICT):
+    # tests/test_timeline_freeze.py. Without reviews, its snapshots go with it.
+    event = make_event()
+    make_snapshot(event, event.organizer)
     with deadline_bypass(None, "test: delete event"):
-        scored_event.delete()
+        event.delete()
     assert ResultSnapshot.objects.count() == 0
 
 
@@ -309,14 +312,16 @@ def test_one_active_publication_per_event_and_append_only(scored_event, make_use
 
 
 @pytest.mark.django_db
-def test_published_snapshot_cannot_be_deleted_alone_but_the_event_can(scored_event):
-    organizer = scored_event.organizer
-    snapshot = make_snapshot(scored_event, organizer)
-    publish(scored_event, snapshot, organizer)
+def test_published_snapshot_cannot_be_deleted_alone_but_the_event_can(make_event):
+    # An event without reviews (one with reviews cannot be deleted at all).
+    event = make_event()
+    organizer = event.organizer
+    snapshot = make_snapshot(event, organizer)
+    publish(event, snapshot, organizer)
     with pytest.raises(RestrictedError):
         snapshot.delete()
     with deadline_bypass(None, "test: delete event"):
-        scored_event.delete()
+        event.delete()
     assert Publication.objects.count() == 0 and ResultSnapshot.objects.count() == 0
 
 

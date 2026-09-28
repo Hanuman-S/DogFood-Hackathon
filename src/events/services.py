@@ -81,8 +81,44 @@ def _audit_value(value):
     return value if isinstance(value, (bool, int, float, type(None))) else str(value)
 
 
+# The dates that decide what judges see. Frozen once judging has started and judging work exists
+# (an assignment or a score): moving them would reopen submissions under the judges -- a team could
+# withdraw a scored project to draft, edit it, or (as the last member leaving) delete it. An event with
+# no assignments and no scores stays fixable. judging_ends_at stays editable (extend judging, end
+# judging now).
+TIMELINE_FIELDS = ("submissions_open_at", "submissions_close_at", "judging_starts_at")
+
+
+def has_judging_work(event):
+    from scoring.models import Assignment, Score
+
+    return (Assignment.objects.filter(project__event=event).exists()
+            or Score.objects.filter(project__event=event).exists())
+
+
+def timeline_locked(event, now=None):
+    """True once judging has started (by the stored start, on the database clock) and the event has
+    an assignment or a score."""
+    from core.deadlines import db_now
+
+    starts = Event.objects.values_list("judging_starts_at", flat=True).get(pk=event.pk)
+    return (now or db_now()) >= starts and has_judging_work(event)
+
+
 def update_event(request, event, form):
     changed = form.changed_data
+    moved = [f for f in TIMELINE_FIELDS if f in changed]
+    if moved:
+        with transaction.atomic():
+            Event.objects.select_for_update().filter(pk=event.pk).first()
+            locked = timeline_locked(event)
+        if locked:
+            audit.record(AuditAction.EVENT_CHANGE_REFUSED, request=request, subject=event.slug,
+                         attempted=", ".join(moved), reason="judging has started")
+            raise EventRuleError(
+                "Judging has started and the event has assignments or reviews, so the submission and "
+                "judging-start dates are frozen: moving them would reopen submissions under the judges. "
+                "Judging's end can still be changed.")
     old_close = Event.objects.values_list("submissions_close_at", flat=True).get(pk=event.pk)
     new_close = form.cleaned_data.get("submissions_close_at")
     if "submissions_close_at" in changed and new_close and new_close > old_close:

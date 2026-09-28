@@ -72,7 +72,8 @@ def event_create(request):
 def _control(request, event, status=200, **forms):
     context = {
         "event": event,
-        "settings_form": forms.get("settings_form") or EventForm(instance=event),
+        "settings_form": forms.get("settings_form") or EventForm(
+            instance=event, timeline_locked=services.timeline_locked(event)),
         "track_form": forms.get("track_form") or TrackForm(event=event),
         "prize_form": forms.get("prize_form") or PrizeForm(event=event),
         "question_form": forms.get("question_form") or QuestionForm(event=event),
@@ -123,7 +124,7 @@ def _control(request, event, status=200, **forms):
 def event_control(request, slug):
     event = services.get_managed_event(request.user, slug)
     if request.method == "POST":
-        form = EventForm(request.POST, instance=event)
+        form = EventForm(request.POST, instance=event, timeline_locked=services.timeline_locked(event))
         if not form.is_valid():
             event.refresh_from_db()
             return _control(request, event, status=400, settings_form=form)

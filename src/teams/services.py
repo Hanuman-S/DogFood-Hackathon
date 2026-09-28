@@ -1,6 +1,7 @@
 """Every write to a team. The rules table is in teams/models.py."""
 
 from django.db import IntegrityError, transaction
+from django.db.models import RestrictedError
 
 from accounts.roles import Role, can_compete_in, forget_cached_roles
 from core import audit
@@ -219,9 +220,14 @@ def leave_team(request, team):
                 "if you really want to delete the team."
             )
         name, event = team.name, team.event
-        with transaction.atomic():
-            team.delete()  # cascades to the membership and any draft project
-            _unregister(user, event)
+        try:
+            with transaction.atomic():
+                team.delete()  # cascades to the membership and any draft project
+                _unregister(user, event)
+        except RestrictedError:
+            # Score.project is RESTRICT: a project with reviews (submitted or draft) never goes with its team.
+            raise TeamRuleError(
+                "The project has reviews from judges, so the team and its project cannot be deleted.") from None
         audit.record(AuditAction.TEAM_DISBANDED, request=request, subject=name, event=event.slug)
         return None
     with transaction.atomic():
