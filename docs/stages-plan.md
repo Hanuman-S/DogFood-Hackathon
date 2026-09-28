@@ -89,7 +89,7 @@ If an answer changes a later phase (for example, a hash chain means imported aud
   2. Comments are enabled, otherwise 409.
   3. Rate limits (`core.ratelimit.exceeded`):
      - per actor `COMMENT_RATE_PER_USER` (5 per 10 minutes), per IP `COMMENT_RATE_PER_IP` (200 per 10 minutes; raised at the B1 review, per account is the primary control);
-     - counted over `(COMMENT_POSTED, COMMENT_REFUSED)`. Anonymous attempts are audited as `COMMENT_ANONYMOUS_REFUSED` (core 0018), a separate bucket that no limit counts;
+     - counted over `(COMMENT_POSTED, COMMENT_REFUSED)`. Anonymous attempts are audited as `COMMENT_ANONYMOUS_REFUSED` (core 0018), a separate bucket that the logged-in limits don't count. That bucket has its own cap, `COMMENT_ANON_RATE_PER_IP` (60 per 10 minutes). Past the cap an attempt is still a 401, but it writes at most one `COMMENT_ANONYMOUS_THROTTLED` row per window (core 0019), under a per-address advisory lock;
      - a hit is a 429 with a `COMMENT_THROTTLED` row carrying the origin's ip_hash.
   4. Validation: strip the body; empty or over 2000 characters is a 400.
   5. Inside `atomic()`: lock the author with `select_for_update`, check for a duplicate (the same stripped body from this author **on this project**, hidden or deleted included, within the last 10 minutes; the same text on another project is accepted) → 409, then insert.

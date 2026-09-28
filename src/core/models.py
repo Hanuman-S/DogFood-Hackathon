@@ -139,6 +139,7 @@ class AuditAction(models.TextChoices):
     COMMENT_REFUSED = "comment_refused", "Refused a comment"
     # Its own action, so these are not counted by the per-IP limit that logged-in posts use.
     COMMENT_ANONYMOUS_REFUSED = "comment_anonymous_refused", "Refused a comment (not logged in)"
+    COMMENT_ANONYMOUS_THROTTLED = "comment_anonymous_throttled", "Stopped auditing anonymous comment attempts (cap)"
     COMMENT_THROTTLED = "comment_throttled", "Refused a comment (rate limit)"
     COMMENT_DELETED = "comment_deleted", "Deleted own comment"
     COMMENT_HIDDEN = "comment_hidden", "Hid a comment"

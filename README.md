@@ -90,7 +90,9 @@ deletes the generated key along with the database.
 
 **Comment rate limits.** Logged-in comments are limited per account (`COMMENT_RATE_PER_USER`, 5
 per 10 minutes, the main control) and per IP hash (`COMMENT_RATE_PER_IP`, 200 per 10 minutes).
-Anonymous attempts are refused and audited, and they don't count towards either limit. At a venue
+Anonymous attempts are refused and audited, and they don't count towards either limit. They
+have their own audit cap (`COMMENT_ANON_RATE_PER_IP`, 60 per 10 minutes per IP hash), after which
+they are still refused but only one throttle row is written per window. At a venue
 where everyone shares one NAT address, raise `COMMENT_RATE_PER_IP`.
 
 **After changing code, rebuild:** `docker compose up --build`. The image copies `src/` and

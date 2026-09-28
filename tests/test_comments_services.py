@@ -72,6 +72,49 @@ def test_anonymous_cannot_post(gallery_project):
 def test_the_per_ip_default_is_generous_and_per_account_is_the_primary_control():
     from django.conf import settings
     assert settings.COMMENT_RATE_PER_IP == 200 and settings.COMMENT_RATE_PER_USER == 5
+    assert settings.COMMENT_ANON_RATE_PER_IP == 60
+
+
+def test_an_anonymous_flood_writes_at_most_cap_plus_one_rows(gallery_project, commenter):
+    """100 anonymous attempts from one address: every one is a 401, but only the first 60 are audited,
+    then one throttle row; the audit log cannot be flooded. Someone logged in behind that address
+    still posts."""
+    from django.conf import settings
+    cap = settings.COMMENT_ANON_RATE_PER_IP
+    for _ in range(100):
+        with pytest.raises(LoginRequired) as caught:
+            comments.post_comment(gallery_project.pk, "hi", author=AnonymousUser(), origin=HERE)
+        assert caught.value.status == 401
+    anonymous = AuditLog.objects.filter(ip_hash=HERE.ip_hash, action__in=(
+        AuditAction.COMMENT_ANONYMOUS_REFUSED, AuditAction.COMMENT_ANONYMOUS_THROTTLED))
+    assert anonymous.count() <= cap + 1
+    assert anonymous.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).count() == cap
+    assert anonymous.filter(action=AuditAction.COMMENT_ANONYMOUS_THROTTLED).count() == 1
+    assert post(gallery_project, commenter).pk
+
+
+@override_settings(COMMENT_ANON_RATE_PER_IP=2)
+def test_anonymous_auditing_resumes_when_the_window_slides(gallery_project, monkeypatch):
+    for _ in range(5):
+        with pytest.raises(LoginRequired):
+            comments.post_comment(gallery_project.pk, "hi", author=AnonymousUser(), origin=HERE)
+    assert AuditLog.objects.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).count() == 2
+    later = timezone.now() + timedelta(minutes=11)
+    monkeypatch.setattr("projects.comments.db_now", lambda: later)
+    monkeypatch.setattr("core.audit.AuditLog.objects.create", _create_at(later))
+    with pytest.raises(LoginRequired):
+        comments.post_comment(gallery_project.pk, "hi", author=AnonymousUser(), origin=HERE)
+    assert AuditLog.objects.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).count() == 3
+
+
+def _create_at(when):
+    """AuditLog.objects.create, stamping rows at `when` (the audit log uses the app clock)."""
+    original = AuditLog.objects.create
+
+    def create(**fields):
+        fields.setdefault("created_at", when)
+        return original(**fields)
+    return create
 
 
 @override_settings(COMMENT_RATE_PER_IP=10)

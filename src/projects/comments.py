@@ -21,13 +21,13 @@ Services never take the request: the view passes the actor and an `audit.Origin`
 
 from django.conf import settings
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import connection, transaction
 
 from accounts.models import User
 from accounts.roles import is_organizer_of
 from core import audit, ratelimit
 from core.deadlines import db_now
-from core.models import AuditAction
+from core.models import AuditAction, AuditLog
 
 from .comment_errors import (
     CommentsDisabled, DuplicateComment, InvalidComment, InvalidModeration, LoginRequired, NoComment,
@@ -63,12 +63,37 @@ def _slug_of(project_id):
     return Project.objects.filter(pk=project_id).values_list("event__slug", flat=True).first() or ""
 
 
+def _refuse_anonymous(project_id, origin):
+    """Audit an anonymous attempt, in a bucket of its own: these never use up the per-IP limit of the
+    logged-in people who share an address. The bucket has its own cap, so a flood from one address
+    cannot fill the audit log: up to COMMENT_ANON_RATE_PER_IP rows per window, then one
+    COMMENT_ANONYMOUS_THROTTLED row, then nothing until the window slides. The caller answers 401
+    either way. Counting and writing run under a per-address advisory lock, so concurrent attempts
+    cannot overshoot the cap."""
+    ip_hash = origin.ip_hash if origin is not None else ""
+    subject = _slug_of(project_id)
+    if not ip_hash:  # no request (a command or a test): nothing to count by
+        audit.record(AuditAction.COMMENT_ANONYMOUS_REFUSED, origin=origin, subject=subject,
+                     project=str(project_id), reason="not logged in")
+        return
+    with transaction.atomic():
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [f"comment-anon:{ip_hash}"])
+        since = db_now() - settings.COMMENT_RATE_WINDOW
+        recent = AuditLog.objects.filter(ip_hash=ip_hash, created_at__gte=since)
+        if recent.filter(action=AuditAction.COMMENT_ANONYMOUS_REFUSED).count() < settings.COMMENT_ANON_RATE_PER_IP:
+            audit.record(AuditAction.COMMENT_ANONYMOUS_REFUSED, origin=origin, subject=subject,
+                         project=str(project_id), reason="not logged in")
+        elif not recent.filter(action=AuditAction.COMMENT_ANONYMOUS_THROTTLED).exists():
+            audit.record(AuditAction.COMMENT_ANONYMOUS_THROTTLED, origin=origin, subject=subject,
+                         project=str(project_id), reason="anonymous cap reached; further attempts in this window "
+                         "are refused without an audit row", limit=settings.COMMENT_ANON_RATE_PER_IP)
+
+
 def post_comment(project_id, body, *, author, origin=None) -> Comment:
     if author is None or not author.is_authenticated:
-        # Audited in a bucket of its own: anonymous attempts must never use up the per-IP limit of
-        # the logged-in people who share that address.
-        audit.record(AuditAction.COMMENT_ANONYMOUS_REFUSED, origin=origin, subject=_slug_of(project_id),
-                     project=str(project_id), reason="not logged in")
+        _refuse_anonymous(project_id, origin)
         raise LoginRequired("Log in to comment.")
 
     def refuse(error, why, action=AuditAction.COMMENT_REFUSED, subject=None, **detail):
@@ -262,7 +287,7 @@ def moderation_list(event):
 def comment_actions():
     """The audit actions that describe comments (for the integrity trail)."""
     return (AuditAction.COMMENT_POSTED, AuditAction.COMMENT_REFUSED, AuditAction.COMMENT_ANONYMOUS_REFUSED,
-            AuditAction.COMMENT_THROTTLED,
+            AuditAction.COMMENT_ANONYMOUS_THROTTLED, AuditAction.COMMENT_THROTTLED,
             AuditAction.COMMENT_DELETED, AuditAction.COMMENT_HIDDEN, AuditAction.COMMENT_RESTORED,
             AuditAction.COMMENT_MODERATION_REFUSED, AuditAction.COMMENTS_TOGGLED)
 

@@ -192,6 +192,9 @@ VOTE_FLAG_NEW_ACCOUNT = timedelta(minutes=env_int("VOTE_FLAG_NEW_ACCOUNT_MINUTES
 COMMENT_RATE_WINDOW = timedelta(minutes=env_int("COMMENT_RATE_WINDOW_MINUTES", 10))
 COMMENT_RATE_PER_USER = env_int("COMMENT_RATE_PER_USER", 5)
 COMMENT_RATE_PER_IP = env_int("COMMENT_RATE_PER_IP", 200)
+# Anonymous attempts (always refused, 401) are audited up to this many per IP hash per window, then
+# once more as a throttle row, then not at all until the window slides.
+COMMENT_ANON_RATE_PER_IP = env_int("COMMENT_ANON_RATE_PER_IP", 60)
 COMMENT_DUPLICATE_WINDOW = timedelta(minutes=10)
 
 # Only trust X-Forwarded-For behind a proxy you run; otherwise anyone can forge their IP.
