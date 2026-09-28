@@ -8,6 +8,7 @@ Pillow==12.3.0              # verifies and re-encodes uploaded images
 markdown-it-py==4.2.0       # project descriptions are Markdown...
 nh3==0.3.7                  # ...sanitised to a safe HTML subset after rendering
 numpy==2.5.3                # scoring engine (src/scoring/engine); the scoring lab's version
+cryptography==50.0.1        # Ed25519 signing of issued records (src/records)
 
 # Tests
 pytest==9.1.1

@@ -28,6 +28,9 @@ done
 echo "--> applying migrations"
 python /app/src/manage.py migrate --noinput
 
+echo "--> signing key (created on first boot, in the secrets volume)"
+python /app/src/manage.py ensure_signing_key
+
 echo "--> removing expired sessions"
 python /app/src/manage.py clearsessions
 

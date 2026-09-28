@@ -20,3 +20,9 @@ STORAGES = {
 
 ALLOWED_HOSTS = ["testserver", "localhost"]
 DEMO_MODE = True
+
+# Signing keys go to a throwaway directory, never the repo (which is mounted into the test container).
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+SIGNING_KEY_DIR = Path(tempfile.mkdtemp(prefix="dogfood-test-signing-"))

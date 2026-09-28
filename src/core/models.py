@@ -152,6 +152,15 @@ class AuditAction(models.TextChoices):
     EVENT_EXPORT_REFUSED = "event_export_refused", "Refused an event bundle download"
     EVENT_IMPORTED = "event_imported", "Imported an event bundle"
     EVENT_IMPORT_REFUSED = "event_import_refused", "Refused an event bundle import"
+    # signed records (C2)
+    SIGNING_KEY_CREATED = "signing_key_created", "Created this install's signing key"
+    SIGNING_KEY_ROTATED = "signing_key_rotated", "Rotated the signing key"
+    RECORD_ISSUED = "record_issued", "Issued a signed record"
+    RECORD_ISSUE_REFUSED = "record_issue_refused", "Refused to issue records"
+    RECORD_REVOKED = "record_revoked", "Revoked a signed record"
+    RECORD_REVOKE_REFUSED = "record_revoke_refused", "Refused to revoke a record"
+    RECORD_VERIFY = "record_verify", "Checked a record on /verify"
+    RECORD_VERIFY_THROTTLED = "record_verify_throttled", "Refused a /verify check (rate limit)"
 
 
 class AuditLogQuerySet(models.QuerySet):

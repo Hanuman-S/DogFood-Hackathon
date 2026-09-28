@@ -7,3 +7,6 @@ staticfiles/
 media/
 .venv/
 .DS_Store
+
+# Keys generated outside Docker (SECRET_KEY file, signing keys): never committed.
+secrets/

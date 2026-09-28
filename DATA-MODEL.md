@@ -209,6 +209,24 @@ or line once voting has opened**. The foreign keys into ballots are PROTECT (`Ba
 from an event, project, team or account can remove a vote; a test pins the full list. The one way past
 the trigger is `dogfood.voting_bypass`, set for one block by the audited `voting_bypass`.
 
+### records: signed records (C2)
+
+| Table | Holds | Rules |
+|---|---|---|
+| `records_signingkey` | this install's Ed25519 keys, **public halves only**: `kid` (the first 16 hex of sha256 of the 32-byte raw key), `alg`, `public_key` (base64), `created_at`, `retired_at` | `signing_key_one_active` (partial unique: at most one key with `retired_at` NULL); **(pg)** trigger `dogfood_signing_key_guard`: no DELETE, and the only change allowed is retiring, once |
+| `records_foreignsigningkey` | public keys of other installs that came with an imported bundle, published apart from this install's own and never used to sign | |
+| `records_issuedrecord` | one signed statement: `id` (uuid), `kind` (judge_participation / participant / winner), `slot`, event (**PROTECT**), subject user (**PROTECT**), `payload` and `payload_text` (exactly the canonical bytes that were signed), `signature` (base64), `kid`, `is_foreign`, issued by and at, and the revoke fields | `record_one_active_per_slot` (partial unique on event, subject, kind, slot while not revoked); `slot` is "" for judge and participant records and `winner_slot(track, place, peoples_choice)` for winners, so two different wins by one person are two records; `record_revoke_fields_together`; **(pg)** trigger `dogfood_record_guard`: no DELETE, and an UPDATE may only set the revoke fields, once, with a reason |
+
+**The private keys** are PEM files at `<SIGNING_KEY_DIR>/<kid>.pem`: PKCS8, created with O_EXCL and
+mode 0600, in a 0700 directory. In compose that directory is `/app/secrets/signing`, inside the
+`secrets` named volume, never in the repo or the image. The database decides which key signs: the one
+row with `retired_at` NULL. A PEM file with no row is never adopted.
+
+`manage.py ensure_signing_key` runs at every boot. It creates the first key, and after that only
+checks it. If the active key's file is missing, it reports that loudly without stopping the boot,
+and signing is refused until `manage.py rotate_signing_key`. Rotation writes the new file, then, in
+one transaction, retires the old row first and inserts the new one. The old key stays published.
+
 ### core and imports
 
 | Table | Holds |

@@ -38,6 +38,7 @@ services:
       # (never the repo) and reuses it on every restart. Set your own for a real deployment.
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-}
       DJANGO_SECRET_KEY_FILE: /app/secrets/secret_key
+      DJANGO_SIGNING_KEY_DIR: /app/secrets/signing
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],web,.trycloudflare.com}
       DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,https://*.trycloudflare.com}

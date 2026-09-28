@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "imports",
     "scoring",
     "voting",
+    "records",
     # ours -- one app per audience, so each can be owned by a different teammate
     "public",
     "participant",
@@ -255,6 +256,9 @@ STORAGES = {
 # not public just because someone guessed a URL.
 
 MEDIA_ROOT = Path(env("DJANGO_MEDIA_ROOT", str(BASE_DIR.parent / "media")))
+# Ed25519 signing keys for issued records (records/keys.py): private PEM files, 0600 in a 0700
+# directory. In compose this is inside the `secrets` named volume, next to the SECRET_KEY file.
+SIGNING_KEY_DIR = Path(env("DJANGO_SIGNING_KEY_DIR", str(BASE_DIR.parent / "secrets" / "signing")))
 MEDIA_URL = "/media/"
 MAX_IMAGE_BYTES = env_int("MAX_IMAGE_BYTES", 5 * 1024 * 1024)
 
