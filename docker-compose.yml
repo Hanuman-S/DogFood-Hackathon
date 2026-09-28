@@ -40,7 +40,7 @@ services:
       DJANGO_SECRET_KEY_FILE: /app/secrets/secret_key
       DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],web,.trycloudflare.com}
-      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080,https://*.trycloudflare.com}
       DJANGO_STATIC_ROOT: /app/staticfiles
       DJANGO_MEDIA_ROOT: /app/media
       COOKIE_SECURE: ${COOKIE_SECURE:-0}
