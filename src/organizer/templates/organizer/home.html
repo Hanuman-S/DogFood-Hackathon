@@ -3,7 +3,7 @@
 {% block title %}organizer portal{% endblock %}
 {% block portal_title %}organizer control{% endblock %}
 {% block portal_body %}
-{% if user.is_platform_admin or user.can_create_events %}<div class="actions"><a class="btn" href="{% url 'organizer:event_create' %}">new event</a></div>{% endif %}
+{% if user.is_platform_admin or user.can_create_events %}<div class="actions"><a class="btn" href="{% url 'organizer:event_create' %}">new event</a><a class="btn btn--ghost" href="{% url 'organizer:event_import' %}">import an event bundle</a></div>{% endif %}
 {% endblock %}
 
 {% block portal_extra %}

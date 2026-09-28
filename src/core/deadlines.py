@@ -136,9 +136,12 @@ def check_submission_window(request, event, team=None, *, action, needs_open=Fal
 
 
 @contextmanager
-def deadline_bypass(request, reason, *, subject=""):
+def deadline_bypass(request, reason, *, subject="", actor=None, origin=None):
     """Let organizer code write after the close. Audited, and scoped to one transaction:
-    `SET LOCAL` ends with it, so the bypass cannot leak into the next request."""
+    `SET LOCAL` ends with it, so the bypass cannot leak into the next request.
+
+    Audited when there is a request, or -- for code that does not take one, such as the event bundle
+    import -- an `actor` or `origin`. Boot code (the seed, the fixture import) passes none of them."""
     from core import audit
     from core.models import AuditAction
 
@@ -152,8 +155,9 @@ def deadline_bypass(request, reason, *, subject=""):
             if connection.vendor == "postgresql" and not connection.needs_rollback:
                 with connection.cursor() as cursor:
                     cursor.execute("SET LOCAL dogfood.deadline_bypass = 'off'")
-    if request is not None:
-        audit.record(AuditAction.DEADLINE_BYPASSED, request=request, subject=subject, reason=reason)
+    if request is not None or actor is not None or origin is not None:
+        audit.record(AuditAction.DEADLINE_BYPASSED, request=request, actor=actor, origin=origin,
+                     subject=subject, reason=reason)
 
 
 def trigger_refusal(error):

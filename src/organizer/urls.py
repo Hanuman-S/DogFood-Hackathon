@@ -20,6 +20,7 @@ app_name = "organizer"
 urlpatterns = [
     path("", views.home, name="home"),
     path("events/new", views.event_create, name="event_create"),
+    path("events/import", bundle.import_page, name="event_import"),
     path("events/<slug:slug>/", views.event_control, name="event"),
     path("events/<slug:slug>/publish", views.event_publish, name="event_publish"),
     path("events/<slug:slug>/<part:kind>/new", views.part_add, name="part_add"),

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}import an event{% endblock %}
+{% block content %}
+<div class="stack">
+  <section class="frame">
+    <header class="frame__bar"><h1 class="frame__title">import an event bundle</h1><span class="frame__meta">admins and accounts that may create events</span></header>
+    <div class="frame__body stack">
+      {% if error %}<p class="field__error" role="alert">refused: {{ error }}</p>{% endif %}
+      <p class="faint">a bundle is the zip another install's "download event bundle" gives. it always becomes a <strong>new, unpublished</strong> event (never merged into one here), and you become its organizer. accounts are matched by email; missing ones are created with no password (set one with <code>manage.py changepassword</code>; there is no outbound mail).</p>
+      <p class="faint"><strong>check the bundle first:</strong> an event with reviews or ballots is permanent once imported. it cannot be deleted.</p>
+      <form method="post" enctype="multipart/form-data" class="stack">
+        {% csrf_token %}
+        <div class="field"><label class="field__label" for="bundle"><span class="ps1">$</span> <span class="cmd">import --bundle</span></label><input id="bundle" name="bundle" type="file" accept=".zip,application/zip" required></div>
+        <div class="actions"><button class="btn" type="submit">import</button><a class="btn btn--ghost" href="{% url 'organizer:home' %}">cancel</a></div>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}

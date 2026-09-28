@@ -261,7 +261,7 @@ Tests:
 - Finally one `EVENT_IMPORTED` row.
 - DB errors map to 400 `import_conflict` (with the constraint name). The transaction rolls back, and the refusal is audited after it.
 
-Surfaces: the upload page (admin portal and organizer portal for `can_create_events`), `POST /api/events/import` (multipart), and `manage.py import_event <file> --as <email>`.
+Surfaces: the upload page (admin portal and organizer portal for `can_create_events`), `POST /api/events/import` (multipart), and `manage.py import_event <file> --as <email>`. **As built (6b-1):** the page is `/organizer/events/import` (admins and event creators both enter the organizer portal; linked from its home). The API is **`POST /api/bundles`**, because `/api/events/import` is already taken by the public `GET /api/events/<slug>`, which is mounted first and would read "import" as a slug. Until 6b-2 adds placeholder accounts, only platform admins may import (a `can_create_events` importer gets 403).
 
 README: imported accounts cannot log in until the operator runs `changepassword`, because there is no outbound mail.
 

@@ -324,6 +324,10 @@ def build(event):
         if section.name == "ballots":
             for ballot in objs:
                 export.voter_labels[ballot_label(ballot)] = _ballot_identity(ballot)
+                if ballot.voter_cookie:
+                    # An imported event's voters are pseudonyms stored as cookies, and its audit rows name
+                    # them by that pseudonym: map it to the same identity, so ballot and rows stay grouped.
+                    export.voter_labels[ballot.voter_cookie] = _ballot_identity(ballot)
         rows = []
         for obj in objs:
             row = _serialise(export, section, obj)

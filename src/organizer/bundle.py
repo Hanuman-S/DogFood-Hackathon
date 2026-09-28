@@ -5,6 +5,8 @@ unlinked as soon as it is open, so nothing is left behind whatever happens to th
 
     GET /organizer/events/<slug>/bundle     the button on the event page
     GET /api/events/<slug>/bundle           the same zip, for scripts (Bearer or session)
+    GET/POST /organizer/events/import       import a bundle as a new event (admins; event creators)
+    POST /api/bundles                       the same, for scripts (multipart field "bundle")
 """
 
 import os
@@ -57,3 +59,64 @@ def bundle_api(request, slug):
     except bundle.BundleError as refusal:
         return error(refusal.status, refusal.code, refusal.detail)
     return _zip_response(path, event)
+
+
+# --- importing -------------------------------------------------------------------------------------
+
+def _import(request):
+    """Save the upload (capped while copying), import it, and always remove the temporary file."""
+    from imports import bundle_import, bundle_validate
+
+    from core.models import AuditAction
+
+    try:
+        upload = request.FILES.get("bundle")
+        if upload is None:
+            raise bundle.BundleError("no_file", "choose a bundle (.zip) to import")
+        path = bundle_validate.save_upload(upload)
+    except bundle.BundleError as refusal:  # refused before the service: audited here, like every refusal
+        audit.record(AuditAction.EVENT_IMPORT_REFUSED, request=request, reason=refusal.code,
+                     detail_text=refusal.detail[:300])
+        raise
+    try:
+        return bundle_import.import_event(path, actor=request.user, origin=audit.origin_of(request))
+    finally:
+        os.unlink(path)
+
+
+@never_cache
+@portal_required("organizer")
+def import_page(request):
+    """GET: the upload form. POST: import it as a new, unpublished event of which you are an organizer."""
+    from django.shortcuts import render
+
+    from imports.bundle_validate import ImportForbidden, may_import
+
+    if not may_import(request.user):
+        from core.views import forbidden
+        return forbidden(request, reason="Only platform admins and accounts that may create events can import one.")
+    if request.method == "POST":
+        try:
+            event = _import(request)
+        except (bundle.BundleError, ImportForbidden) as refusal:
+            return render(request, "organizer/import.html", {"error": refusal.detail}, status=refusal.status)
+        messages.success(request, f"imported as {event.slug}. it is unpublished: check it, then publish it.")
+        return redirect("organizer:event", slug=event.slug)
+    return render(request, "organizer/import.html", {})
+
+
+@never_cache
+@portal_required("organizer")
+def import_api(request):
+    """POST /api/bundles (multipart, field "bundle"): 201 with the new event's slug."""
+    from django.http import JsonResponse
+
+    from imports.bundle_validate import ImportForbidden
+
+    if request.method != "POST":
+        return error(405, "method_not_allowed", "POST a bundle as multipart field 'bundle'.")
+    try:
+        event = _import(request)
+    except (bundle.BundleError, ImportForbidden) as refusal:
+        return error(refusal.status, refusal.code, refusal.detail)
+    return JsonResponse({"slug": event.slug, "name": event.name, "published": event.is_published}, status=201)

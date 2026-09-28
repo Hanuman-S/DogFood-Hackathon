@@ -461,6 +461,39 @@ A declared id of a ballot, tally or result snapshot that names no row fails it t
 A new engine output with ids in it must be declared here before an event that uses it can be
 exported.
 
+### Import (writing)
+
+`imports/bundle_import.py` writes what validation passed. It always creates a **new** event and never
+merges into an existing one. Everything is one transaction, so a database error at any point (a
+constraint, a trigger) rolls back every row and every stored image, and is answered as one audited
+`400 import_conflict`. That matters, because an event with reviews is permanent.
+
+What the import decides, not the bundle:
+- **The slug:** the bundle's own, or with `-2`, `-3`, ... on a clash, taken under an advisory lock.
+- **Publication:** an imported event always arrives **unpublished**. `event_imported` records the
+  source's state (`source_published`).
+- **Secrets:** a new ballot secret and open-link nonce for the vote, and a new invite token for
+  every team.
+- **Accounts:** a platform admin's import matches them by email, and creates missing ones with no
+  usable password. The operator sets one with `manage.py changepassword`; there is no outbound mail.
+- **The importer's role:** they become an organizer of the new event. If they are a participant in
+  it, the import is refused with `400 importer_is_competitor`.
+- **Ballots:** each ballot's voter becomes its pseudonym, stored as an open-link voter, with no
+  account, link or IP hash.
+- **Fixture refs** are filed under `bundle:<sha256>:<new slug>`.
+- **Snapshots and tallies** are inserted with `imported_from` = the bundle's sha256.
+- **Audit rows:** the bundle's rows are inserted as history (`detail.source_history` = true, the
+  source slug replaced by the new one), followed by one `event_imported` row with the sha256, the
+  source slug, the row counts and how many accounts were created.
+
+Rows go in section order through the three audited bypasses: deadline, voting and weights. The
+`auto_now` timestamps are then put back to the source's values in the same transaction.
+
+Surfaces:
+- the page `/organizer/events/import`;
+- `POST /api/bundles` (multipart field `bundle`, answers `201 {slug, name, published}`);
+- `manage.py import_event <file> --as <email>`.
+
 ### Import validation
 
 Before the import writes anything, `imports/bundle_validate.py` checks the whole bundle. Every
