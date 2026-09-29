@@ -23,7 +23,7 @@
         <form class="form" method="post" action="{% url 'participant:team_create' event.slug %}">
           {% csrf_token %}
           <div class="field">
-            <label class="field__label" for="team-name"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">team create --name</span></label>
+            <label class="field__label" for="team-name"><span class="ps1">{{ role }}@nyanjaro:~$</span> <span class="cmd">team create --name</span></label>
             <input type="text" id="team-name" name="name" maxlength="80" placeholder="e.g. Nightshift" required>
           </div>
           <div class="actions"><button class="btn" type="submit">create team</button></div>
@@ -76,7 +76,7 @@
           <form class="form form--inline" method="post" action="{% url 'participant:team_rename' team.pk %}">
             {% csrf_token %}
             <div class="field">
-              <label class="field__label" for="rename"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">team rename</span></label>
+              <label class="field__label" for="rename"><span class="ps1">{{ role }}@nyanjaro:~$</span> <span class="cmd">team rename</span></label>
               <input type="text" id="rename" name="name" value="{{ team.name }}" maxlength="80" required>
             </div>
             <button class="btn" type="submit">rename</button>

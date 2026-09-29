@@ -73,7 +73,7 @@ def test_refused_access_is_audited(login_client):
 def test_public_home_is_open_to_visitors():
     response = Client().get("/")
     assert response.status_code == 200
-    assert b"DOGFOOD" in response.content
+    assert b"NYANJARO" in response.content
 
 
 # --- roles are per event ----------------------------------------------------------------------

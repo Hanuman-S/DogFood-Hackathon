@@ -3,7 +3,7 @@ a 400 with a stable code (403 for an account that may not import at all), audite
 other table. The import's write path is C1c.
 
 The bundles are real exports of the seeded demo (built once for this module, then the database is
-flushed): Sample Hack 2026 (closed vote, no ballots) and Dogfood Archive 2026 (open vote with ten
+flushed): Sample Hack 2026 (closed vote, no ballots) and Nyanjaro Archive 2026 (open vote with ten
 ballots, one project image). Each test tampers with a copy."""
 
 import hashlib

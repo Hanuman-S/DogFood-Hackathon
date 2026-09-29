@@ -136,6 +136,7 @@ class Command(BaseCommand):
         event_state = self._seed_event()
         closed_state = self._seed_closed_event()
         closed_state += self._seed_archive_vote()
+        self._rename_demo_events()
         self._drop_old_demo_tag()
         self._add_demo_pictures()
         self._print(rows)
@@ -164,7 +165,7 @@ class Command(BaseCommand):
         with transaction.atomic():
             event = Event.objects.create(
                 slug=DEMO_EVENT_SLUG,
-                name="Dogfood Live Demo",
+                name="Nyanjaro Live Demo",
                 tagline="A practice event that stays open, so you can try every step.",
                 description=(
                     "## How it works\n\n"
@@ -209,7 +210,7 @@ class Command(BaseCommand):
         return "created"
 
     def _seed_closed_event(self):
-        """Dogfood Archive 2026: submissions closed three days ago and judging is under way (it
+        """Nyanjaro Archive 2026: submissions closed three days ago and judging is under way (it
         started two days ago and ends in four), so every page shows its read-only state, the
         acceptance checker's "closed event refuses submissions" test has a real closed event to
         hit, and the judge portal has live work: five submitted projects from demo teams and one
@@ -242,7 +243,7 @@ class Command(BaseCommand):
         with transaction.atomic():
             event = Event.objects.create(
                 slug=CLOSED_EVENT_SLUG,
-                name="Dogfood Archive 2026",
+                name="Nyanjaro Archive 2026",
                 tagline="Submissions are closed and judging is under way: everything is read-only.",
                 description="Kept so you can see what a closed event looks like, and so the demo judges "
                 "have a live queue to work through.",
@@ -401,6 +402,16 @@ class Command(BaseCommand):
                         picture = clean_image(ContentFile(png, name=f"{slug}-{order + 1}.png"))
                         image.image.save(f"{slug}-{order + 1}.png", picture, save=False)
                         image.save()
+
+    def _rename_demo_events(self):
+        """The portal was renamed from DOGFOOD to NYANJARO: databases seeded before that keep the old
+        demo event names. Rename them, but only while they still carry exactly the old seeded name
+        (an organizer's own rename is kept). The slugs never change: .dogfood.toml points at them."""
+        from events.models import Event
+
+        for slug, old, new in ((DEMO_EVENT_SLUG, "Dogfood Live Demo", "Nyanjaro Live Demo"),
+                               (CLOSED_EVENT_SLUG, "Dogfood Archive 2026", "Nyanjaro Archive 2026")):
+            Event.objects.filter(slug=slug, name=old).update(name=new)
 
     def _drop_old_demo_tag(self):
         """Earlier seeds tagged every demo project "demo", which showed in the gallery as a filter

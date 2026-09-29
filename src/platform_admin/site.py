@@ -17,8 +17,8 @@ REASON = "the database admin is open to admins only."
 
 
 class DatabaseAdminSite(AdminSite):
-    site_header = "DOGFOOD // database"
-    site_title = "DOGFOOD database"
+    site_header = "NYANJARO // database"
+    site_title = "NYANJARO database"
     index_title = "tables"
 
     def admin_view(self, view, cacheable=False):

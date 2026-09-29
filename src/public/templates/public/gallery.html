@@ -12,7 +12,7 @@
     <div class="frame__body stack">
       <form class="gallery-search" method="get" action="/projects" role="search">
         <div class="field">
-          <label class="field__label" for="q"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">grep -i</span></label>
+          <label class="field__label" for="q"><span class="ps1">{{ role }}@nyanjaro:~$</span> <span class="cmd">grep -i</span></label>
           <input type="search" id="q" name="q" value="{{ filters.q }}" placeholder='search names, taglines, teams, tags, descriptions. try "exact phrase" or -exclude'>
         </div>
         <div class="field">
@@ -59,7 +59,7 @@
   </div>
   {% else %}
   <section class="frame"><div class="frame__body">
-    <ul class="boot"><li><span class="dim">{{ role }}@dogfood:~$</span> grep -i "{{ filters.q }}" /projects</li><li><span class="tag">[ -- ]</span> no submitted projects match{% if filters.active %}; <a href="/projects">clear the filters</a>{% endif %}.</li></ul>
+    <ul class="boot"><li><span class="dim">{{ role }}@nyanjaro:~$</span> grep -i "{{ filters.q }}" /projects</li><li><span class="tag">[ -- ]</span> no submitted projects match{% if filters.active %}; <a href="/projects">clear the filters</a>{% endif %}.</li></ul>
   </div></section>
   {% endif %}
 

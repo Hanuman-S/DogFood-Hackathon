@@ -1,11 +1,18 @@
-# DOGFOOD portal
+# NYANJARO
 
-A self-hosted hackathon submission and judging portal, built for DOGFOOD 2026. It runs
-entirely on a laptop with the network off: no cloud accounts, hosted database or auth provider.
+NYANJARO is a self-hosted hackathon submission and judging portal, built for the DOGFOOD 2026
+hackathon. It runs entirely on a laptop with the network off: no cloud accounts, hosted database or
+auth provider.
 
 Demo video: [VIDEO_URL]
 
 **Status: T1 and T2 claimed and verified; T3 built in full, not claimed.**
+
+> The portal was renamed from DOGFOOD to NYANJARO. What people see says NYANJARO; identifiers that
+> other things depend on keep "dogfood": `.dogfood.toml` (the hackathon's checker), the demo event
+> URLs, the demo logins and tokens, the `/.well-known/dogfood-*.json` addresses certificates point
+> to, the bundle format id `dogfood-event-bundle`, and the embed attribute `data-dogfood-embed`.
+
 - **T1**, all seven modules: authentication and sessions, the role model with roles held **per
   event**, event creation, team formation by invite link, project submission with
   draft-and-edit, deadline enforcement, and the public gallery with search and filters.
@@ -68,10 +75,10 @@ On boot the portal also imports the organizers' `acceptance/fixtures.json` (`SEE
 
 The demo seed also creates two events:
 
-- **Dogfood Live Demo** (`/events/dogfood-live-demo`) is open for 30 days from first boot. It has
+- **Nyanjaro Live Demo** (`/events/dogfood-live-demo`) is open for 30 days from first boot. It has
   three tracks, prizes, two custom questions, and a team ("Demo Team", captained by the demo
   participant) with a draft project.
-- **Dogfood Archive 2026** (`/events/dogfood-archive-2026`) closed three days before first boot.
+- **Nyanjaro Archive 2026** (`/events/dogfood-archive-2026`) closed three days before first boot.
   It has five submitted projects (one from the demo participant's team), so you can see the
   read-only, closed state. The acceptance checker's submit route points here. Its community vote
   is **open** for the whole judging phase (quadratic, 16 credits, judges 80 / community 20), with
@@ -287,7 +294,7 @@ curl -X POST -H "Authorization: Bearer dogfood-demo-participant-token" \
     deleted, only voided (with a reason, and restorable). Tallies are visible to organizers only.
   - Rate limits per voter and per network (429), and an integrity page with flags, voided ballots,
     credits by shown position and the voting audit trail. Nothing is removed automatically.
-  - The demo seed opens a vote on **Dogfood Archive 2026** (quadratic, 80/20), with seeded ballots
+  - The demo seed opens a vote on **Nyanjaro Archive 2026** (quadratic, 80/20), with seeded ballots
     including one deliberately suspicious cluster, so the integrity page has something to show.
     The demo participant can vote there.
 - **Comments on gallery projects**: anyone reads; a logged-in account posts (Markdown, at most

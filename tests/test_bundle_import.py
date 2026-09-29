@@ -4,7 +4,7 @@ The source world is the seeded demo, built once for this module and exported, th
 flushed (TRUNCATE: no row triggers fire) -- a fresh install:
 * Sample Hack 2026: 40 projects, 123 reviews, its folded duplicate (fixture refs), a closed vote, a
   published final;
-* Dogfood Archive 2026: five projects (one with a thumbnail), assignments, comments, and its quadratic
+* Nyanjaro Archive 2026: five projects (one with a thumbnail), assignments, comments, and its quadratic
   vote with ten ballots (one voided here) -- ended early so the bundle can move (voting_in_progress
   otherwise), and a preview.
 Each test imports into that empty install with every sequence moved to 10000, so a new primary key

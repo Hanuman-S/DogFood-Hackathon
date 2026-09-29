@@ -1,4 +1,4 @@
-"""The demo seed's judging event (Dogfood Archive 2026): in its judging phase at boot, five
+"""The demo seed's judging event (Nyanjaro Archive 2026): in its judging phase at boot, five
 submitted projects from demo teams, and one fixed-seed assignment round that gives both demo judges
 a queue. Built through the real services; create-only and idempotent."""
 
@@ -200,3 +200,15 @@ def test_a_picture_someone_uploaded_is_never_replaced():
     project.refresh_from_db()
     assert project.thumbnail.name == theirs
     assert project.images.count() == 2  # an emptied gallery is filled again; that is the rule
+
+
+def test_the_demo_events_are_named_nyanjaro_and_old_databases_are_renamed():
+    seed()
+    names = dict(Event.objects.values_list("slug", "name"))
+    assert names == {"dogfood-live-demo": "Nyanjaro Live Demo", "dogfood-archive-2026": "Nyanjaro Archive 2026"}
+    # A database seeded before the rename; and one event an organizer renamed on purpose.
+    Event.objects.filter(slug="dogfood-live-demo").update(name="Dogfood Live Demo")
+    Event.objects.filter(slug="dogfood-archive-2026").update(name="Our Archive")
+    seed()
+    names = dict(Event.objects.values_list("slug", "name"))
+    assert names == {"dogfood-live-demo": "Nyanjaro Live Demo", "dogfood-archive-2026": "Our Archive"}

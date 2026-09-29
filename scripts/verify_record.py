@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a DOGFOOD signed record OFFLINE, with nothing but Python 3 (no packages, no network).
+"""Verify a NYANJARO signed record OFFLINE, with nothing but Python 3 (no packages, no network).
 
     python3 scripts/verify_record.py record.json keys.json [--revoked revoked.json]
 

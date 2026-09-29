@@ -22,8 +22,9 @@ def test_the_sample_is_a_bundle_with_the_whole_demo_and_no_secrets():
         assert len([n for n in names if n.startswith("media/")]) == 15  # 5 thumbnails, 10 screenshots
         manifest = json.loads(z.read("manifest.json"))
         text = z.read("event.json").decode()
-    assert manifest["format"] == "dogfood-event-bundle"
+    assert manifest["format"] == "dogfood-event-bundle"  # the format id keeps its name: other installs read it
     body = json.loads(text)
+    assert body["event"]["name"] == "Nyanjaro Archive 2026"
     assert len(body["projects"]) == 5 and len(body["ballots"]) == 10 and len(body["criteria"]) == 3
     assert len(body["project_images"]) == 10 and all(p["thumbnail"] for p in body["projects"])
     assert all(email.endswith("@dogfood.local") for email in re.findall(r"[\w.+-]+@[\w.-]+", text))

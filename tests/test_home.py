@@ -52,3 +52,19 @@ def test_the_cat_flies_in_from_the_columns_edge_and_the_rainbow_reaches_it():
     assert "@keyframes nyan-fly-in { from { transform: translateX(calc(-50cqw - 5%)); }" in css
     template = (TEMPLATES / "templates/_nyan.html").read_text(encoding="utf-8")
     assert 'x="-320"' in template  # drawn far past the picture's left edge
+
+
+def test_the_portal_is_called_nyanjaro_on_every_page():
+    """Nothing people see says DOGFOOD. Identifiers others depend on keep "dogfood" (README)."""
+    offenders = []
+    for path in TEMPLATES.rglob("*.html"):
+        text = path.read_text(encoding="utf-8")
+        if "DOGFOOD" in text or "@dogfood:~$" in text:
+            offenders.append(str(path.relative_to(TEMPLATES)))
+    assert offenders == []
+
+
+@pytest.mark.django_db
+def test_every_page_names_nyanjaro():
+    page = Client().get("/").content.decode()
+    assert "· NYANJARO portal</title>" in page and 'aria-label="NYANJARO"' in page

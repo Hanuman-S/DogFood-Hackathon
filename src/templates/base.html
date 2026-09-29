@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}DOGFOOD{% endblock %} · DOGFOOD portal</title>
+  <title>{% block title %}NYANJARO{% endblock %} · NYANJARO portal</title>
   <link rel="icon" href="{% static 'img/favicon.svg' %}" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'css/crt.css' %}">
 </head>
 <body>
 <div class="screen">
   <header class="topbar">
-    <a class="brand" href="{% url 'public:home' %}">DOGFOOD<span class="brand__sep">://</span><span class="brand__path">{% block section %}{{ role }}{% endblock %}</span></a>
+    <a class="brand" href="{% url 'public:home' %}">NYANJARO<span class="brand__sep">://</span><span class="brand__path">{% block section %}{{ role }}{% endblock %}</span></a>
     {% with here=request.resolver_match.view_name %}
     <nav class="nav" aria-label="main">
       <a href="{% url 'public:home' %}"{% if here == 'public:home' %} aria-current="page"{% endif %}>home</a>

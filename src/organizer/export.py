@@ -498,7 +498,7 @@ class EventExport:
 
     def readme(self):
         lines = [
-            f"DOGFOOD export of {self.event.name} ({self.event.slug})",
+            f"NYANJARO export of {self.event.name} ({self.event.slug})",
             f"exported at {cell(self.now)}, stage: {self.event.phase_at(self.now).label.lower()}",
             "",
             "Every file was read at the same instant (one consistent database snapshot).",

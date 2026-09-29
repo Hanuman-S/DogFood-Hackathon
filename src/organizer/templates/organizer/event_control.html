@@ -280,7 +280,7 @@
           {% include "_field.html" with field=judge_form.email cmd="judge add --email" %}
           {% if judge_form.tracks.field.queryset %}
           <div class="field{% if judge_form.tracks.errors %} field--invalid{% endif %}" role="group" aria-labelledby="judge-tracks-label">
-            <p class="field__label" id="judge-tracks-label"><span class="ps1">{{ role }}@dogfood:~$</span> <span class="cmd">--tracks</span></p>
+            <p class="field__label" id="judge-tracks-label"><span class="ps1">{{ role }}@nyanjaro:~$</span> <span class="cmd">--tracks</span></p>
             {% for option in judge_form.tracks %}<label class="check" for="{{ option.id_for_label }}">{{ option.tag }} {{ option.choice_label }}</label>{% endfor %}
             <p class="field__help">{{ judge_form.tracks.help_text }}</p>
             {% for error in judge_form.tracks.errors %}<p class="field__error">{{ error }}</p>{% endfor %}

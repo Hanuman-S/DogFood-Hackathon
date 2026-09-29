@@ -1,4 +1,4 @@
-"""Settings for the DOGFOOD portal.
+"""Settings for the NYANJARO portal.
 
 Every value comes from the environment with a default that works inside `docker compose up`.
 Nothing here reaches the network: no CDN, no hosted database, no auth provider, no mail API.

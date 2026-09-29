@@ -7,7 +7,7 @@
   {% if field.widget_type == "checkbox" %}
     <label class="check" for="{{ field.id_for_label }}">{{ field }} {{ cmd|default:field.label }}</label>
   {% else %}
-    <label class="field__label" for="{{ field.id_for_label }}"><span class="ps1">{% if short %}${% else %}{{ role }}@dogfood:~${% endif %}</span> <span class="cmd">{{ cmd|default:field.label }}</span>{% if field.field.required %} <span class="faint">*</span>{% endif %}</label>
+    <label class="field__label" for="{{ field.id_for_label }}"><span class="ps1">{% if short %}${% else %}{{ role }}@nyanjaro:~${% endif %}</span> <span class="cmd">{{ cmd|default:field.label }}</span>{% if field.field.required %} <span class="faint">*</span>{% endif %}</label>
     {{ field }}
   {% endif %}
   {% if field.help_text %}<p class="field__help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</p>{% endif %}
