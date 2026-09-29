@@ -10,6 +10,7 @@ unlinked as soon as it is open, so nothing is left behind whatever happens to th
 """
 
 import os
+from pathlib import Path
 
 from django.contrib import messages
 from django.db import transaction
@@ -63,17 +64,39 @@ def bundle_api(request, slug):
 
 # --- importing -------------------------------------------------------------------------------------
 
+# A ready-made bundle to start with: the demo seed's judging event (tracks, a rubric, five submitted
+# projects, an assignment round, a finished community vote with ballots: an open vote cannot be
+# imported, so voting was ended first), exported by this install's own
+# bundle writer from a freshly seeded stack. Only the demo accounts (@dogfood.local); no secrets.
+SAMPLE_BUNDLE = Path(__file__).resolve().parent.parent / "imports" / "samples" / "dogfood-demo-event.zip"
+
+
+def _sample_copy():
+    """A temporary copy of the sample: the import removes its file afterwards, as with an upload."""
+    import shutil
+    import tempfile
+
+    handle, path = tempfile.mkstemp(prefix="dogfood-import-", suffix=".zip")
+    os.close(handle)
+    shutil.copyfile(SAMPLE_BUNDLE, path)
+    return path
+
+
 def _import(request):
-    """Save the upload (capped while copying), import it, and always remove the temporary file."""
+    """Save the upload (capped while copying), or copy the sample, import it through the same
+    validation, and always remove the temporary file."""
     from imports import bundle_import, bundle_validate
 
     from core.models import AuditAction
 
     try:
-        upload = request.FILES.get("bundle")
-        if upload is None:
-            raise bundle.BundleError("no_file", "choose a bundle (.zip) to import")
-        path = bundle_validate.save_upload(upload)
+        if request.POST.get("sample") == "1":
+            path = _sample_copy()
+        else:
+            upload = request.FILES.get("bundle")
+            if upload is None:
+                raise bundle.BundleError("no_file", "choose a bundle (.zip) to import")
+            path = bundle_validate.save_upload(upload)
     except bundle.BundleError as refusal:  # refused before the service: audited here, like every refusal
         audit.record(AuditAction.EVENT_IMPORT_REFUSED, request=request, reason=refusal.code,
                      detail_text=refusal.detail[:300])
@@ -103,6 +126,20 @@ def import_page(request):
         messages.success(request, f"imported as {event.slug}. it is unpublished: check it, then publish it.")
         return redirect("organizer:event", slug=event.slug)
     return render(request, "organizer/import.html", {})
+
+
+@never_cache
+@portal_required("organizer")
+def import_sample(request):
+    """GET: the sample bundle, to look inside before importing it (same people as the import)."""
+
+    from imports.bundle_validate import may_import
+
+    if not may_import(request.user):
+        from core.views import forbidden
+        return forbidden(request, reason="Only platform admins and accounts that may create events can import one.")
+    return FileResponse(SAMPLE_BUNDLE.open("rb"), as_attachment=True, filename=SAMPLE_BUNDLE.name,
+                        content_type="application/zip")
 
 
 @never_cache
