@@ -1,4 +1,5 @@
 from django import template
+from django.utils.html import format_html
 
 from core import markdown
 
@@ -21,7 +22,9 @@ def utc(value, empty="--"):
     names what an empty date means."""
     if not value:
         return empty
-    return value.strftime("%Y-%m-%d %H:%M UTC")
+    # A <time> element: machine-readable, and styled as a time everywhere (.when in crt.css).
+    return format_html('<time class="when" datetime="{}">{}</time>',
+                       value.isoformat(), value.strftime("%Y-%m-%d %H:%M UTC"))
 
 
 @register.filter
