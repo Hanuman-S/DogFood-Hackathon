@@ -333,17 +333,39 @@
   });
 
   // [ copy ] buttons: <button data-copy="#target-id">
+  // The Clipboard API exists only on HTTPS (and localhost). A portal served over plain HTTP uses
+  // the older copy command on a selection; if even that is refused, the text is left selected and
+  // the button says how to finish.
   function initCopy(root) {
     root.querySelectorAll("[data-copy]").forEach(function (button) {
       button.hidden = false;
+      var label = button.textContent;
+      var say = function (text) {
+        button.textContent = text;
+        setTimeout(function () { button.textContent = label; }, 2000);
+      };
+      var selectOnly = function (target) {
+        var range = document.createRange();
+        range.selectNodeContents(target);
+        var selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+      var fallback = function (target) {
+        selectOnly(target);
+        var done = false;
+        try { done = document.execCommand("copy"); } catch (err) { done = false; }
+        say(done ? "copied" : "press ctrl+c");
+      };
       button.addEventListener("click", function () {
         var target = document.querySelector(button.getAttribute("data-copy"));
-        if (!target || !navigator.clipboard) return;
-        navigator.clipboard.writeText(target.textContent.trim()).then(function () {
-          var label = button.textContent;
-          button.textContent = "copied";
-          setTimeout(function () { button.textContent = label; }, 1500);
-        });
+        if (!target) return;
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(target.textContent.trim())
+            .then(function () { say("copied"); }, function () { fallback(target); });
+        } else {
+          fallback(target);
+        }
       });
     });
   }
@@ -574,12 +596,27 @@
     render(false);
     return pop;
   };
+  var showDateProblem = function (input, bad) {
+    var field = input.closest(".field");
+    var note = field && field.querySelector("[data-date-problem]");
+    input.classList.toggle("input--bad", bad);
+    if (bad) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+    if (!field) return;
+    if (bad && !note) {
+      note = document.createElement("p");
+      note.className = "field__error";
+      note.setAttribute("data-date-problem", "");
+      note.textContent = "use a real date: yyyy-mm-dd";
+      field.querySelector(".datetime").insertAdjacentElement("afterend", note);
+    } else if (!bad && note) {
+      note.remove();
+    }
+  };
   document.querySelectorAll(".datetime input[type=date]").forEach(function (input) {
     if (input.disabled) return;  // a locked date keeps the plain (disabled) box
     input.type = "text";
     input.setAttribute("inputmode", "numeric");
     input.setAttribute("placeholder", "yyyy-mm-dd");
-    input.setAttribute("maxlength", "10");
     var wrap = document.createElement("span");
     wrap.className = "datepick";
     input.parentNode.insertBefore(wrap, input);
@@ -605,6 +642,21 @@
     });
     input.addEventListener("keydown", function (e) {
       if (e.key === "ArrowDown" && e.altKey) { e.preventDefault(); button.click(); }
+    });
+    // Typing: digits only, and the dashes put in for you ("20261028" -> "2026-10-28"). A dash is
+    // added only before a digit that follows it, so backspace never gets stuck on one. Pasted
+    // "2026/10/28" or "2026-10-28" keep their digits the same way.
+    input.addEventListener("input", function () {
+      var digits = input.value.replace(/\D/g, "").slice(0, 8);
+      var shaped = digits.slice(0, 4) + (digits.length > 4 ? "-" + digits.slice(4, 6) : "") +
+        (digits.length > 6 ? "-" + digits.slice(6, 8) : "");
+      if (shaped !== input.value) input.value = shaped;
+      showDateProblem(input, false);
+    });
+    // Leaving the box: a date that does not exist (2026-13-45, or half typed) is marked at once.
+    // The server checks every date too; this only saves a round trip.
+    input.addEventListener("blur", function () {
+      showDateProblem(input, input.value !== "" && !parseIso(input.value));
     });
   });
   document.addEventListener("mousedown", function (e) {
