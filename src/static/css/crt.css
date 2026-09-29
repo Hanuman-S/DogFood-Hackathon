@@ -1009,3 +1009,14 @@ time.when { color: var(--time); text-shadow: 0 0 6px var(--time-glow); }
 .datetime input { color: var(--time); }
 .datetime input::placeholder { color: var(--fg-hint); }
 @media print { time.when { color: #000 !important; text-shadow: none; } }
+
+/* --- page footer: a long page's closing buttons ("back to <event>", "assign judges") stay pinned
+   to the bottom of the screen while you scroll, instead of waiting at the very end. Where the page
+   ends, it sits in place as before. */
+.page-footer {
+  position: sticky; bottom: 0; z-index: 6; margin: 0;
+  padding: 12px 0 14px; border-top: 1px dashed var(--line-soft);
+  background: linear-gradient(rgba(7, 6, 13, 0.82), var(--bg) 45%);
+}
+html[data-theme="light"] .page-footer { background: var(--bg); }
+@media print { .page-footer { position: static; } }

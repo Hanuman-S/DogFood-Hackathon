@@ -63,6 +63,6 @@
   {% else %}
     <p class="faint">voting has closed.</p>
   {% endif %}
-  <p class="actions"><a class="btn btn--ghost" href="{% url 'public:event_detail' event.slug %}">back to {{ event.name }}</a></p>
+  <p class="actions page-footer"><a class="btn btn--ghost" href="{% url 'public:event_detail' event.slug %}">back to {{ event.name }}</a></p>
 </div>
 {% endblock %}

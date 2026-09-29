@@ -15,7 +15,7 @@
   <div data-refresh-url="{% url 'organizer:progress' event.slug %}?partial=1" data-refresh-every="30" aria-live="polite">
     {% include "organizer/_progress_tables.html" %}
   </div>
-  <p class="actions">
+  <p class="actions page-footer">
     <a class="btn btn--ghost" href="{% url 'organizer:assignments' event.slug %}">assign judges</a>
     <a class="btn btn--ghost" href="{% url 'organizer:event' event.slug %}">back to {{ event.name }}</a>
   </p>
