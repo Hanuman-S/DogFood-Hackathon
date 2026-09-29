@@ -621,3 +621,53 @@ def test_voting_bypass_does_not_leak_past_its_block_inside_a_transaction(vote_ev
         with pytest.raises(DatabaseError, match="dogfood_voting_closed"), transaction.atomic():
             with connection.cursor() as cursor:
                 cursor.execute("DELETE FROM voting_ballot WHERE id = %s", [ballot.pk])
+
+
+# --- the public event page's buttons -----------------------------------------------------------------
+
+def event_page(client, event):
+    return client.get(f"/events/{event.slug}").content.decode()
+
+
+@pytest.mark.django_db
+def test_after_the_close_the_event_page_offers_voting_not_taking_part(vote_event, client_for):
+    page = event_page(client_for(vote_event.voter), vote_event)
+    assert "enter as participant" not in page and "sign up to take part" not in page
+    assert f'href="/participant/events/{vote_event.slug}/vote"' in page or ">vote</a>" in page
+
+
+@pytest.mark.django_db
+def test_the_vote_button_follows_the_votes_own_rules(vote_event, client_for, make_user):
+    # An account created after voting opened (the option is on) is not offered the button...
+    newcomer = make_user()
+    assert ">vote</a>" not in event_page(client_for(newcomer), vote_event)
+    # ...nor is the event's judge; an older account on no team is.
+    assert ">vote</a>" not in event_page(client_for(vote_event.judge), vote_event)
+    assert ">vote</a>" in event_page(client_for(vote_event.outsider), vote_event)
+    # With the option off, the newcomer may vote, so the button is back.
+    VotingConfig.objects.filter(pk=vote_event.config.pk).update(accounts_before_open_only=False)
+    assert ">vote</a>" in event_page(client_for(newcomer), vote_event)
+
+
+@pytest.mark.django_db
+def test_a_visitor_is_asked_to_log_in_to_vote_and_link_modes_show_no_button(vote_event):
+    page = event_page(Client(), vote_event)
+    assert "log in to vote" in page and "sign up to take part" not in page
+    VotingConfig.objects.filter(pk=vote_event.config.pk).update(access_mode="open_link")
+    page = event_page(Client(), vote_event)
+    assert "log in to vote" not in page and ">vote</a>" not in page
+
+
+@pytest.mark.django_db
+def test_no_vote_button_after_voting_closes(vote_event, client_for):
+    # opens_at is frozen once voting opened (the trigger); moving the close is enough.
+    VotingConfig.objects.filter(pk=vote_event.config.pk).update(closes_at=timezone.now() - timedelta(minutes=1))
+    assert ">vote</a>" not in event_page(client_for(vote_event.outsider), vote_event)
+
+
+@pytest.mark.django_db
+def test_a_team_with_an_extension_can_still_enter(vote_event, client_for):
+    team = vote_event.projects_list[0].team
+    TeamExtension.objects.create(team=team, until=timezone.now() + timedelta(hours=3), reason="r")
+    assert "enter as participant" in event_page(client_for(vote_event.voter), vote_event)
+    assert "enter as participant" not in event_page(client_for(vote_event.outsider), vote_event)

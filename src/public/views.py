@@ -16,7 +16,10 @@ from projects.comment_errors import NotCommentable
 from projects.models import Project
 from projects.services import can_view
 from scoring.results import results_page, results_visible
+from teams.models import Team
 from voting import services as voting_services
+from voting.models import AccessMode
+from core import deadlines
 from core.deadlines import db_now
 
 
@@ -31,9 +34,34 @@ def event_list(request):
     return render(request, "public/event_list.html", {"events": events})
 
 
+def _can_still_take_part(event, user):
+    """Whether "enter as participant" / "sign up to take part" still leads anywhere: submissions
+    are not closed for this viewer (their own team's extension counts)."""
+    team = None
+    if user.is_authenticated:
+        team = Team.objects.filter(event=event, members__user=user).first()
+    return not deadlines.window(event, team).is_closed
+
+
+def _vote_button(event, user, now):
+    """What the page offers for the community vote: "vote", "login", or None.
+
+    Only while voting is open and only in the logged-in-accounts mode (the other modes vote
+    through the link the organizers sent). An account is offered the button only if the vote
+    would take it: the same rule the vote itself applies (voting.services.ineligibility: no
+    staff or admins; with the organizers' option, only accounts created before voting opened)."""
+    config = voting_services.voting_for(event)
+    if not voting_services.is_open(config, now) or config.access_mode != AccessMode.AUTHENTICATED:
+        return None
+    if not user.is_authenticated:
+        return "login"
+    return "vote" if voting_services.ineligibility(event, config, user) is None else None
+
+
 @never_cache
 def event_detail(request, slug):
     event = get_visible_event(request.user, slug)
+    now = db_now()
     return render(
         request, "public/event_detail.html",
         {
@@ -45,7 +73,8 @@ def event_detail(request, slug):
             "submitted_count": event.projects.filter(status="submitted").count(),
             "team_count": event.teams.count(),
             "results_visible": results_visible(event, request.user),
-            "voting_open": voting_services.is_open(voting_services.voting_for(event), db_now()),
+            "can_take_part": _can_still_take_part(event, request.user),
+            "vote_button": _vote_button(event, request.user, now),
         },
     )
 
