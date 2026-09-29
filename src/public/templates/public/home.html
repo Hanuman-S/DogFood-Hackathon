@@ -1,28 +1,50 @@
 {% extends "base.html" %}
+{% load portal %}
 {% block title %}home{% endblock %}
 {% block content %}
-<section class="hero">
-  {% include "_banner.html" %}
-  <p class="hero__lede">a self-hosted hackathon portal: submissions, judging and results, in one place, on your own machine.</p>
-  <ul class="boot" aria-label="system status">
-    <li><span class="tag">[ OK ]</span> auth and sessions online</li>
-    <li><span class="tag">[ OK ]</span> role portals: participant · judge · organizer · admin</li>
-    <li><span class="tag">[ OK ]</span> events, teams by invite link, draft-and-submit projects</li>
-    <li><span class="tag">[ OK ]</span> deadlines enforced by the server and the database</li>
-    <li><span class="tag">[ OK ]</span> public gallery with search and filters</li>
-    <li><span class="tag">[ OK ]</span> judges assigned to projects, scoring on a weighted rubric</li>
-    <li><span class="tag">[ OK ]</span> community voting, published results and signed records</li>
+<div class="stack">
+  <section class="hero">
+    {% include "_banner.html" %}
+    <p class="hero__lede">a self-hosted hackathon portal: submissions, judging and results, in one place, on your own machine.</p>
+    <div class="actions">
+      <a class="btn btn--ghost" href="{% url 'public:gallery' %}">browse {{ project_count }} project{{ project_count|pluralize }}</a>
+      <a class="btn btn--ghost" href="{% url 'public:event_list' %}">browse events</a>
+      {% if user.is_authenticated %}
+        <a class="btn" href="{{ portal_url }}">open {{ role }} portal</a>
+        <a class="btn btn--ghost" href="{% url 'accounts:account' %}">account</a>
+      {% else %}
+        <a class="btn" href="{% url 'accounts:login' %}">log in</a>
+        <a class="btn btn--ghost" href="{% url 'accounts:signup' %}">sign up</a>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="nyan-wrap">{% include "_nyan.html" %}</div>
+
+  <ul class="stats" aria-label="the portal right now">
+    <li class="stat"><span class="stat__value">{{ open_count }}</span><span class="stat__label">open for submissions</span></li>
+    <li class="stat"><span class="stat__value">{{ judging_count }}</span><span class="stat__label">being judged</span></li>
+    <li class="stat"><span class="stat__value">{{ team_count }}</span><span class="stat__label">teams</span></li>
+    <li class="stat"><span class="stat__value">{{ project_count }}</span><span class="stat__label">projects in the gallery</span></li>
   </ul>
-  <div class="actions">
-    <a class="btn btn--ghost" href="{% url 'public:gallery' %}">browse {{ project_count }} project{{ project_count|pluralize }}</a>
-    <a class="btn btn--ghost" href="{% url 'public:event_list' %}">browse events</a>
-    {% if user.is_authenticated %}
-      <a class="btn" href="{{ portal_url }}">open {{ role }} portal</a>
-      <a class="btn btn--ghost" href="{% url 'accounts:account' %}">account</a>
-    {% else %}
-      <a class="btn" href="{% url 'accounts:login' %}">log in</a>
-      <a class="btn btn--ghost" href="{% url 'accounts:signup' %}">sign up</a>
-    {% endif %}
-  </div>
-</section>
+
+  <section class="frame">
+    <header class="frame__bar"><h2 class="frame__title">happening now</h2><span class="frame__meta">next date first</span></header>
+    <div class="frame__body frame__body--flush table-wrap">
+      <table class="table">
+        <tbody>
+        {% for event, label, when in happening %}
+          <tr>
+            <td><a class="bright" href="{% url 'public:event_detail' event.slug %}">{{ event.name }}</a>{% if event.tagline %}<br><span class="faint">{{ event.tagline }}</span>{% endif %}</td>
+            <td><span class="badge{% if event.phase == 'open' %} badge--on{% endif %}">{{ event.get_phase_display }}</span></td>
+            <td class="num"><span class="dim">{{ label }}</span> {{ when|utc:"to be announced" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td class="faint">no event is running right now. <a href="{% url 'public:event_list' %}">see past events</a>.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
 {% endblock %}

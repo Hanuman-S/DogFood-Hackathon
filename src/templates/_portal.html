@@ -12,11 +12,7 @@
       <span class="frame__meta">{{ user.email }}</span>
     </header>
     <div class="frame__body">
-      <ul class="boot">
-        <li><span class="tag">[ OK ]</span> session authenticated <span class="faint">({{ request.auth_method }})</span></li>
-        <li><span class="tag">[ OK ]</span> portal access verified by the server: <span class="bright">{{ request.resolver_match.namespace|cut:"platform_" }}</span> <span class="faint">(roles are checked again per event)</span></li>
-        <li><span class="tag">[ OK ]</span> welcome, {{ user.get_short_name }}.</li>
-      </ul>
+      <p class="portal__hello">welcome, <span class="bright">{{ user.get_short_name }}</span>.</p>
       {% block portal_body %}{% endblock %}
     </div>
   </section>

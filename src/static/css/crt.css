@@ -217,7 +217,6 @@ pre { margin: 0; font-family: var(--font-mono); }
 .boot { list-style: none; margin: 0 0 18px; padding: 0; font-size: 13px; }
 .boot li { padding: 1px 0; }
 .boot .tag { color: var(--fg-bright); }
-.boot .tag--pending { color: var(--fg-faint); }
 
 .cursor { display: inline-block; width: 0.6em; color: var(--fg-bright); animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -1020,3 +1019,27 @@ time.when { color: var(--time); text-shadow: 0 0 6px var(--time-glow); }
 }
 html[data-theme="light"] .page-footer { background: var(--bg); }
 @media print { .page-footer { position: static; } }
+
+/* --- Nyan Cat on the home page (templates/_nyan.html, drawn by scripts/make_nyan.py) ------------
+   All motion is CSS on the SVG's groups, in the SVG's own pixel units: the rainbow's alternate
+   segments wave out of step, the cat bobs, the legs paddle, the stars stream left and loop (the
+   star set is drawn twice, 80 units apart). Nothing moves for anyone who asked for less motion. */
+.nyan-wrap { display: grid; justify-items: center; gap: 8px; padding: 8px 0 4px; }
+.nyan { width: min(640px, 100%); height: auto; display: block; image-rendering: pixelated; }
+.nyan__caption { font-size: 12px; color: var(--fg-faint); margin: 0; }
+.nyan__rainbow--a { animation: nyan-wave 0.42s steps(1) infinite; }
+.nyan__rainbow--b { animation: nyan-wave 0.42s steps(1) infinite; animation-delay: -0.21s; }
+.nyan__body { animation: nyan-bob 0.42s steps(1) infinite; }
+.nyan__legs { animation: nyan-paddle 0.21s steps(1) infinite; }
+.nyan__stars { animation: nyan-stars 3.2s linear infinite, nyan-twinkle 0.42s steps(1) infinite; }
+@keyframes nyan-wave { 0% { transform: translateY(0); } 50% { transform: translateY(1px); } }
+@keyframes nyan-bob { 0% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+@keyframes nyan-paddle { 0% { transform: translateX(0); } 50% { transform: translateX(-1px); } }
+@keyframes nyan-stars { from { transform: translateX(0); } to { transform: translateX(-80px); } }
+@keyframes nyan-twinkle { 0% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .nyan__rainbow--a, .nyan__rainbow--b, .nyan__body, .nyan__legs, .nyan__stars { animation: none; }
+}
+@media print { .nyan-wrap { display: none; } }
+ul.stats { list-style: none; margin: 0; padding: 0; }
+.portal__hello { margin: 0 0 18px; color: var(--fg-dim); }

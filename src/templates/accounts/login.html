@@ -10,10 +10,6 @@
   </header>
   <div class="frame__body grid-auth">
     <div>
-      <ul class="boot" aria-hidden="true">
-        <li><span class="dim">{{ role }}@dogfood:~$</span> connect --portal</li>
-        <li><span class="tag">[ OK ]</span> <span class="dim">secure session channel ready</span></li>
-      </ul>
       {% include "_form_errors.html" %}
       <form class="form" method="post" action="{% url 'accounts:login' %}" novalidate>
         {% csrf_token %}

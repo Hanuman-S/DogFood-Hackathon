@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.cache import never_cache
 
 from accounts.roles import is_judge_of
-from events.models import Event
+from events.models import Event, Phase
 from events.services import can_manage, get_visible_event
 from projects import comments
 from projects import gallery as gallery_query
@@ -23,9 +23,31 @@ from core import deadlines
 from core.deadlines import db_now
 
 
+def _happening(events, limit=4):
+    """Published events not yet finished, soonest next date first, each with that next date:
+    [(event, label, when)]. `when` is None when the only date left is "to be announced"."""
+    rows = []
+    for event in events:
+        if event.phase == Phase.FINISHED:
+            continue
+        upcoming = [(label, when) for label, when, passed in event.timeline() if when and not passed]
+        label, when = upcoming[0] if upcoming else ("results", None)
+        rows.append((event, label, when))
+    rows.sort(key=lambda row: (row[2] is None, row[2] or 0))
+    return rows[:limit]
+
+
 @never_cache
 def home(request):
-    return render(request, "public/home.html", {"project_count": gallery_query.visible_projects().count()})
+    events = list(Event.objects.published())
+    phases = [event.phase for event in events]
+    return render(request, "public/home.html", {
+        "project_count": gallery_query.visible_projects().count(),
+        "open_count": phases.count(Phase.OPEN),
+        "judging_count": phases.count(Phase.JUDGING),
+        "team_count": Team.objects.filter(event__in=events).count(),
+        "happening": _happening(events),
+    })
 
 
 @never_cache
