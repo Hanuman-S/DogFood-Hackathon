@@ -1052,3 +1052,6 @@ html[data-theme="light"] .page-footer { background: var(--bg); }
 @media print { .nyan-wrap { display: none; } }
 ul.stats { list-style: none; margin: 0; padding: 0; }
 .portal__hello { margin: 0 0 18px; color: var(--fg-dim); }
+/* A box that should be found at a glance (the event bundle): the accent colour, a solid rule. */
+.frame--feature { border-color: var(--accent); box-shadow: var(--frame-glow), 0 0 22px rgba(180, 167, 255, 0.16); }
+.frame--feature > .frame__bar { border-bottom-style: solid; }

@@ -56,3 +56,14 @@ def test_a_participant_can_neither_download_nor_import_the_sample(make_user, cli
 def test_the_import_page_asks_before_importing_the_sample(make_user, client_for):
     page = client_for(make_user(role=Role.ORGANIZER)).get("/organizer/events/import").content.decode()
     assert 'name="sample" value="1"' in page and "permanent event" in page
+
+
+def test_the_event_page_puts_the_bundle_where_it_is_seen(make_event, client_for):
+    event = make_event()
+    page = client_for(event.organizer).get(f"/organizer/events/{event.slug}/").content.decode()
+    box = page[page.index('class="frame frame--feature" id="bundle"'):]
+    assert f'class="btn" href="/organizer/events/{event.slug}/bundle"' in box[:box.index("</section>")]
+    # First in its tab, and a tile on the overview.
+    tab = page[page.index('id="tab-export"'):]
+    assert tab.index('id="bundle"') < tab.index('id="export"')
+    assert '>event bundle</a><span class="faint">download the whole event as one zip' in page

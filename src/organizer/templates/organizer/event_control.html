@@ -72,6 +72,7 @@
           <li><a class="tools__link" href="{% url 'organizer:voting' event.slug %}">community vote</a><span class="faint">set up voting, end it, the live tally</span></li>
           <li><a class="tools__link" href="{% url 'organizer:comments' event.slug %}">comments</a><span class="faint">comments on gallery projects: hide, restore, turn off</span></li>
           <li><a class="tools__link" href="{% url 'organizer:records' event.slug %}">signed records</a><span class="faint">certificates for judges, participants and winners</span></li>
+          <li><a class="tools__link" href="{% url 'organizer:event_bundle' event.slug %}">event bundle</a><span class="faint">download the whole event as one zip</span></li>
         </ul>
       </div>
     </section>
@@ -456,6 +457,16 @@
 
   {# --- export and share #}
   <div class="tabs__panel stack" id="tab-export" data-tab-panel>
+    <section class="frame frame--feature" id="bundle">
+      <header class="frame__bar"><h2 class="frame__title">event bundle</h2><span class="frame__meta">the whole event, one zip</span></header>
+      <div class="frame__body stack">
+        <p class="flush">everything about this event in one file: to keep a copy, or to move it to another install (where "import an event bundle" brings it in as a new event).</p>
+        <div class="actions">
+          <a class="btn" href="{% url 'organizer:event_bundle' event.slug %}">download event bundle (.zip)</a>
+          <span class="faint">no passwords, tokens, invite links, voting secrets or ip hashes; voters are pseudonymised.{% if voting_open %} end the community vote first: a bundle with an open vote cannot be imported.{% endif %}</span>
+        </div>
+      </div>
+    </section>
     <section class="frame" id="export">
       <header class="frame__bar"><h2 class="frame__title">export</h2><span class="frame__meta">csv, unlocked stage by stage</span></header>
       <div class="frame__body stack">
@@ -487,7 +498,6 @@
         <p class="section-title">embed the gallery on another site</p>
         <p class="faint">paste this into any web page to show this event's projects (published events only; what an anonymous visitor sees on /projects, no votes, results or comments). options: track=&lt;id&gt;, tag=&lt;name&gt;, sort=newest|oldest|name, limit=1-24, theme=dark|light. the script sizes the frame to its content; without it the frame stays 600px tall.</p>
         <div class="secret"><pre class="certificate__raw" id="embed-snippet">{{ embed_snippet }}</pre><button class="btn btn--small" type="button" data-copy="#embed-snippet" hidden>copy</button></div>
-        <p class="actions"><a class="btn btn--small btn--ghost" href="{% url 'organizer:event_bundle' event.slug %}">download event bundle</a><span class="faint">the whole event as one zip, to move it to another install. no passwords, tokens, invite links, voting secrets or ip hashes; voters are pseudonymised.</span></p>
       </div>
     </section>
   </div>

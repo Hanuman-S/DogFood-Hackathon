@@ -86,8 +86,12 @@ def embed_snippet(event):
 
 
 def _control(request, event, status=200, **forms):
+    from voting import services as voting_services
+
     context = {
         "event": event,
+        # An open vote with ballots cannot be imported elsewhere: the bundle box says so.
+        "voting_open": voting_services.is_open(voting_services.voting_for(event), deadlines.db_now()),
         "settings_form": forms.get("settings_form") or EventForm(
             instance=event, timeline_locked=services.timeline_locked(event)),
         "track_form": forms.get("track_form") or TrackForm(event=event),
