@@ -386,3 +386,10 @@ def test_raising_the_minimum_cannot_invalidate_submitted_projects(make_event, ma
     assert response.status_code == 400
     event.refresh_from_db()
     assert event.min_team_size == 1
+
+
+@pytest.mark.parametrize("low, high, shown", [(1, 4, "1–4"), (2, 5, "2–5"), (3, 3, "exactly 3"), (1, 1, "exactly 1")])
+def test_team_size_is_shown_as_min_to_max(make_event, low, high, shown):
+    event = make_event()
+    event.min_team_size, event.max_team_size = low, high
+    assert event.team_size_display == shown

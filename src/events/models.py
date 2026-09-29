@@ -148,11 +148,11 @@ class Event(models.Model):
 
     @property
     def team_size_display(self):
+        # Always min-max: a minimum above 1 matters (smaller teams cannot submit), so it is never
+        # hidden behind "up to".
         if self.min_team_size == self.max_team_size:
             return f"exactly {self.max_team_size}"
-        if self.min_team_size == 1:
-            return f"up to {self.max_team_size}"
-        return f"{self.min_team_size} to {self.max_team_size}"
+        return f"{self.min_team_size}–{self.max_team_size}"
 
     def timeline(self):
         """[(label, when, passed)] for every date, in order. `when` is None for results TBD."""
