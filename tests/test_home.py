@@ -44,3 +44,11 @@ def test_the_nyan_template_is_what_the_generator_draws(tmp_path):
     assert "scripts/make_nyan.py" in template
     assert not re.search(r"https?://|style=", template)  # offline, and nothing for the CSP to refuse
     assert template.count("<rect") > 200
+
+
+def test_the_cat_flies_in_from_the_columns_edge_and_the_rainbow_reaches_it():
+    css = (TEMPLATES / "static/css/crt.css").read_text(encoding="utf-8")
+    assert "overflow: hidden;\n             container-type: inline-size;" in css  # cut at the column edge
+    assert "@keyframes nyan-fly-in { from { transform: translateX(calc(-50cqw - 5%)); }" in css
+    template = (TEMPLATES / "templates/_nyan.html").read_text(encoding="utf-8")
+    assert 'x="-320"' in template  # drawn far past the picture's left edge

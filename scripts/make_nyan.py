@@ -29,6 +29,10 @@ WIDTH, HEIGHT = 80, 31
 TOP = 6            # the pop-tart's top row
 POP_X = 44         # the pop-tart's left column
 SEGMENT = 8        # rainbow segment width: alternate segments wave out of step
+# The rainbow (and the stars) go on this far left of the picture, past its left edge: the page
+# shows the SVG overflowing and cuts it at the content column's edge, so on any screen the rainbow
+# starts exactly where the page's padding does.
+REACH = 320
 BAND = 3           # rainbow band height
 
 HEAD = [
@@ -64,7 +68,7 @@ STAR = [
     "..W..",
     "..W..",
 ]
-# (x, y) of each star's top-left; the set is drawn twice, WIDTH apart, so it can loop.
+# (x, y) of each star's top-left; the set repeats every WIDTH, from -REACH on, so it can loop.
 STARS = [(2, 0), (22, 2), (36, 0), (12, 26), (30, 25), (58, 1), (70, 26), (48, 26)]
 SPRINKLES = [(5, 4), (9, 3), (14, 4), (4, 8), (8, 7), (11, 10), (5, 12), (9, 14), (13, 13)]
 
@@ -100,7 +104,7 @@ def pop_tart():
 def rainbow(parity):
     """The segments whose index has this parity (0 or 1)."""
     grid = {}
-    for x in range(0, POP_X + 2):
+    for x in range(-REACH, POP_X + 2):
         if (x // SEGMENT) % 2 != parity:
             continue
         for band, colour in enumerate(RAINBOW):
@@ -135,7 +139,7 @@ def main():
         stamp(legs, LEG, POP_X + lx, TOP + 17)
     stamp(head, HEAD, POP_X + 12, TOP + 5)
     for sx, sy in STARS:
-        for copy in (0, WIDTH):
+        for copy in range(-REACH, 2 * WIDTH, WIDTH):
             stamp(stars, STAR, sx + copy, sy)
 
     body = pop_tart()

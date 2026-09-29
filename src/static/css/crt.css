@@ -1024,8 +1024,17 @@ html[data-theme="light"] .page-footer { background: var(--bg); }
    All motion is CSS on the SVG's groups, in the SVG's own pixel units: the rainbow's alternate
    segments wave out of step, the cat bobs, the legs paddle, the stars stream left and loop (the
    star set is drawn twice, 80 units apart). Nothing moves for anyone who asked for less motion. */
-.nyan-wrap { display: grid; justify-items: center; gap: 8px; padding: 8px 0 4px; }
-.nyan { width: min(640px, 100%); height: auto; display: block; image-rendering: pixelated; }
+/* The SVG draws its rainbow and stars far past its own left edge; the wrap is the content column,
+   so overflow shows up to the column's edge and is cut exactly there: the rainbow starts where
+   the padding does, on any screen. */
+.nyan-wrap { display: grid; justify-items: center; gap: 8px; padding: 8px 0 4px; overflow: hidden;
+             container-type: inline-size; }
+.nyan { width: min(640px, 100%); height: auto; display: block; image-rendering: pixelated; overflow: visible;
+        animation: nyan-fly-in 2.8s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+/* On load the cat flies in from the column's left edge to the centre, then stays and bobs. The
+   cat's pop-tart starts 55% into the picture (x 44 of 80), and the picture is centred, so the edge
+   is 50cqw - 50% to its left: -(50cqw - 50%) - 55% = -50cqw - 5%. */
+@keyframes nyan-fly-in { from { transform: translateX(calc(-50cqw - 5%)); } to { transform: translateX(0); } }
 .nyan__caption { font-size: 12px; color: var(--fg-faint); margin: 0; }
 .nyan__rainbow--a { animation: nyan-wave 0.42s steps(1) infinite; }
 .nyan__rainbow--b { animation: nyan-wave 0.42s steps(1) infinite; animation-delay: -0.21s; }
@@ -1038,7 +1047,7 @@ html[data-theme="light"] .page-footer { background: var(--bg); }
 @keyframes nyan-stars { from { transform: translateX(0); } to { transform: translateX(-80px); } }
 @keyframes nyan-twinkle { 0% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) {
-  .nyan__rainbow--a, .nyan__rainbow--b, .nyan__body, .nyan__legs, .nyan__stars { animation: none; }
+  .nyan, .nyan__rainbow--a, .nyan__rainbow--b, .nyan__body, .nyan__legs, .nyan__stars { animation: none; }
 }
 @media print { .nyan-wrap { display: none; } }
 ul.stats { list-style: none; margin: 0; padding: 0; }
