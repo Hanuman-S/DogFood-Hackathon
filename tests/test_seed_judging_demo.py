@@ -133,3 +133,34 @@ def test_fixture_event_gets_a_closed_vote_after_import():
         call_command("seed_demo", "--votes", stdout=out)
     config = VotingConfig.objects.exclude(event__slug__startswith="dogfood-").get()
     assert voting.state(config, timezone.now()) == "closed"
+
+
+# --- the old "demo" tag (a meaningless filter chip in the gallery) ---------------------------------
+
+def test_demo_projects_are_seeded_without_a_tag():
+    from projects.models import Tag
+
+    seed()
+    assert not Tag.objects.filter(name="demo").exists()
+    assert not Project.objects.filter(event__slug="dogfood-archive-2026", tags__isnull=False).exists()
+
+
+def test_a_reboot_clears_the_old_tag_from_the_demo_events_only(make_event, make_team):
+    from core.deadlines import deadline_bypass
+    from projects.models import Tag
+
+    seed()
+    old = Tag.objects.create(name="demo")
+    with deadline_bypass(None, "test: a database seeded by the old seed"):
+        for project in Project.objects.filter(event__slug__in=["dogfood-live-demo", "dogfood-archive-2026"]):
+            project.tags.add(old)
+    # A real event that happens to use the tag keeps it.
+    other = make_event(slug="real-event")
+    mine = Project.objects.create(team=make_team(other), event=other, name="Mine")
+    mine.tags.add(old)
+
+    seed()
+    assert list(old.projects.all()) == [mine]
+    mine.tags.clear()
+    seed()
+    assert not Tag.objects.filter(name="demo").exists()

@@ -136,6 +136,7 @@ class Command(BaseCommand):
         event_state = self._seed_event()
         closed_state = self._seed_closed_event()
         closed_state += self._seed_archive_vote()
+        self._drop_old_demo_tag()
         self._print(rows)
         base = settings.PORTAL_BASE_URL.rstrip("/")
         self.stdout.write(f"| open demo event:   {base}/events/{DEMO_EVENT_SLUG} [{event_state}]")
@@ -363,12 +364,32 @@ class Command(BaseCommand):
         form = ProjectForm({
             "name": project_name, "tagline": tagline, "track": track.pk, "repo_url": repo,
             "description": f"## What it does\n\n{tagline}\n\n## Status\n\nA demo project.",
-            "demo_video_url": "", "live_url": "", "tags": "demo",
+            "demo_video_url": "", "live_url": "", "tags": "",
         }, instance=project, event=event)
         if not form.is_valid():
             raise CommandError(f"demo project {project_name}: {form.errors.as_text()}")
         project = update_project(request, project, form)
         return submit_project(request, project)
+
+    def _drop_old_demo_tag(self):
+        """Earlier seeds tagged every demo project "demo", which showed in the gallery as a filter
+        chip ("demo 5") meaning nothing. Take it off the two demo events' projects (only those, and
+        only that tag), and drop the tag once nothing uses it. Idempotent, so it runs every boot.
+        The archive is closed, so the tags table is behind the deadline trigger: the seed's usual
+        bypass, as when the archive is created."""
+        from core.deadlines import deadline_bypass
+        from projects.models import Project, Tag
+
+        tag = Tag.objects.filter(name="demo").first()
+        if tag is None:
+            return
+        tagged = Project.objects.filter(event__slug__in=[DEMO_EVENT_SLUG, CLOSED_EVENT_SLUG], tags=tag)
+        if tagged.exists():
+            with deadline_bypass(None, "demo seed: removing the old 'demo' tag from demo projects"):
+                for project in tagged:
+                    project.tags.remove(tag)
+        if not tag.projects.exists():
+            tag.delete()
 
     def _ensure_archive_round(self, event):
         """One assignment round for the archive (fixed seed), if it has none and judging is on."""
