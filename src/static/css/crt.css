@@ -986,3 +986,11 @@ dialog.confirm::backdrop { background: rgba(4, 3, 10, 0.72); }
 .confirm__text { margin: 0 0 18px; color: var(--fg-bright); line-height: 1.55; }
 dialog.confirm .actions { justify-content: flex-end; }
 dialog.confirm .btn--danger { color: var(--err); border-color: var(--err); }
+
+/* A checkbox drawn as a button (the rubric's "remove"): the box is hidden but stays focusable and
+   posted; the label is the button. Pressed, it reads as on (only seen without JS: app.js hides
+   the row at once). */
+.btn-toggle { position: relative; }
+.btn-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.btn-toggle:focus-within { outline: 1px dashed var(--accent); outline-offset: 2px; }
+.btn-toggle:has(input:checked) { background: var(--err); border-color: var(--err); color: var(--bg); }

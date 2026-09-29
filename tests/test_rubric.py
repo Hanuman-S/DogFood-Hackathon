@@ -357,3 +357,11 @@ def test_any_levels_may_be_described_and_the_rest_left_empty(open_event, client_
     assert client.post(url, {"label": "A", "description": ""}).status_code == 302
     criterion.refresh_from_db()
     assert criterion.level_descriptions == {}
+
+
+def test_remove_is_a_button_over_the_formsets_delete_box(open_event, client_for):
+    # Drawn as a button, but still the DELETE checkbox underneath: removing works without JS.
+    page = client_for(open_event.organizer).get(f"/organizer/events/{open_event.slug}/rubric").content.decode()
+    label = page[page.index('class="btn btn--small btn--ghost btn--danger btn-toggle"'):]
+    label = label[:label.index("</label>")]
+    assert 'type="checkbox" name="rubric-0-DELETE"' in label and label.endswith("remove")
