@@ -7,6 +7,14 @@ from accounts.roles import ADMIN, Role
 PASSWORD = "correct-horse-battery"
 
 
+@pytest.fixture(autouse=True)
+def _media_in_tmp(settings, tmp_path):
+    """Uploaded files (and the demo seed's pictures) go to this test's own temporary folder, never
+    to the repo's media/ (the suite runs against the mounted working tree). A test that sets
+    MEDIA_ROOT itself still wins: its override is applied inside this one."""
+    settings.MEDIA_ROOT = str(tmp_path / "media")
+
+
 def _staff_pool_event():
     """An unpublished event that exists only to give test judges a judge role somewhere.
 

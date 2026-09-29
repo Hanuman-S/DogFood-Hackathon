@@ -165,9 +165,10 @@ def test_images_go_through_the_reencoding_pipeline(bundles, check):
     closed = edit_body(bundles["dogfood-archive-2026"], lambda b: b["voting_config"].update(
         closes_at="2020-01-02T00:00:00+00:00", opens_at="2020-01-01T00:00:00+00:00"))
     result = check(rezip(closed))
-    assert len(result.images) == 1
-    (name, cleaned), = result.images.items()
-    assert Image.open(io.BytesIO(cleaned.read())).size == (40, 30)
+    # Every picture in the bundle is re-encoded: this test's own 40x30 thumbnail, and the demo
+    # seed's other four thumbnails and ten screenshots (960x540).
+    sizes = sorted(Image.open(io.BytesIO(cleaned.read())).size for cleaned in result.images.values())
+    assert sizes == [(40, 30)] + [(960, 540)] * 14
 
 
 # --- the live vote -----------------------------------------------------------------------------------

@@ -17,12 +17,15 @@ pytestmark = pytest.mark.django_db
 
 def test_the_sample_is_a_bundle_with_the_whole_demo_and_no_secrets():
     with zipfile.ZipFile(SAMPLE_BUNDLE) as z:
-        assert set(z.namelist()) == {"event.json", "manifest.json"}
+        names = set(z.namelist())
+        assert {"event.json", "manifest.json"} <= names
+        assert len([n for n in names if n.startswith("media/")]) == 15  # 5 thumbnails, 10 screenshots
         manifest = json.loads(z.read("manifest.json"))
         text = z.read("event.json").decode()
     assert manifest["format"] == "dogfood-event-bundle"
     body = json.loads(text)
     assert len(body["projects"]) == 5 and len(body["ballots"]) == 10 and len(body["criteria"]) == 3
+    assert len(body["project_images"]) == 10 and all(p["thumbnail"] for p in body["projects"])
     assert all(email.endswith("@dogfood.local") for email in re.findall(r"[\w.+-]+@[\w.-]+", text))
     for word in ("ip_hash", "password", "token", "secret"):
         assert word not in text.lower()
@@ -37,6 +40,7 @@ def test_importing_the_sample_makes_a_new_unpublished_event_of_mine(make_user, c
     assert response["Location"] == f"/organizer/events/{event.slug}/"
     assert not event.is_published and event.projects.count() == 5
     assert Ballot.objects.filter(event=event).count() == 10
+    assert all(p.thumbnail and p.images.count() == 2 for p in event.projects.all())
     assert event.memberships.filter(user=organizer, role=Role.ORGANIZER).exists()
 
 

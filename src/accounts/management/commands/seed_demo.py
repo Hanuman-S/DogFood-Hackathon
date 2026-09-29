@@ -137,6 +137,7 @@ class Command(BaseCommand):
         closed_state = self._seed_closed_event()
         closed_state += self._seed_archive_vote()
         self._drop_old_demo_tag()
+        self._add_demo_pictures()
         self._print(rows)
         base = settings.PORTAL_BASE_URL.rstrip("/")
         self.stdout.write(f"| open demo event:   {base}/events/{DEMO_EVENT_SLUG} [{event_state}]")
@@ -370,6 +371,36 @@ class Command(BaseCommand):
             raise CommandError(f"demo project {project_name}: {form.errors.as_text()}")
         project = update_project(request, project, form)
         return submit_project(request, project)
+
+    def _add_demo_pictures(self):
+        """A thumbnail and two screenshots for each demo project (drawn by _demo_art, offline and
+        the same every time), stored through projects.images.clean_image like any upload. Fills in
+        only what is missing -- a project with a thumbnail keeps it, one with gallery images gets
+        none added -- so it runs on every boot and brings databases seeded before it up to date.
+        The archive is closed, so this writes under the seed's usual deadline bypass."""
+        from django.core.files.base import ContentFile
+
+        from core.deadlines import deadline_bypass
+        from projects.images import clean_image
+        from projects.models import Project, ProjectImage
+
+        from . import _demo_art as art
+
+        demo = Project.objects.filter(event__slug__in=[DEMO_EVENT_SLUG, CLOSED_EVENT_SLUG],
+                                      name__in=list(art.PROJECTS))
+        with deadline_bypass(None, "demo seed: pictures for the demo projects"):
+            for project in demo:
+                slug = project.name.lower().replace(" ", "-")
+                if not project.thumbnail:
+                    picture = clean_image(ContentFile(art.thumbnail(project.name), name=f"{slug}.png"))
+                    project.thumbnail.save(f"{slug}.png", picture, save=False)
+                    Project.objects.filter(pk=project.pk).update(thumbnail=project.thumbnail.name)
+                if not project.images.exists():
+                    for order, (png, caption) in enumerate(art.screenshots(project.name)):
+                        image = ProjectImage(project=project, caption=caption, order=order)
+                        picture = clean_image(ContentFile(png, name=f"{slug}-{order + 1}.png"))
+                        image.image.save(f"{slug}-{order + 1}.png", picture, save=False)
+                        image.save()
 
     def _drop_old_demo_tag(self):
         """Earlier seeds tagged every demo project "demo", which showed in the gallery as a filter

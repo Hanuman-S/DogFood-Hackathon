@@ -121,8 +121,10 @@ def test_manifest_lists_every_other_file_with_its_sha256(world):
     assert set(manifest["files"]) == set(others)
     assert all(hashlib.sha256(data).hexdigest() == manifest["files"][name] for name, data in others.items())
     media = [name for name in others if name.startswith("media/")]
-    assert len(media) == 1 and media[0] == f"media/{hashlib.sha256(others[media[0]]).hexdigest()}.png"
-    assert body_of(files)["projects"][0]["thumbnail"] == media[0]
+    # Five thumbnails (the first is this test's own) and the demo seed's two screenshots each.
+    assert len(media) == 5 + 10
+    assert all(name == f"media/{hashlib.sha256(others[name]).hexdigest()}.png" for name in media)
+    assert body_of(files)["projects"][0]["thumbnail"] in media
 
 
 @pytest.mark.django_db(transaction=True)

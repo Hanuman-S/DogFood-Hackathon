@@ -164,3 +164,39 @@ def test_a_reboot_clears_the_old_tag_from_the_demo_events_only(make_event, make_
     mine.tags.clear()
     seed()
     assert not Tag.objects.filter(name="demo").exists()
+
+
+# --- pictures for the demo projects ------------------------------------------------------------------
+
+def test_every_demo_project_gets_a_thumbnail_and_two_screenshots_once():
+    from PIL import Image
+
+    from projects.models import ProjectImage
+
+    seed()
+    demo = Project.objects.filter(event__slug__in=["dogfood-live-demo", "dogfood-archive-2026"])
+    assert demo.count() == 6
+    for project in demo:
+        assert project.thumbnail, project.name
+        with project.thumbnail.open("rb") as f, Image.open(f) as picture:
+            assert picture.format == "PNG" and picture.size == (960, 540)
+        assert [i.caption != "" for i in project.images.all()] == [True, True]
+    seed()  # a reboot adds nothing
+    assert ProjectImage.objects.filter(project__in=demo).count() == 12
+
+
+def test_a_picture_someone_uploaded_is_never_replaced():
+    from django.core.files.base import ContentFile
+
+    from core.deadlines import deadline_bypass
+
+    seed()
+    project = Project.objects.get(name="Lamp Post")
+    with deadline_bypass(None, "test: the team replaced the thumbnail"):
+        project.thumbnail.save("theirs.png", ContentFile(project.thumbnail.read()), save=True)
+        project.images.all().delete()
+    theirs = project.thumbnail.name  # stored under a random name, like every upload
+    seed()
+    project.refresh_from_db()
+    assert project.thumbnail.name == theirs
+    assert project.images.count() == 2  # an emptied gallery is filled again; that is the rule

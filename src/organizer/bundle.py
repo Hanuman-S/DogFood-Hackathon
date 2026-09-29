@@ -65,7 +65,7 @@ def bundle_api(request, slug):
 # --- importing -------------------------------------------------------------------------------------
 
 # A ready-made bundle to start with: the demo seed's judging event (tracks, a rubric, five submitted
-# projects, an assignment round, a finished community vote with ballots: an open vote cannot be
+# projects with their thumbnails and screenshots, an assignment round, a finished community vote with ballots: an open vote cannot be
 # imported, so voting was ended first), exported by this install's own
 # bundle writer from a freshly seeded stack. Only the demo accounts (@dogfood.local); no secrets.
 SAMPLE_BUNDLE = Path(__file__).resolve().parent.parent / "imports" / "samples" / "dogfood-demo-event.zip"
